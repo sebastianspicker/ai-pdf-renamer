@@ -1,0 +1,4 @@
+pytest
+ruff
+
+# forced-publish-apple-silicon-pr-1
