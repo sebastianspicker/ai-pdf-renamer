@@ -2,10 +2,10 @@
 
 
 ## Context
-This page tracks bootstrap decisions for readme during bootstrap push work.
+This page tracks bootstrap decisions for readme during steady build work.
 
 ## Usage
-- Rewrote the the main flow explanation around the maintained behavior.
+- Made the next js assumptions easier to check later.
 
 ## Scratch Notes
 Early notes are still uneven and may be folded into clearer sections later.

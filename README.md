@@ -9,4 +9,4 @@ ai-pdf-renamer tracks the practical state of the current maintenance pass.
 Working state: bootstrap.
 
 ## Usage
-- Rewrote the the main flow explanation around the maintained behavior.
+- Made the next js assumptions easier to check later.
