@@ -8,3 +8,8 @@ def test_next_js_smoke() -> None:
 def test_next_js_regression() -> None:
     payload = {"scope": "next js", "result": "ok"}
     assert payload["result"] == "ok"
+
+# regression note: python
+def test_python_regression() -> None:
+    payload = {"scope": "python", "result": "ok"}
+    assert payload["result"] == "ok"
