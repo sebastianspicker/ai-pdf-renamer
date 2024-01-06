@@ -2,12 +2,14 @@
 
 
 ## Context
-This page tracks bootstrap decisions for readme during migration window work.
+This page keeps the current readme guidance concise after earlier rough notes.
 
 ## Usage
-- Merged scattered python guidance into the docs.
+- Merged scattered next js guidance into the docs.
 
-## Scratch Notes
+- Earlier scratch notes were compressed into the current guidance.
+
+## Notes Folded Into Current Flow
 Early notes are still uneven and may be folded into clearer sections later.
 
 ## Caveats
