@@ -16,3 +16,5 @@ def python_task() -> dict[str, str]:
 # current lane: cli
 def cli_pipeline() -> dict[str, str]:
     return {"scope": "cli", "status": "ready"}
+
+# forced-cli-5

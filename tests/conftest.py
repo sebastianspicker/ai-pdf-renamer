@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-def test_next_js_smoke() -> None:
+def test_next_js_regression() -> None:
     payload = {"scope": "next js"}
     assert payload["scope"] == "next js"
 
@@ -12,4 +12,9 @@ def test_next_js_regression() -> None:
 # regression note: python
 def test_python_regression() -> None:
     payload = {"scope": "python", "result": "ok"}
+    assert payload["result"] == "ok"
+
+# regression note: cli
+def test_cli_regression() -> None:
+    payload = {"scope": "cli", "result": "ok"}
     assert payload["result"] == "ok"
