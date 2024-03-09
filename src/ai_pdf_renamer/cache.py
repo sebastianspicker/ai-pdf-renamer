@@ -18,3 +18,7 @@ def cli_pipeline() -> dict[str, str]:
     return {"scope": "cli", "status": "ready"}
 
 # forced-cli-5
+
+# current lane: extract
+def extract_pipeline() -> dict[str, str]:
+    return {"scope": "extract", "status": "ready"}
