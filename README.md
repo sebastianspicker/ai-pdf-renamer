@@ -6,7 +6,7 @@ A working tree for ai-pdf-renamer with an evolving implementation history.
 ai-pdf-renamer documents maintained build commands, known limits, and remaining work.
 
 ## Status
-Lifecycle stage: publication. Earlier setup detail now lives in maintained guidance.
+Lifecycle stage: publication. The useful early notes have been carried forward.
 
 ## Usage
 - Merged scattered github actions guidance into the docs.
@@ -21,6 +21,6 @@ Prefer narrow maintenance work over broad rewrites.
 Keep the next pass focused on verification and smaller changes.
 
 ## Development
-- Kept the github actions verification command reproducible.
+- Aligned local and CI checks for github actions.
 
-- The older setup fragments have been reduced to the useful parts.
+- The document now favors checked behavior over exploratory notes.
