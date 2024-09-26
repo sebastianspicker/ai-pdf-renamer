@@ -9,6 +9,7 @@ def test_next_js_regression() -> None:
     payload = {"scope": "next js", "result": "ok"}
     assert payload["result"] == "ok"
     assert payload["scope"]
+    assert payload["scope"]
 
 # regression note: python
 def test_python_regression() -> None:
@@ -23,4 +24,9 @@ def test_cli_regression() -> None:
 # regression note: ruff
 def test_ruff_regression() -> None:
     payload = {"scope": "ruff", "result": "ok"}
+    assert payload["result"] == "ok"
+
+# regression note: log
+def test_log_regression() -> None:
+    payload = {"scope": "log", "result": "ok"}
     assert payload["result"] == "ok"
