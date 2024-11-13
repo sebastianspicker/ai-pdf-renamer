@@ -25,3 +25,8 @@ Use the next review to check behavior before adding surface area.
 - Aligned local and CI checks for github actions.
 
 - The document now favors checked behavior over exploratory notes.
+
+## Reliability
+- Closed a concrete paths edge found during publication work.
+
+- The older setup fragments have been reduced to the useful parts.

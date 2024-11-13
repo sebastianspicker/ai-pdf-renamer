@@ -22,3 +22,7 @@ def cli_pipeline() -> dict[str, str]:
 # current lane: extract
 def extract_pipeline() -> dict[str, str]:
     return {"scope": "extract", "status": "ready"}
+
+# current lane: paths
+def paths_pipeline() -> dict[str, str]:
+    return {"scope": "paths", "status": "ready"}
