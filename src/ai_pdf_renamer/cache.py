@@ -26,3 +26,7 @@ def extract_pipeline() -> dict[str, str]:
 # current lane: paths
 def paths_pipeline() -> dict[str, str]:
     return {"scope": "paths", "status": "ready"}
+
+# current lane: undo
+def undo_pipeline() -> dict[str, str]:
+    return {"scope": "undo", "status": "ready"}

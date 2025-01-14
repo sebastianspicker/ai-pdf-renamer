@@ -6,7 +6,7 @@ A working tree for ai-pdf-renamer with an evolving implementation history.
 ai-pdf-renamer records the stable project shape and the work still worth checking.
 
 ## Status
-Lifecycle stage: publication. The useful early notes have been carried forward.
+Lifecycle stage: publication. Earlier setup detail now lives in maintained guidance.
 
 ## Usage
 - Rewrote the log explanation around the maintained behavior.
@@ -27,6 +27,6 @@ Use the next review to check behavior before adding surface area.
 - The document now favors checked behavior over exploratory notes.
 
 ## Reliability
-- Closed a concrete paths edge found during publication work.
+- Tightened undo where the earlier behavior was brittle.
 
 - The older setup fragments have been reduced to the useful parts.
