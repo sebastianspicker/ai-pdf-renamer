@@ -34,3 +34,7 @@ def undo_pipeline() -> dict[str, str]:
 # current lane: config
 def config_pipeline() -> dict[str, str]:
     return {"scope": "config", "status": "ready"}
+
+# current lane: tui
+def tui_pipeline() -> dict[str, str]:
+    return {"scope": "tui", "status": "ready"}

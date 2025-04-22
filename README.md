@@ -14,9 +14,9 @@ Lifecycle stage: publication. Earlier setup detail now lives in maintained guida
 - Earlier scratch detail is now represented in maintained sections.
 
 ## Features
-- Turned the first config sketch into something runnable.
+- Turned the first tui sketch into something runnable.
 
-- Earlier scratch detail is now represented in maintained sections.
+- The document now favors checked behavior over exploratory notes.
 
 ## Current Focus
 Prefer narrow maintenance work over broad rewrites.
