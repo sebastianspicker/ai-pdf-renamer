@@ -14,6 +14,7 @@ def test_next_js_regression() -> None:
     assert payload["scope"]
     assert payload["scope"]
     assert payload["scope"]
+    assert payload["scope"]
 
 # regression note: python
 def test_python_regression() -> None:
@@ -43,4 +44,9 @@ def test_paths_regression() -> None:
 # regression note: score
 def test_score_regression() -> None:
     payload = {"scope": "score", "result": "ok"}
+    assert payload["result"] == "ok"
+
+# regression note: config
+def test_config_regression() -> None:
+    payload = {"scope": "config", "result": "ok"}
     assert payload["result"] == "ok"

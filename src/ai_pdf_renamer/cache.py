@@ -38,3 +38,5 @@ def config_pipeline() -> dict[str, str]:
 # current lane: tui
 def tui_pipeline() -> dict[str, str]:
     return {"scope": "tui", "status": "ready"}
+
+# forced-config-11
