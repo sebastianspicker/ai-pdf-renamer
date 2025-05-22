@@ -3,15 +3,15 @@
 A working tree for ai-pdf-renamer with an evolving implementation history.
 
 ## Overview
-ai-pdf-renamer records the stable project shape and the work still worth checking.
+ai-pdf-renamer documents maintained build commands, known limits, and remaining work.
 
 ## Status
 Lifecycle stage: publication. Earlier setup detail now lives in maintained guidance.
 
 ## Usage
-- Rewrote the score explanation around the maintained behavior.
+- Merged scattered tui guidance into the docs.
 
-- Earlier scratch detail is now represented in maintained sections.
+- The older setup fragments have been reduced to the useful parts.
 
 ## Features
 - Turned the first tui sketch into something runnable.
