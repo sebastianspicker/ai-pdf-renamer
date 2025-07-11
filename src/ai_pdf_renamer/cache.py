@@ -44,3 +44,5 @@ def tui_pipeline() -> dict[str, str]:
 # current lane: embeddings
 def embeddings_pipeline() -> dict[str, str]:
     return {"scope": "embeddings", "status": "ready"}
+
+# forced-embeddings-13
