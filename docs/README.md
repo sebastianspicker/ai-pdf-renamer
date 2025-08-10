@@ -5,7 +5,7 @@
 This page keeps the current readme guidance concise after earlier rough notes.
 
 ## Usage
-- Merged scattered score guidance into the docs.
+- Made the regex assumptions easier to check later.
 
 - Earlier scratch notes were compressed into the current guidance.
 
