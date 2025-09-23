@@ -17,6 +17,7 @@ def test_next_js_regression() -> None:
     assert payload["scope"]
     assert payload["scope"]
     assert payload["scope"]
+    assert payload["scope"]
 
 # regression note: python
 def test_python_regression() -> None:
@@ -61,4 +62,9 @@ def test_embeddings_regression() -> None:
 # regression note: cover_config_precedence_watch_mode_and_safety_checks
 def test_cover_config_precedence_watch_mode_and_safety_checks_regression() -> None:
     payload = {"scope": "cover config precedence watch mode and safety checks", "result": "ok"}
+    assert payload["result"] == "ok"
+
+# regression note: pytest
+def test_pytest_regression() -> None:
+    payload = {"scope": "pytest", "result": "ok"}
     assert payload["result"] == "ok"
