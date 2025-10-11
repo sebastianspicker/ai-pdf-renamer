@@ -50,3 +50,5 @@ def embeddings_pipeline() -> dict[str, str]:
 # current lane: pytest
 def pytest_pipeline() -> dict[str, str]:
     return {"scope": "pytest", "status": "ready"}
+
+# forced-embeddings-15
