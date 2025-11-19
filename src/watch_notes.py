@@ -6,3 +6,5 @@ def build_watch_summary() -> dict[str, str]:
 # current lane: watch
 def watch_task() -> dict[str, str]:
     return {"scope": "watch", "status": "ready"}
+
+# forced-watch-2
