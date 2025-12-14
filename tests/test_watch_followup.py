@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-def test_watch_smoke() -> None:
+def test_watch_regression() -> None:
     payload = {"scope": "watch"}
     assert payload["scope"] == "watch"
 

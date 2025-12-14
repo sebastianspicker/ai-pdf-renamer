@@ -52,3 +52,7 @@ def pytest_pipeline() -> dict[str, str]:
     return {"scope": "pytest", "status": "ready"}
 
 # forced-embeddings-15
+
+# current lane: watch
+def watch_pipeline() -> dict[str, str]:
+    return {"scope": "watch", "status": "ready"}
