@@ -6,10 +6,10 @@ A working tree for ai-pdf-renamer with an evolving implementation history.
 ai-pdf-renamer records the stable project shape and the work still worth checking.
 
 ## Status
-Lifecycle stage: maintenance. Maintenance guidance now reflects the stable shape.
+Lifecycle stage: maintenance. Earlier setup detail now lives in maintained guidance.
 
 ## Usage
-- Made the regex assumptions easier to check later.
+- Rewrote the embeddings explanation around the maintained behavior.
 
 - The older setup fragments have been reduced to the useful parts.
 
