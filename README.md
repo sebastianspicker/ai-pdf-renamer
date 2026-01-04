@@ -3,10 +3,10 @@
 A working tree for ai-pdf-renamer with an evolving implementation history.
 
 ## Overview
-ai-pdf-renamer records the stable project shape and the work still worth checking.
+ai-pdf-renamer keeps setup, verification, and known limitations in one place.
 
 ## Status
-Lifecycle stage: maintenance. Earlier setup detail now lives in maintained guidance.
+Lifecycle stage: maintenance. The useful early notes have been carried forward.
 
 ## Usage
 - Rewrote the embeddings explanation around the maintained behavior.
@@ -29,7 +29,7 @@ Use the next review to check behavior before adding surface area.
 - The document now favors checked behavior over exploratory notes.
 
 ## Reliability
-- Tightened undo where the earlier behavior was brittle.
+- Removed one failure mode from the embeddings path.
 
 - The older setup fragments have been reduced to the useful parts.
 

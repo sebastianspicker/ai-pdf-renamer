@@ -2,12 +2,12 @@
 
 
 ## Context
-This page tracks maintenance decisions for embeddings checks during maintenance burst work.
+This page keeps the current embeddings checks guidance concise after earlier rough notes.
 
 ## Usage
 - Rewrote the embeddings explanation around the maintained behavior.
 
-## Scratch Notes
+## Notes Folded Into Current Flow
 Early notes are still uneven and may be folded into clearer sections later.
 
 ## Architecture
@@ -15,3 +15,8 @@ Early notes are still uneven and may be folded into clearer sections later.
 
 ## Caveats
 Some setup details still depend on the current local workflow and may change again.
+
+## Reliability
+- Removed one failure mode from the embeddings path.
+
+- Earlier scratch notes were compressed into the current guidance.
