@@ -294,6 +294,54 @@ List derived from documentation, known limitations, and code review. Each item c
 
 ## Quick reference: common failure causes
 
+### 25. [Bug] [P0] Rename loop TOCTOU: silent overwrite on Unix
+
+**Description:** On Unix, `os.rename()` silently overwrites the target file if it exists. The collision check `target.exists()` is separated from the `os.rename()` call. If another process creates the destination between the check and the rename, data is lost.
+
+**Impact:** Permanent loss of existing files in the destination directory.
+
+**Fix:** Use atomic primitives; or on Unix, check for existence *after* rename if possible, though `os.rename` with `EXCL` equivalent is preferred.
+
+**Sources:** `src/ai_pdf_renamer/rename_ops.py:65-80`
+
+---
+
+### 26. [Security] [P0] Potential ReDoS in heuristic scoring
+
+**Description:** Heuristic regexes are run against large PDF content using `re.search`. Poorly constructed regexes in `heuristic_scores.json` can cause exponential backtracking.
+
+**Impact:** Application hang or DoS via malicious PDF or misconfigured rules.
+
+**Fix:** Audit heuristic regexes; use `regex` module with timeout or cap text length per regex scan.
+
+**Sources:** `src/ai_pdf_renamer/heuristics.py:118`
+
+---
+
+### 27. [Security] [P1] LLM Prompt Injection via PDF content
+
+**Description:** PDF text is directly concatenated into LLM prompts. A malicious PDF can "hijack" the prompt instructions.
+
+**Impact:** Filename forgery or unintended LLM behavior.
+
+**Fix:** Use XML-like tags (e.g. `<content>...</content>`) and instruct the LLM to ignore tags inside the content; or escape triple backticks.
+
+**Sources:** `src/ai_pdf_renamer/llm.py:222-283`
+
+---
+
+### 28. [Bug] [P1] requests.Session is not thread-safe in parallel mode
+
+**Description:** A shared `requests.Session` is used across multiple threads in the `LocalLLMClient`. `requests.Session` is not guaranteed to be thread-safe for concurrent POST requests modifying internal state.
+
+**Impact:** Intermittent network crashes or corrupted data when running with `--workers > 1`.
+
+**Fix:** Use thread-local storage for sessions or create a new session/adapter for each thread.
+
+**Sources:** `src/ai_pdf_renamer/llm.py:15, 311-316`
+
+---
+
 | Symptom | Typical cause | Fix / see |
 |--------|----------------|-----------|
 | `RuntimeError: PyMuPDF is required` | PDF extra not installed | `pip install -e '.[pdf]'` |

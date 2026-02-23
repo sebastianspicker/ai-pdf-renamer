@@ -5,14 +5,17 @@ import sys
 from ai_pdf_renamer import pdf_extract
 
 
-def test_pdf_to_text_returns_empty_on_open_error(monkeypatch) -> None:
+import pytest
+
+def test_pdf_to_text_raises_on_open_error(monkeypatch) -> None:
     class DummyFitz:
         def open(self, path):
             raise RuntimeError("boom")
 
     monkeypatch.setitem(sys.modules, "fitz", DummyFitz())
 
-    assert pdf_extract.pdf_to_text("missing.pdf") == ""
+    with pytest.raises(OSError, match="Could not open PDF file"):
+        pdf_extract.pdf_to_text("missing.pdf")
 
 
 def test_pdf_to_text_returns_empty_when_no_pages(monkeypatch, tmp_path) -> None:

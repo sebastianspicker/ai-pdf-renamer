@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 
 import requests
+import threading
 
 from .text_utils import chunk_text
 
@@ -13,6 +14,18 @@ logger = logging.getLogger(__name__)
 
 # Session per base_url for connection reuse across multiple complete() calls.
 _llm_sessions: dict[str, requests.Session] = {}
+_llm_sessions_lock = threading.Lock()
+
+
+def close_all_sessions() -> None:
+    """Close all global requests sessions."""
+    with _llm_sessions_lock:
+        for session in _llm_sessions.values():
+            try:
+                session.close()
+            except Exception:
+                pass
+        _llm_sessions.clear()
 
 
 def _extract_json_from_response(response: str) -> str:
@@ -219,33 +232,42 @@ def _summary_doc_type_hint(language: str, suggested_doc_type: str | None) -> str
     )
 
 
+def _escape_doc_content(text: str) -> str:
+    """Escape closing tags to prevent prompt injection."""
+    return text.replace("</document_content>", "<\\/document_content>")
+
+
 def _summary_prompts_short(language: str, doc_type_hint: str, text: str) -> list[str]:
-    """Build list of prompts for short-text single-shot summary."""
+    """Build prompt for one chunk in long-document summary."""
+    safe_text = _escape_doc_content(text)
     if language == "de":
         return [
             doc_type_hint
             + "Fasse den folgenden Text in 1–2 präzisen Sätzen zusammen. "
             + 'Nur reines JSON: {"summary":"..."}\n\n'
-            + text,
+            + "<document_content>\n"
+            + safe_text
+            + "\n</document_content>",
             doc_type_hint
-            + "Erstelle bitte eine 1–2 Sätze Zusammenfassung als JSON "
-            + '{"summary":"..."}, ohne weitere Erklärungen.\n\n'
-            + text,
-            doc_type_hint
-            + "Text:\n"
-            + text
-            + '\n\nGib jetzt nur {"summary":"..."} zurück. '
-            + "Keine Entschuldigungen, keine Erklärungen!",
-            doc_type_hint
-            + 'Achtung! Ich brauche reines JSON in der Form {"summary":"..."}. '
-            + "Hier der Text:\n\n"
-            + text,
+            + "Extrahiere die wichtigsten Informationen des Dokuments. "
+            + 'Nur reines JSON: {"summary":"..."}\n\n'
+            + "<document_content>\n"
+            + safe_text
+            + "\n</document_content>",
         ]
     return [
         doc_type_hint
-        + "Summarize the following text in 1–2 concise sentences. "
-        + 'Return ONLY JSON: {"summary":"..."}\n\n'
-        + text,
+        + "Summarize the following text in 1-2 precise sentences. "
+        + 'Return only valid JSON: {"summary":"..."}\n\n'
+        + "<document_content>\n"
+        + safe_text
+        + "\n</document_content>",
+        doc_type_hint
+        + "Extract the core description of this document. "
+        + 'Return only valid JSON: {"summary":"..."}\n\n'
+        + "<document_content>\n"
+        + safe_text
+        + "\n</document_content>",
     ]
 
 
@@ -254,11 +276,13 @@ def _summary_prompt_chunk(language: str, doc_type_hint: str, chunk: str) -> str:
     if language == "de":
         return (
             doc_type_hint + "Fasse den folgenden Text in 1–2 kurzen Sätzen zusammen. "
-            'NUR reines JSON {"summary":"..."}, keine Erklärungen.\n\n' + chunk
+            'NUR reines JSON {"summary":"..."}, keine Erklärungen.\n\n'
+            f"<document_content>\n{chunk}\n</document_content>"
         )
     return (
         doc_type_hint + "Summarize the following text in 1–2 short sentences. "
-        'Return ONLY {"summary":"..."} in JSON, no explanations.\n\n' + chunk
+        'Return ONLY {"summary":"..."} in JSON, no explanations.\n\n'
+        f"<document_content>\n{chunk}\n</document_content>"
     )
 
 
@@ -304,15 +328,17 @@ class LocalLLMClient:
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         try:
-            session = _llm_sessions.get(self.base_url)
-            if session is None:
-                session = requests.Session()
-                _llm_sessions[self.base_url] = session
+            with _llm_sessions_lock:
+                session = _llm_sessions.get(self.base_url)
+                if session is None:
+                    session = requests.Session()
+                    session.trust_env = False
+                    _llm_sessions[self.base_url] = session
+
             resp = session.post(
                 self.base_url,
                 json=payload,
                 timeout=self.timeout_s,
-                trust_env=False,
             )
             resp.raise_for_status()
             data = resp.json()

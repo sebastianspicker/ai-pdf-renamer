@@ -23,11 +23,11 @@ def load_heuristic_rules(path: str | Path) -> list[HeuristicRule]:
     try:
         raw = path_obj.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ValueError(f"Could not read data file {path_obj.name!r}: {exc!s}") from exc
+        raise ValueError(f"Could not read data file at {path_obj.absolute()}: {exc!s}") from exc
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid JSON in data file {path_obj.name!r}. {exc!s}") from exc
+        raise ValueError(f"Invalid JSON in data file at {path_obj.absolute()}. {exc!s}") from exc
     rules: list[HeuristicRule] = []
     raw_patterns = data.get("patterns", [])
     if not isinstance(raw_patterns, list):
@@ -110,12 +110,15 @@ def _score_text(
     title_weight_region: int = 0,
     title_weight_factor: float = 1.5,
     max_score_per_category: float | None = None,
+    max_text_length: int = 100000,
 ) -> dict[str, float]:
     scores: dict[str, float] = {}
+    # Mitigate potential ReDoS by capping the text length searched by regexes.
+    search_text = text if len(text) <= max_text_length else text[:max_text_length]
     for rule in rules:
         if language is not None and rule.language is not None and rule.language != language:
             continue
-        match = rule.pattern.search(text)
+        match = rule.pattern.search(search_text)
         if not match:
             continue
         weight = 1.0
@@ -303,11 +306,13 @@ def normalize_llm_category(cat_llm: str | None, *, _aliases: dict[str, str] | No
     """Map LLM category to heuristic vocabulary to reduce false conflicts."""
     if not cat_llm or not isinstance(cat_llm, str):
         return ""
-    key = cat_llm.strip().lower().replace(" ", "_")
+    # Basic cleaning for filename safety and normalization consistency
+    key = re.sub(r"[^\w\s-]", "", cat_llm).strip().lower().replace(" ", "_")
     if not key or key in {"document", "unknown", "na"}:
-        return cat_llm
+        # In the fallback case, return a cleaned version of the input if possible
+        return key if key else "unknown"
     aliases = _aliases if _aliases is not None else _load_category_aliases()
-    return aliases.get(key, cat_llm)
+    return aliases.get(key, key)
 
 
 def _tokenize_for_overlap(text: str) -> set[str]:

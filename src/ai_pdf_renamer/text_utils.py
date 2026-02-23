@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
+
+from .rename_ops import FILENAME_UNSAFE_RE
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
@@ -336,7 +339,7 @@ _COMPANY_PATTERNS = [
     ),
     re.compile(r"\b(?:company|firma|an\s*:)\s*([A-Za-z0-9\s&\.\-]{2,40})\b", re.IGNORECASE),
 ]
-_FILENAME_UNSAFE_RE = re.compile(r"[\x00-\x1f\x7f/\\:*?\"<>|]")
+_FILENAME_UNSAFE_RE = FILENAME_UNSAFE_RE
 _MAX_STRUCTURED_LEN = 50
 
 

@@ -717,12 +717,12 @@ def _resolve_dirs(args: argparse.Namespace) -> tuple[list[str], str | None]:
                 "Error: at least one directory or --file is required in non-interactive mode. "
                 "Use --dir PATH or --file PATH."
             )
-    orig_dirs = list(dirs)
-    dirs = [d.strip() for d in dirs if (d or "").strip()]
-    if not dirs:
+    # Resolve paths and filter out empty strings
+    resolved_dirs = [str(Path(d).resolve()) for d in dirs if d.strip()]
+    if not resolved_dirs:
         msg = (
             "Error: --dir must be non-empty. Provide a path or set the directory when prompted."
-            if (orig_dirs and not single_file)
+            if (dirs and not single_file) # Use original 'dirs' to check if any were provided before filtering
             else "Error: at least one directory or --file is required. Use --dir or --file."
         )
         raise SystemExit(msg)
@@ -877,9 +877,9 @@ def _run_renamer_or_watch(
             )
         else:
             for directory in dirs:
-                directory = (directory or "").strip()
                 if not directory:
                     continue
+                path_obj = Path(directory)
                 files_override = None
                 if single_file:
                     single_path = Path(single_file).resolve()

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import signal
 import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -29,7 +30,7 @@ from .llm import (
     get_final_summary_tokens,
 )
 from .pdf_extract import (
-    CONTEXT_128K_MAX_CONTENT_TOKENS,
+    DEFAULT_MAX_CONTENT_TOKENS,
     get_pdf_metadata,
     pdf_to_text,
     pdf_to_text_with_ocr,
@@ -109,7 +110,11 @@ def _write_pdf_title_metadata(pdf_path: Path, title: str) -> None:
         doc = fitz.open(pdf_path)
         try:
             doc.set_metadata({"title": title or pdf_path.stem})
-            doc.save_incremental()
+            try:
+                doc.save_incremental()
+            except Exception as inc_exc:
+                logger.debug("Incremental save failed for %s (%s); falling back to full save.", pdf_path.name, inc_exc)
+                doc.save(pdf_path, incremental=False, encryption=fitz.PDF_ENCRYPT_KEEP)
         finally:
             doc.close()
     except Exception as exc:
@@ -199,7 +204,7 @@ def _effective_max_tokens(config: RenamerConfig) -> int:
             return v
     except ValueError:
         pass
-    return CONTEXT_128K_MAX_CONTENT_TOKENS
+    return DEFAULT_MAX_CONTENT_TOKENS
 
 
 def _extract_pdf_content(path: Path, config: RenamerConfig) -> str:
@@ -223,11 +228,11 @@ def load_meta_stopwords(path: str | Path) -> Stopwords:
     try:
         raw = path_obj.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ValueError(f"Could not read data file {path_obj.name!r}: {exc!s}") from exc
+        raise ValueError(f"Could not read data file at {path_obj.absolute()}: {exc!s}") from exc
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid JSON in data file {path_obj.name!r}. {exc!s}") from exc
+        raise ValueError(f"Invalid JSON in data file at {path_obj.absolute()}. {exc!s}") from exc
     raw = data.get("stopwords", [])
     if not isinstance(raw, list):
         raw = []
@@ -731,6 +736,9 @@ def _build_filename_str(
             parts.append(convert_case(split_to_tokens(version), config.desired_case))
         sep = _filename_sep(config)
         filename = sep.join(p for p in parts if p)
+        # Ensure consistent separators: if we are in snakeCase, no dashes; if kebabCase, no underscores.
+        alt_sep = "-" if sep == "_" else "_"
+        filename = filename.replace(alt_sep, sep)
         filename = sep.join(x for x in filename.split(sep) if x)
 
     filename = _apply_filename_template(
@@ -952,6 +960,9 @@ def rename_pdfs_in_directory(
         skip_if_already_named=config.skip_if_already_named,
         files_override=files_override,
     )
+    if not files:
+        logger.info("No matching PDF files found in %s", path)
+        return
 
     def _mtime_key(p: Path) -> float:
         try:
@@ -978,23 +989,16 @@ def rename_pdfs_in_directory(
             # Data-file/config errors (e.g. invalid JSON) should propagate so CLI can exit with clear message.
             if isinstance(exc, ValueError) and "Invalid JSON in data file" in str(exc):
                 raise exc
+            if isinstance(exc, ValueError) and "No text extracted from" in str(exc):
+                logger.warning("Skipping %s: %s", file_path.name, exc)
+                skipped_count += 1
+                continue
             logger.exception("Failed to process %s: %s", file_path, exc)
             failed_count += 1
             continue
         if new_base is None:
-            try:
-                size = file_path.stat().st_size if file_path.exists() else 0
-            except OSError:
-                size = 0
-            if size > 0:
-                logger.warning(
-                    "PDF has no extractable text (file size %s bytes). "
-                    "May be encrypted or image-only; consider --ocr. Skipping %s.",
-                    size,
-                    file_path.name,
-                )
-            else:
-                logger.info("PDF appears to be empty. Skipping.")
+            # This case usually means truly empty content without causing an error.
+            logger.info("PDF content is empty. Skipping %s.", file_path.name)
             skipped_count += 1
             continue
         meta = meta or {}
@@ -1020,6 +1024,7 @@ def rename_pdfs_in_directory(
                 dry_run=config.dry_run,
                 backup_dir=config.backup_dir,
                 on_success=_on_rename_success,
+                max_filename_chars=config.max_filename_chars,
             )
             if not success:
                 logger.error(
@@ -1090,40 +1095,64 @@ def run_watch_loop(
     path = Path(directory).resolve()
     if not path.is_dir():
         raise NotADirectoryError(f"Not a directory: {path}")
+
+    stop_event = False
+
+    def handle_stop(sig, frame):
+        nonlocal stop_event
+        logger.info("Watch mode: received signal %s, stopping...", sig)
+        stop_event = True
+
+    # Handle SIGTERM (Docker/systemd) and SIGINT (Ctrl+C)
+    original_sigterm = signal.signal(signal.SIGTERM, handle_stop)
+    original_sigint = signal.signal(signal.SIGINT, handle_stop)
+
     seen: dict[Path, float] = {}
-    logger.info("Watch mode: scanning %s every %.1fs (Ctrl+C to stop)", path, interval_seconds)
-    while True:
-        try:
-            files = _collect_pdf_files(
-                path,
-                recursive=config.recursive,
-                max_depth=config.max_depth,
-                include_patterns=config.include_patterns,
-                exclude_patterns=config.exclude_patterns,
-                skip_if_already_named=config.skip_if_already_named,
-                files_override=None,
-            )
-            to_process: list[Path] = []
-            for p in files:
-                try:
-                    mtime = p.stat().st_mtime
-                except OSError:
-                    continue
-                if p not in seen or seen[p] != mtime:
-                    to_process.append(p)
-                    seen[p] = mtime
-            if to_process:
-                to_process.sort(key=lambda p: seen.get(p, 0), reverse=True)
-                for single in to_process:
-                    rename_pdfs_in_directory(
-                        path,
-                        config=config,
-                        files_override=[single],
-                    )
-            time.sleep(interval_seconds)
-        except KeyboardInterrupt:
-            logger.info("Watch stopped by user")
-            break
-        except Exception as exc:
-            logger.exception("Watch iteration failed: %s", exc)
-            time.sleep(interval_seconds)
+    logger.info("Watch mode: scanning %s every %.1fs (Ctrl+C or SIGTERM to stop)", path, interval_seconds)
+    try:
+        while not stop_event:
+            try:
+                # Cleanup 'seen' map: remove files that no longer exist
+                to_remove = [p for p in seen if not p.exists()]
+                for p in to_remove:
+                    del seen[p]
+
+                files = _collect_pdf_files(
+                    path,
+                    recursive=config.recursive,
+                    max_depth=config.max_depth,
+                    include_patterns=config.include_patterns,
+                    exclude_patterns=config.exclude_patterns,
+                    skip_if_already_named=config.skip_if_already_named,
+                    files_override=None,
+                )
+                to_process: list[Path] = []
+                for p in files:
+                    try:
+                        mtime = p.stat().st_mtime
+                    except OSError:
+                        continue
+                    if p not in seen or seen[p] != mtime:
+                        to_process.append(p)
+                        seen[p] = mtime
+                if to_process:
+                    to_process.sort(key=lambda p: seen.get(p, 0), reverse=True)
+                    for single in to_process:
+                        if stop_event:
+                            break
+                        rename_pdfs_in_directory(
+                            path,
+                            config=config,
+                            files_override=[single],
+                        )
+                if not stop_event:
+                    time.sleep(interval_seconds)
+            except Exception as exc:
+                if not stop_event:
+                    logger.exception("Watch iteration failed: %s", exc)
+                    time.sleep(interval_seconds)
+    finally:
+        # Restore original handlers
+        signal.signal(signal.SIGTERM, original_sigterm)
+        signal.signal(signal.SIGINT, original_sigint)
+        logger.info("Watch stopped")

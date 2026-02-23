@@ -17,6 +17,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Path separators and control characters (incl. NUL) that must not appear in filenames.
+# This pattern is consolidated here and shared across modules.
 FILENAME_UNSAFE_RE = re.compile(r"[\x00-\x1f\x7f/\\:*?\"<>|]")
 
 # Reserved names on Windows (case-insensitive). Avoid using as base name to prevent EINVAL on rename.
@@ -48,6 +49,7 @@ def apply_single_rename(
     dry_run: bool,
     backup_dir: Path | str | None,
     on_success: Callable[[Path, Path, str], None] | None = None,
+    max_filename_chars: int | None = None,
 ) -> tuple[bool, Path]:
     """
     Apply rename for one file: collision loop, backup, optional plan.
@@ -60,50 +62,80 @@ def apply_single_rename(
     current_base = base
     target = file_path.with_name(base + suffix)
     counter = 0
-    for attempt in range(MAX_RENAME_RETRIES):
-        # Skip existing targets to avoid overwriting (os.rename replaces on Unix).
-        while target.exists():
-            counter += 1
-            current_base = f"{base}_{counter}"
-            target = file_path.with_name(current_base + suffix)
+
+    # Ensure we don't start with an existing filename to minimize unnecessary attempts/races.
+    while target.exists():
+        counter += 1
+        suffix_str = f"_{counter}"
+        if max_filename_chars and max_filename_chars > len(suffix_str + suffix):
+            effective_base = base[: max_filename_chars - len(suffix_str + suffix)]
+        else:
+            effective_base = base
+        current_base = f"{effective_base}{suffix_str}"
+        target = file_path.with_name(current_base + suffix)
+
+    for _attempt in range(MAX_RENAME_RETRIES):
         try:
             if plan_file_path:
                 if plan_entries is not None:
                     plan_entries.append({"old": str(file_path), "new": str(target)})
                 logger.info("Plan: %s -> %s", file_path.name, target.name)
                 return (True, target)
+
             if not dry_run:
                 if backup_dir:
                     backup_path = Path(backup_dir) / file_path.name
                     backup_path.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(file_path, backup_path)
-                os.rename(file_path, target)
+
+                # Cross-platform atomic rename attempt.
+                # On Windows, os.rename fails if target exists.
+                # On Unix, os.rename overwrites. We try os.link as a safer alternative (fails if exists).
+                if os.name != "nt":
+                    try:
+                        os.link(file_path, target)
+                        file_path.unlink()
+                    except (AttributeError, OSError) as e:
+                        # Fallback to os.rename if link is not supported or cross-FS (EXDEV).
+                        # os.rename will still have a race on Unix, but it's the standard fallback.
+                        if isinstance(e, OSError) and e.errno == errno.EEXIST:
+                            raise FileExistsError from e
+                        os.rename(file_path, target)
+                else:
+                    os.rename(file_path, target)
+
                 if on_success is not None:
                     on_success(file_path, target, current_base)
+
             return (True, target)
-        except FileExistsError:
-            counter += 1
-            current_base = f"{base}_{counter}"
-            target = file_path.with_name(current_base + suffix)
-            if attempt == MAX_RENAME_RETRIES - 1:
-                logger.error(
-                    "Rename failed after %d attempts (target already exists): %s -> %s",
-                    MAX_RENAME_RETRIES,
-                    file_path,
-                    target,
-                )
-                raise OSError(
-                    errno.EEXIST,
-                    f"Could not rename {file_path.name}: target exists and collision suffix limit "
-                    f"({MAX_RENAME_RETRIES}) reached. Move or rename conflicting files and retry.",
-                ) from None
-        except OSError as e:
+
+        except (FileExistsError, OSError) as e:
+            # Catch FileExistsError (direct or from link/rename on some platforms)
+            # or OSError with EEXIST/EACCES (Windows rename often raises EACCES for existing targets).
+            is_exists = isinstance(e, FileExistsError) or (
+                isinstance(e, OSError) and e.errno in (errno.EEXIST, getattr(errno, "EACCES", None))
+            )
+
+            if is_exists:
+                counter += 1
+                suffix_str = f"_{counter}"
+                if max_filename_chars and max_filename_chars > len(suffix_str + suffix):
+                    effective_base = base[: max_filename_chars - len(suffix_str + suffix)]
+                else:
+                    effective_base = base
+                current_base = f"{effective_base}{suffix_str}"
+                target = file_path.with_name(current_base + suffix)
+                continue
+
+            # Handle length limit errors specifically.
             if getattr(errno, "ENAMETOOLONG", None) is not None and e.errno == errno.ENAMETOOLONG:
                 raise OSError(
                     e.errno,
                     f"Filename too long for filesystem: {target.name!r}. "
                     "Shorten project/version or content-derived parts.",
                 ) from e
+
+            # Handle cross-filesystem rename (only if link/rename both failed with EXDEV).
             if e.errno == errno.EXDEV:
                 if dry_run:
                     return (True, target)
@@ -131,4 +163,15 @@ def apply_single_rename(
                     on_success(file_path, target, current_base)
                 return (True, target)
             raise
-    raise RuntimeError(f"Rename failed after {MAX_RENAME_RETRIES} attempts for {file_path.name}")  # defensive
+
+    logger.error(
+        "Rename failed after %d attempts (target already exists): %s -> %s",
+        MAX_RENAME_RETRIES,
+        file_path,
+        target,
+    )
+    raise OSError(
+        errno.EEXIST,
+        f"Could not rename {file_path.name}: target exists and collision suffix limit "
+        f"({MAX_RENAME_RETRIES}) reached. Move or rename conflicting files and retry.",
+    )
