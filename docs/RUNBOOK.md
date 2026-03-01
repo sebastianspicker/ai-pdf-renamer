@@ -21,6 +21,10 @@ Then run: `ollama pull qwen3:8b`
 
 **Typical Ollama/Qwen-128K issues:** If you get empty or truncated LLM responses, ensure `OLLAMA_NUM_CTX=131072` and the model supports 128K (e.g. `qwen3:8b`). Timeouts: increase `AI_PDF_RENAMER_LLM_TIMEOUT` or `--llm-timeout` for large PDFs. Use `--no-llm` to run heuristic-only when the endpoint is unavailable.
 
+**Vision fallback (optional):** When using `--vision-fallback`, run a vision-capable model (e.g. `ollama pull llava`). The tool calls Ollama’s `/api/chat` with the first page as an image; the same Ollama host as the completions URL is used.
+
+**Scanned or image-only PDFs:** For folders where PDFs are scans or image-only (little or no extractable text), use `--vision-fallback --simple-naming`, or the `--preset scanned` shortcut. A vision-capable model (e.g. `llava`) must be available; the tool will use the first page image to generate a short filename when text extraction is short.
+
 ## Environment
 
 - **Optional:** `AI_PDF_RENAMER_DATA_DIR` – directory containing:
@@ -30,11 +34,18 @@ Then run: `ollama pull qwen3:8b`
   - `category_aliases.json` (optional; if present overrides package aliases for LLM→category mapping)
 - **Optional LLM:** `AI_PDF_RENAMER_LLM_URL`, `AI_PDF_RENAMER_LLM_MODEL`, `AI_PDF_RENAMER_LLM_TIMEOUT` – override default endpoint, model, and timeout (seconds). See also `--llm-url`, `--llm-model`, `--llm-timeout`.
 - **Optional extraction:** `AI_PDF_RENAMER_MAX_TOKENS` – max tokens for PDF text (default 120000). See also `--max-tokens`.
+- **Optional LLM input cap:** `AI_PDF_RENAMER_MAX_CONTENT_CHARS` – cap on characters of text sent to the LLM (summary, simple naming, etc.). When set, all such text is truncated to this length. See also `--max-content-chars`.
+- **Optional token cap:** When `[tokens]` (tiktoken) is installed, config key `max_content_tokens` (env `AI_PDF_RENAMER_MAX_CONTENT_TOKENS` or `--max-content-tokens`) can limit LLM input by token count; when set and tiktoken is available, token truncation overrides the character limit for that input.
+- **Optional vision fallback:** `AI_PDF_RENAMER_USE_VISION_FALLBACK` – set to `1`, `true`, or `yes` to enable vision fallback when extracted text is short (same as `--vision-fallback`). Requires a vision-capable model (e.g. llava).
+- **Optional vision first:** `AI_PDF_RENAMER_VISION_FIRST` – set to `1`, `true`, or `yes` to try vision on the first page first and skip text extraction when vision succeeds (scan-only workflow; same as `--vision-first`). Requires a vision-capable model; on failure the tool falls back to text extraction.
 - **Multi-language heuristics:** Rules in `heuristic_scores.json` can include `"language": "de"` or `"en"`; only rules matching `--language` (or language-agnostic) are applied. Optional per-locale files `heuristic_scores_de.json` and `heuristic_scores_en.json` in the same directory are loaded in addition when `--language` is de or en.
 - **Logging:** `AI_PDF_RENAMER_LOG_FILE` – log file path (default: error.log). `AI_PDF_RENAMER_LOG_LEVEL` – DEBUG, INFO, WARNING, ERROR (default: INFO). CLI: `--quiet` (WARNING), `--verbose` (DEBUG), `--log-file`, `--log-level`.
 - **Structured logs:** Set `AI_PDF_RENAMER_STRUCTURED_LOGS=1` (or true/yes) for one JSON object per line (e.g. for CI/monitoring).
 - **Batch config:** `--config FILE` loads JSON or YAML as defaults (e.g. `language`, `desired_case`, `project`, `version`); CLI options override. YAML requires PyYAML.
 - **Override category per file:** `--override-category-file FILE` – CSV with columns `filename`,`category` to force category per PDF.
+- **Processing rules:** `--rules-file FILE` – JSON file with optional keys: `skip_llm_if_heuristic_category` (list of category strings; when heuristic category is in this list, LLM is skipped), `force_category_by_pattern` (list of `{"pattern": "fnmatch", "category": "invoice"}`; first match on basename forces category), `skip_files_by_pattern` (list of fnmatch patterns; matching files are skipped), `allowed_categories` (list of category strings; when non-empty, LLM category is restricted to this list). Precedence: override CSV > force_category_by_pattern > normal. If the file is missing or invalid, the tool runs with no rules.
+- **Post-rename hook:** `AI_PDF_RENAMER_POST_RENAME_HOOK` – command or URL run after each successful rename (e.g. `curl -X POST https://...` or `/path/to/script.sh`). Receives `AI_PDF_RENAMER_OLD_PATH`, `AI_PDF_RENAMER_NEW_PATH`, and `AI_PDF_RENAMER_META` (JSON) as env vars. Hook runs with the user’s privileges; on failure the tool logs and continues (does not fail the run). Do not put untrusted PDF content into the hook string.
+- **Structured export:** `--export-metadata-path FILE` writes CSV or JSON with columns: path, new_name, category, summary, keywords, category_source, llm_failed, used_vision_fallback, invoice_id, amount, company. Use for downstream tooling.
 - **Embeddings for conflict resolution:** Install `.[embeddings]` and use `--embeddings-conflict` so that when heuristic and LLM disagree, embedding similarity (sentence-transformers) chooses the category.
 - **Category aliases (typo/OCR):** Extend `category_aliases.json` with typo or OCR variants (e.g. rechung, vertag, invoce) so LLM output maps to the same category. Use `scripts/derive_category_aliases.py` for suggestions; see RECOGNITION-RATE §4.2.
 
@@ -61,7 +72,7 @@ python -m pip install -e '.[tokens]'
 
 ## GUI
 
-A simple desktop GUI (folder picker, language/case options, dry-run preview, apply) is included. It uses tkinter (stdlib) and calls the same renamer as the CLI. Run after install:
+A simple desktop GUI (folder picker, language/case options, dry-run preview, apply) is included. It uses tkinter (stdlib) and calls the same renamer as the CLI. Use **Single file (optional)** and **Process one file** to run the pipeline on one PDF, see the suggestion (editable), and apply the rename without using the CLI. Run after install:
 
 ```bash
 ai-pdf-renamer-gui
@@ -75,6 +86,10 @@ python -m ai_pdf_renamer.gui
 
 Requires the same dependencies as the CLI (install with `.[pdf]` for PDF extraction).
 
+## Manual mode
+
+Use `--manual path/to/file.pdf` to process a single PDF: the tool runs the full pipeline, prints the suggested filename and metadata (category, summary, keywords, category_source), then prompts to confirm (y/n) or edit (e). When you choose edit, the suggested name is shown as the default so you can press Enter to accept or type a new name. Implies interactive mode.
+
 ## New options (recursive, single file, undo, template, plan, watch, metadata)
 
 - **Recursive:** `--recursive` / `-r` collects PDFs from subdirectories; `--max-depth N` limits depth (0 = unlimited).
@@ -87,6 +102,10 @@ Requires the same dependencies as the CLI (install with `.[pdf]` for PDF extract
 - **Watch:** `--watch` scans the directory periodically and processes new/changed PDFs; `--watch-interval SEC` (default 60).
 - **Plan only:** `--plan-file plan.json` writes old→new to JSON or CSV without renaming.
 - **PDF metadata:** `--write-pdf-metadata` writes the new filename into the PDF `/Title` field after rename.
+- **Timestamp fallback:** When category, keywords, and summary are all empty (heuristic + LLM both fail), the filename is `YYYYMMDD-document-HHMMSS.pdf` by default. Use `--no-timestamp-fallback` to disable; `--timestamp-fallback-segment NAME` to change the segment (default: document).
+- **Simple naming:** `--simple-naming` uses a single LLM call to get a short filename (3–6 words, underscores) instead of the full category/summary/keywords pipeline. Useful for faster runs or when the full pipeline is too verbose.
+- **Vision fallback:** When text extraction is very short (e.g. image-only PDFs), `--vision-fallback` uses Ollama’s vision API on the first page to get a short description used as content. Requires a vision-capable model (e.g. `llava`). Use `--vision-fallback-min-len N` (default 50) and optionally `--vision-model MODEL` if different from the main LLM model.
+- **Vision first:** `--vision-first` (or env `AI_PDF_RENAMER_VISION_FIRST`) skips text extraction and uses only the first-page image + vision for content (scan-only workflow). If vision fails, the tool falls back to normal text extraction. Requires a vision-capable model (e.g. llava).
 
 ## Date and locale
 
@@ -116,6 +135,14 @@ Requires the same dependencies as the CLI (install with `.[pdf]` for PDF extract
   ```bash
   ai-pdf-renamer --dir ./pdfs --date-format mdy
   ```
+
+- **Scanned / image-only:** Use the scanned preset (vision fallback + simple naming; requires a vision model such as llava):
+
+  ```bash
+  ai-pdf-renamer --dir ./pdfs --preset scanned
+  ```
+
+  Or explicitly: `--vision-fallback --simple-naming`.
 
 ## Tuning (recognition and conflicts)
 
@@ -205,6 +232,7 @@ Optional tuning for category heuristics (see [RECOGNITION-RATE.md](RECOGNITION-R
 - `--heuristic-long-doc-threshold N` – When text length ≥ N, use only the first `--heuristic-long-doc-leading` chars for heuristic (default 40000; set 0 to disable).
 - `--heuristic-long-doc-leading N` – For long docs, number of leading characters used for heuristic (default 12000). Lower (e.g. 8000) to focus on the very beginning when document type is declared early.
 - `--preset high-confidence-heuristic` – Skip LLM category when heuristic is confident (score ≥ 0.5, gap ≥ 0.3). Recommended for high-volume clear document types (invoices, payslips, contracts) to reduce wrong overrides by the LLM.
+- `--preset scanned` – Enable vision fallback and simple naming (for scanned or image-only PDFs). Requires a vision-capable model (e.g. llava).
 - `--max-pages-for-extraction N` – Extract text only from the first N pages (0 = all). For mixed or very long PDFs (e.g. catalogues, multi-document packs), setting N (e.g. 30 or 50) can improve recognition by focusing on the main body and avoiding appendix/boilerplate.
 
 ## Exit codes

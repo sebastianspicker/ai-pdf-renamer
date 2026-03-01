@@ -55,6 +55,7 @@ The tool is **local-first**: no cloud dependency; optional LLM runs on a local e
 ### 4.3 Out of scope
 
 - Cloud LLM; PDF content editing; automatic backup of original names; multi-process safety guarantees; official support for non-English product docs (docs are in English).
+- **Full RAG:** Persistent embedding index, multi-turn chat over documents, and semantic search over a stored corpus are out of scope. A minimal one-shot “query this batch” (no persistent index) may be considered later; it would not be part of the core rename workflow.
 
 ---
 

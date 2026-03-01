@@ -2,17 +2,39 @@ from __future__ import annotations
 
 import json
 import logging
-import re
+import threading
 from dataclasses import dataclass
 
 import requests
-import threading
 
+from .llm_parsing import (
+    CONTEXT_128K_CHUNK_OVERLAP,
+    CONTEXT_128K_CHUNK_SIZE,
+    CONTEXT_128K_MAX_CHARS_SINGLE,
+    _extract_json_from_response,
+    _replace_prompt_placeholders,
+    parse_json_field,
+    truncate_for_llm,
+)
+from .llm_prompts import (
+    _PLACEHOLDER_ALLOWED_CATEGORIES,
+    _build_allowed_categories_instruction,
+    _escape_doc_content,
+    _summary_doc_type_hint,
+    _summary_prompt_chunk,
+    _summary_prompt_combine,
+    _summary_prompts_short,
+)
+from .llm_schema import validate_llm_document_result
+from .rename_ops import sanitize_filename_from_llm
 from .text_utils import chunk_text
 
 logger = logging.getLogger(__name__)
 
 # Session per base_url for connection reuse across multiple complete() calls.
+# Thread-safe: all accesses are protected by _llm_sessions_lock.
+# Note: For multi-process deployments, consider using a connection pool manager
+# or passing sessions explicitly via dependency injection.
 _llm_sessions: dict[str, requests.Session] = {}
 _llm_sessions_lock = threading.Lock()
 
@@ -26,285 +48,6 @@ def close_all_sessions() -> None:
             except Exception:
                 pass
         _llm_sessions.clear()
-
-
-def _extract_json_from_response(response: str) -> str:
-    """
-    Try to extract a JSON object from LLM response that may contain leading prose
-    or code fences (e.g. ```json ... ```). Returns the first plausible JSON slice
-    or the original string stripped.
-    """
-    text = response.strip()
-    if not text:
-        return text
-
-    # Code fence: ```json ... ``` or ``` ... ```
-    code_fence = re.search(
-        r"```(?:json)?\s*\n?(.*?)```",
-        text,
-        re.DOTALL | re.IGNORECASE,
-    )
-    if code_fence:
-        candidate = code_fence.group(1).strip()
-        if candidate.startswith("{"):
-            return candidate
-
-    # Leading prose: skip until first {
-    start = text.find("{")
-    if start == -1:
-        return text
-
-    # Find matching closing brace (simple stack-based).
-    depth = 0
-    i = start
-    while i < len(text):
-        if text[i] == "{":
-            depth += 1
-        elif text[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : i + 1]
-        elif text[i] == '"':
-            # Skip string content to avoid counting braces inside strings.
-            i += 1
-            while i < len(text):
-                if text[i] == "\\" and i + 1 < len(text):
-                    i += 2
-                    continue
-                if text[i] == '"':
-                    break
-                i += 1
-        i += 1
-
-    return text[start:]
-
-
-def _sanitize_json_string_value(response: str, *, key: str) -> str:
-    """
-    Attempts to escape unescaped quotes inside a JSON string value for `key`.
-    This is a best-effort fix for common LLM formatting issues.
-    """
-    # Fast-path regex replacement for common cases where the JSON is almost valid.
-    pattern = r'("' + re.escape(key) + r'":\s*")(.*?)(")'
-
-    def replacer(match: re.Match[str]) -> str:
-        prefix, value, suffix = match.groups()
-        fixed_value = re.sub(r'(?<!\\)"', r'\\"', value)
-        return prefix + fixed_value + suffix
-
-    sanitized = re.sub(pattern, replacer, response, flags=re.DOTALL)
-
-    # If the string is still malformed because unescaped quotes prematurely closed the
-    # value, try a best-effort salvage assuming a single-key JSON object.
-    #
-    # This is intentionally conservative and only aims to support the script's
-    # prompts, which ask for JSON objects with a single string field.
-    key_idx = sanitized.find(f'"{key}"')
-    if key_idx == -1:
-        return sanitized
-
-    colon_idx = sanitized.find(":", key_idx)
-    if colon_idx == -1:
-        return sanitized
-
-    first_quote = sanitized.find('"', colon_idx)
-    if first_quote == -1:
-        return sanitized
-
-    close_brace = sanitized.rfind("}")
-    if close_brace == -1:
-        return sanitized
-
-    # Find closing quote: the last unescaped " before } (respects \" in value).
-    i = first_quote + 1
-    last_quote = -1
-    while i < close_brace and i < len(sanitized):
-        if sanitized[i] == "\\" and i + 1 < len(sanitized):
-            i += 2
-            continue
-        if sanitized[i] == '"':
-            last_quote = i
-        i += 1
-    if last_quote <= first_quote:
-        return sanitized
-
-    raw_value = sanitized[first_quote + 1 : last_quote]
-    # Escape only unescaped quotes so existing \" is preserved.
-    fixed_value = re.sub(r'(?<!\\)"', r'\\"', raw_value)
-    return sanitized[: first_quote + 1] + fixed_value + sanitized[last_quote:]
-
-
-def _lenient_extract_key_value(text: str, key: str) -> str | None:
-    """Best-effort extraction of a string value for key from text that may not be valid JSON."""
-    # Match "key":"value" with value possibly containing escaped quotes.
-    pattern = re.compile(
-        r'"' + re.escape(key) + r'"\s*:\s*"((?:[^"\\]|\\.)*)"',
-        re.DOTALL,
-    )
-    m = pattern.search(text)
-    if m is None:
-        return None
-    raw = m.group(1)
-    if not raw:
-        return None
-    # Unescape only \" inside the value so we don't corrupt normal text.
-    unescaped = raw.replace('\\"', '"').replace("\\\\", "\\").strip()
-    return unescaped or None
-
-
-def parse_json_field(response: str | None, *, key: str, lenient: bool = False) -> str | list[str] | None:
-    if response is None:
-        return None
-    if not isinstance(response, str):
-        return None
-    resp_str = response.strip()
-    if not resp_str:
-        return None
-    # Normalize: extract JSON from code fences or leading prose.
-    if not resp_str.startswith("{"):
-        extracted = _extract_json_from_response(resp_str)
-        if extracted.startswith("{"):
-            resp_str = extracted
-        else:
-            if lenient:
-                val = _lenient_extract_key_value(resp_str, key)
-                if val is not None and val.strip() and val.strip().lower() != "na":
-                    return val.strip()
-            return None
-
-    try:
-        data = json.loads(resp_str)
-    except json.JSONDecodeError:
-        # Only salvage when response looks like a single-key string object (avoids corrupting lists/multi-key).
-        single_key_pattern = re.compile(r'^\s*\{\s*"' + re.escape(key) + r'"\s*:\s*"', re.DOTALL)
-        if not single_key_pattern.match(resp_str):
-            logger.warning("LLM response could not be parsed as JSON; using fallback")
-            return None
-        try:
-            data = json.loads(_sanitize_json_string_value(resp_str, key=key))
-        except json.JSONDecodeError:
-            extracted = _extract_json_from_response(response)
-            if extracted.startswith("{"):
-                try:
-                    data = json.loads(extracted)
-                except json.JSONDecodeError:
-                    logger.warning("LLM response could not be parsed as JSON; using fallback")
-                    return None
-            else:
-                logger.warning("LLM response could not be parsed as JSON; using fallback")
-                return None
-
-    value = data.get(key)
-    if isinstance(value, list):
-        if all(isinstance(x, str) for x in value):
-            cleaned = [x.strip() for x in value if x and x.strip()]
-            return cleaned or None
-        return None
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return None
-        if stripped.lower() == "na":
-            return None
-        return stripped
-    return None
-
-
-# Qwen3 8B 128K context: single-shot up to ~120K tokens (~480K chars).
-CONTEXT_128K_MAX_CHARS_SINGLE = 480_000  # ~120K tokens at ~4 chars/token
-CONTEXT_128K_CHUNK_SIZE = 100_000
-CONTEXT_128K_CHUNK_OVERLAP = 5_000
-
-
-def _summary_doc_type_hint(language: str, suggested_doc_type: str | None) -> str:
-    """Build doc-type hint prefix for summary prompts."""
-    if not suggested_doc_type or not suggested_doc_type.strip():
-        return ""
-    hint = suggested_doc_type.strip()
-    if language == "de":
-        return (
-            f'Kontext: Das Dokument wurde heuristisch als Typ "{hint}" eingestuft. '
-            "Betone in der Zusammenfassung den Dokumenttyp (z. B. Rechnung, Vertrag). "
-        )
-    return (
-        f'Context: The document was heuristically classified as type "{hint}". '
-        "Emphasize in the summary what type of document this is (e.g. invoice, contract). "
-    )
-
-
-def _escape_doc_content(text: str) -> str:
-    """Escape closing tags to prevent prompt injection."""
-    return text.replace("</document_content>", "<\\/document_content>")
-
-
-def _summary_prompts_short(language: str, doc_type_hint: str, text: str) -> list[str]:
-    """Build prompt for one chunk in long-document summary."""
-    safe_text = _escape_doc_content(text)
-    if language == "de":
-        return [
-            doc_type_hint
-            + "Fasse den folgenden Text in 1–2 präzisen Sätzen zusammen. "
-            + 'Nur reines JSON: {"summary":"..."}\n\n'
-            + "<document_content>\n"
-            + safe_text
-            + "\n</document_content>",
-            doc_type_hint
-            + "Extrahiere die wichtigsten Informationen des Dokuments. "
-            + 'Nur reines JSON: {"summary":"..."}\n\n'
-            + "<document_content>\n"
-            + safe_text
-            + "\n</document_content>",
-        ]
-    return [
-        doc_type_hint
-        + "Summarize the following text in 1-2 precise sentences. "
-        + 'Return only valid JSON: {"summary":"..."}\n\n'
-        + "<document_content>\n"
-        + safe_text
-        + "\n</document_content>",
-        doc_type_hint
-        + "Extract the core description of this document. "
-        + 'Return only valid JSON: {"summary":"..."}\n\n'
-        + "<document_content>\n"
-        + safe_text
-        + "\n</document_content>",
-    ]
-
-
-def _summary_prompt_chunk(language: str, doc_type_hint: str, chunk: str) -> str:
-    """Build prompt for one chunk in long-document summary."""
-    if language == "de":
-        return (
-            doc_type_hint + "Fasse den folgenden Text in 1–2 kurzen Sätzen zusammen. "
-            'NUR reines JSON {"summary":"..."}, keine Erklärungen.\n\n'
-            f"<document_content>\n{chunk}\n</document_content>"
-        )
-    return (
-        doc_type_hint + "Summarize the following text in 1–2 short sentences. "
-        'Return ONLY {"summary":"..."} in JSON, no explanations.\n\n'
-        f"<document_content>\n{chunk}\n</document_content>"
-    )
-
-
-def _summary_prompt_combine(language: str, doc_type_hint: str, combined: str) -> str:
-    """Build prompt to combine partial summaries into one."""
-    if language == "de":
-        return (
-            doc_type_hint
-            + "Hier mehrere Teilzusammenfassungen eines langen Dokuments:\n"
-            + combined
-            + "\n\nFasse sie in 1–2 prägnanten Sätzen zusammen. "
-            "Stelle sicher, dass der Dokumenttyp erkennbar bleibt. "
-            'Nur reines JSON {"summary":"..."}.\n'
-        )
-    return (
-        doc_type_hint
-        + "Here are multiple partial summaries of a large document:\n"
-        + combined
-        + "\n\nCombine them into 1–2 concise sentences. "
-        "Ensure the document type remains clear. "
-        'Return ONLY {"summary":"..."} in JSON.\n'
-    )
 
 
 @dataclass(frozen=True)
@@ -386,6 +129,58 @@ class LocalLLMClient:
             return ""
 
 
+def _ollama_chat_url_from_completions_url(completions_url: str) -> str:
+    """Derive Ollama /api/chat URL from /v1/completions URL."""
+    base = (completions_url or "").strip().rstrip("/")
+    if "/v1/completions" in base:
+        return base.replace("/v1/completions", "") + "/api/chat"
+    if base.endswith("/api/chat"):
+        return base
+    return base + "/api/chat" if base else "http://127.0.0.1:11434/api/chat"
+
+
+def complete_vision(
+    base_url: str,
+    model: str,
+    image_b64: str,
+    prompt: str,
+    *,
+    timeout_s: float = 120.0,
+) -> str:
+    """
+    Send image + prompt to Ollama chat API (vision). Returns assistant message text.
+    Used when text extraction is empty/short and use_vision_fallback is True.
+    """
+    chat_url = _ollama_chat_url_from_completions_url(base_url)
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "user", "content": prompt, "images": [image_b64]},
+        ],
+        "stream": False,
+    }
+    try:
+        with _llm_sessions_lock:
+            session = _llm_sessions.get(base_url)
+            if session is None:
+                session = requests.Session()
+                session.trust_env = False
+                _llm_sessions[base_url] = session
+        resp = session.post(chat_url, json=payload, timeout=timeout_s)
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            return ""
+        msg = data.get("message")
+        if not isinstance(msg, dict):
+            return ""
+        content = msg.get("content")
+        return str(content).strip() if content is not None else ""
+    except Exception as exc:
+        logger.warning("Vision API failed: %s", exc)
+        return ""
+
+
 def complete_json_with_retry(
     client: LocalLLMClient,
     prompt: str,
@@ -450,6 +245,8 @@ def get_document_summary(
     language: str = "de",
     temperature: float = 0.0,
     max_chars_single: int = CONTEXT_128K_MAX_CHARS_SINGLE,
+    max_content_chars: int | None = None,
+    max_content_tokens: int | None = None,
     suggested_doc_type: str | None = None,
     lenient_json: bool = False,
 ) -> str:
@@ -458,6 +255,11 @@ def get_document_summary(
     text = pdf_content.strip()
     if len(text) < 50:
         return "na"
+
+    effective_max = max_chars_single
+    if max_content_chars is not None:
+        effective_max = min(max_chars_single, max_content_chars)
+    text = truncate_for_llm(text, effective_max, max_tokens=max_content_tokens)
 
     doc_type_hint = _summary_doc_type_hint(language, suggested_doc_type)
 
@@ -471,7 +273,8 @@ def get_document_summary(
             max_tokens=1024,
             lenient=lenient_json,
         )
-        return val if isinstance(val, str) else "na"
+        result = validate_llm_document_result({"summary": val if isinstance(val, str) else ""})
+        return result.summary
 
     chunks = chunk_text(
         text,
@@ -504,7 +307,8 @@ def get_document_summary(
         max_tokens=1024,
     )
     v_final = parse_json_field(r_final, key="summary", lenient=lenient_json)
-    return v_final if isinstance(v_final, str) else "na"
+    result = validate_llm_document_result({"summary": v_final if isinstance(v_final, str) else ""})
+    return result.summary
 
 
 def get_document_keywords(
@@ -556,7 +360,8 @@ def get_document_keywords(
         max_tokens=512,
         lenient=lenient_json,
     )
-    return val if isinstance(val, list) else None
+    result = validate_llm_document_result({"keywords": val if isinstance(val, list) else []})
+    return result.keywords if result.keywords else None
 
 
 def get_document_category(
@@ -573,29 +378,26 @@ def get_document_category(
     keywords_joined = ", ".join(keywords)
     if language == "de":
         base_text = f"Zusammenfassung:\n{summary}\nKeywords:{keywords_joined}"
-        if allowed_categories:
-            cats = ", ".join(sorted(allowed_categories))
-            base_text += f"\n\nGib genau eine dieser Kategorien oder 'unknown': {cats}"
-        elif suggested_categories:
-            base_text += "\n\nVorschläge nutzen falls passend, sonst andere Kategorie."
-            base_text += " Vorschläge: " + ", ".join(suggested_categories) + "."
-        prompts = [
-            (
-                "Bestimme eine sinnvolle Kategorie als reines JSON.\n"
-                'Gib nur: {"category":"..."}\n\n'
-                "Keine weiteren Erklärungen, nur JSON. Text:\n" + base_text
-            ),
-            ('Bitte nur {"category":"..."} - ohne Zusätze:\n' + base_text),
-        ]
     else:
         base_text = f"Summary:\n{summary}\nKeywords:{keywords_joined}"
-        if allowed_categories:
-            cats = ", ".join(sorted(allowed_categories))
-            base_text += f"\n\nReturn exactly one of these or 'unknown': {cats}"
-        elif suggested_categories:
-            base_text += "\n\nUse one suggestion if appropriate, else another category."
-            base_text += " Suggestions: " + ", ".join(suggested_categories) + "."
-        prompts = [('Determine a suitable category. Return ONLY JSON: {"category":"..."}\n\nText:\n' + base_text)]
+    category_instruction = _build_allowed_categories_instruction(
+        allowed_categories=allowed_categories,
+        suggested_categories=suggested_categories,
+        language=language,
+    )
+    content = _replace_prompt_placeholders(
+        base_text + "\n\n" + _PLACEHOLDER_ALLOWED_CATEGORIES,
+        {_PLACEHOLDER_ALLOWED_CATEGORIES: category_instruction},
+    )
+    if language == "de":
+        prompt_templates = [
+            "Bestimme eine sinnvolle Kategorie als reines JSON.\n"
+            'Gib nur: {"category":"..."}\n\nKeine weiteren Erklärungen. Text:\n',
+            'Bitte nur {"category":"..."} - ohne Zusätze:\n',
+        ]
+        prompts = [t + content for t in prompt_templates]
+    else:
+        prompts = [f'Determine a suitable category. Return ONLY JSON: {{"category":"..."}}\n\nText:\n{content}']
 
     val = _try_prompts_for_key(
         client,
@@ -605,12 +407,12 @@ def get_document_category(
         max_tokens=256,
         lenient=lenient_json,
     )
-    if not isinstance(val, str):
-        return "na"
-    if len(val.strip()) > 80:
-        logger.info("LLM category too long (%d chars); treating as invalid.", len(val))
-        return "na"
-    return val
+    raw = val if isinstance(val, str) else ""
+    if len(raw.strip()) > 80:
+        logger.info("LLM category too long (%d chars); treating as invalid.", len(raw))
+        raw = ""
+    result = validate_llm_document_result({"category": raw})
+    return result.category
 
 
 def get_final_summary_tokens(
@@ -661,3 +463,79 @@ def get_final_summary_tokens(
 
     tokens = [t.strip() for t in val.split(",") if t.strip()]
     return tokens[:5] if tokens else None
+
+
+# Max chars of content to send for simple filename (one-shot prompt).
+SIMPLE_FILENAME_MAX_CONTENT_CHARS = 12_000
+
+# Placeholders for simple-naming prompt (Montscan-style: single template, one example, strict closing).
+_PLACEHOLDER_INTRO_LINE = "%INTRO_LINE%"
+_PLACEHOLDER_DATE_HINT = "%DATE_HINT%"
+_PLACEHOLDER_EXAMPLE = "%EXAMPLE%"
+_PLACEHOLDER_CLOSING_LINE = "%CLOSING_LINE%"
+_PLACEHOLDER_DOCUMENT_CONTENT = "%DOCUMENT_CONTENT%"
+_PLACEHOLDER_EXAMPLE_LABEL = "%EXAMPLE_LABEL%"
+
+_SIMPLE_FILENAME_TEMPLATE = (
+    "%INTRO_LINE%\n"
+    "- 3–6 words, target language in the requested language.\n"
+    "- Use underscores only (no spaces), no special characters except underscores and hyphens.\n"
+    "- Optional: date at end (e.g. dd-mm-yyyy).\n"
+    "- Uppercase preferred.\n"
+    "%DATE_HINT%\n"
+    "%EXAMPLE_LABEL%%EXAMPLE%\n\n"
+    "%CLOSING_LINE%\n\n"
+    "<document_content>\n%DOCUMENT_CONTENT%\n</document_content>"
+)
+
+
+def get_document_filename_simple(
+    client: LocalLLMClient,
+    content: str,
+    *,
+    language: str = "de",
+    temperature: float = 0.0,
+    max_content_chars: int | None = None,
+    max_content_tokens: int | None = None,
+) -> str:
+    """
+    Ask the LLM for a single short filename (3-6 words, underscores). No JSON.
+    Returns a sanitized string suitable as the middle part of a filename.
+    """
+    if not content or not content.strip():
+        return "document"
+    text = content.strip()
+    effective_max = (
+        min(SIMPLE_FILENAME_MAX_CONTENT_CHARS, max_content_chars)
+        if max_content_chars is not None
+        else SIMPLE_FILENAME_MAX_CONTENT_CHARS
+    )
+    text = truncate_for_llm(text, effective_max, max_tokens=max_content_tokens)
+    safe_text = _escape_doc_content(text)
+    if language == "de":
+        intro = "Erzeuge einen kurzen Dateinamen (ohne Endung) für dieses Dokument."
+        date_hint = "Optional: Datum am Ende (z. B. 15-11-2023)."
+        example_label = "Beispiel: "
+        example = "RECHNUNG_AMAZON_MAX_2023-11-15"
+        closing = "Antworte mit NUR dem Dateinamen, sonst nichts."
+    else:
+        intro = "Generate a short filename (without extension) for this document."
+        date_hint = "Optional: date at end (e.g. 15-11-2023)."
+        example_label = "Example: "
+        example = "INVOICE_AMAZON_JOHN_2023-11-15"
+        closing = "Respond with ONLY the filename, nothing else."
+    prompt = _replace_prompt_placeholders(
+        _SIMPLE_FILENAME_TEMPLATE,
+        {
+            _PLACEHOLDER_INTRO_LINE: intro,
+            _PLACEHOLDER_DATE_HINT: date_hint,
+            _PLACEHOLDER_EXAMPLE_LABEL: example_label,
+            _PLACEHOLDER_EXAMPLE: example,
+            _PLACEHOLDER_CLOSING_LINE: closing,
+            _PLACEHOLDER_DOCUMENT_CONTENT: safe_text,
+        },
+    )
+    raw = client.complete(prompt, temperature=temperature, max_tokens=128)
+    if raw and isinstance(raw, str):
+        raw = raw.strip().rstrip(".")
+    return sanitize_filename_from_llm(raw)

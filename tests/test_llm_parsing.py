@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ai_pdf_renamer.llm import parse_json_field
+from ai_pdf_renamer.llm import parse_json_field, truncate_for_llm
 
 
 def test_parse_json_field_string() -> None:
@@ -33,3 +33,13 @@ def test_parse_json_field_lenient_extracts_without_brace() -> None:
     )
     assert parse_json_field("No JSON here", key="summary", lenient=True) is None
     assert parse_json_field('"category":"invoice"', key="category", lenient=True) == "invoice"
+
+
+def test_truncate_for_llm() -> None:
+    assert truncate_for_llm("short", None) == "short"
+    assert truncate_for_llm("short", 100) == "short"
+    text_200 = "x" * 200
+    out = truncate_for_llm(text_200, 50)
+    assert len(out) == 50
+    assert out.endswith("\n[...]")
+    assert out == "x" * (50 - len("\n[...]")) + "\n[...]"

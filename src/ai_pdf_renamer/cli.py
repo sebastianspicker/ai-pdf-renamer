@@ -11,6 +11,7 @@ from pathlib import Path
 
 import requests
 
+from .cli_parser import build_parser
 from .logging_utils import setup_logging
 from .renamer import (
     RenamerConfig,
@@ -60,483 +61,14 @@ def _load_override_category_map(path: str | Path) -> dict[str, str]:
                 cat = (row.get("category") or "").strip()
                 if name and cat:
                     result[name] = cat
-    except OSError:
-        pass
+    except OSError as e:
+        logger.warning("Could not read override-category file %s: %s. Proceeding with no overrides.", p, e)
     return result
 
 
 def _is_interactive() -> bool:
     """True if stdin is a TTY (interactive prompt is safe)."""
     return sys.stdin.isatty()
-
-
-def _add_dirs_and_file_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument(
-        "--dir",
-        dest="dirs",
-        nargs="*",
-        default=None,
-        metavar="DIR",
-        help="Directories with PDFs. If omitted: interactive prompts (default ./input_files); "
-        "non-interactive needs --dir or --file.",
-    )
-    p.add_argument(
-        "--dirs-from-file",
-        dest="dirs_from_file",
-        default=None,
-        metavar="FILE",
-        help="Read directory paths from file (one per line). Combined with --dir.",
-    )
-    p.add_argument(
-        "--file",
-        dest="single_file",
-        default=None,
-        metavar="PATH",
-        help="Process a single PDF file (path to file). Overrides --dir.",
-    )
-    p.add_argument(
-        "--recursive",
-        "-r",
-        dest="recursive",
-        action="store_true",
-        help="Recursively collect PDFs from subdirectories.",
-    )
-    p.add_argument(
-        "--max-depth",
-        dest="max_depth",
-        type=int,
-        default=0,
-        metavar="N",
-        help="Max directory depth when --recursive (0 = unlimited).",
-    )
-    p.add_argument(
-        "--include",
-        dest="include_patterns",
-        action="append",
-        default=None,
-        metavar="PATTERN",
-        help="Include only files matching fnmatch PATTERN (e.g. *.pdf). Can be repeated.",
-    )
-    p.add_argument(
-        "--exclude",
-        dest="exclude_patterns",
-        action="append",
-        default=None,
-        metavar="PATTERN",
-        help="Exclude files matching fnmatch PATTERN (e.g. draft-*). Can be repeated.",
-    )
-
-
-def _add_template_and_plan_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument(
-        "--template",
-        dest="filename_template",
-        default=None,
-        metavar="TEMPLATE",
-        help="Template placeholders: {date}, {project}, {category}, {keywords}, {summary}, {version}, "
-        "{invoice_id}, {amount}, {company}.",
-    )
-    p.add_argument(
-        "--no-structured-fields",
-        dest="use_structured_fields",
-        action="store_false",
-        help="Do not extract invoice_id, amount, company from content for template placeholders.",
-    )
-    p.add_argument(
-        "--plan-file",
-        dest="plan_file_path",
-        default=None,
-        metavar="FILE",
-        help="Write rename plan (old,new) to FILE without applying. JSON or .csv.",
-    )
-    p.add_argument(
-        "--interactive",
-        "-i",
-        dest="interactive",
-        action="store_true",
-        help="Prompt for each file (y/n/e=edit) before renaming.",
-    )
-    p.add_argument(
-        "--watch",
-        dest="watch",
-        action="store_true",
-        help="Watch directory and process new PDFs periodically.",
-    )
-    p.add_argument(
-        "--watch-interval",
-        dest="watch_interval",
-        type=float,
-        default=60.0,
-        metavar="SEC",
-        help="Seconds between watch scans (default 60).",
-    )
-    p.add_argument(
-        "--write-pdf-metadata",
-        dest="write_pdf_metadata",
-        action="store_true",
-        help="Write new filename as PDF /Title metadata after rename.",
-    )
-
-
-def _add_language_case_project_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--language", default=None, choices=["de", "en"], help="Prompt language")
-    p.add_argument(
-        "--case",
-        dest="desired_case",
-        default=None,
-        choices=list(VALID_CASE_CHOICES),
-        help="Filename case format",
-    )
-    p.add_argument("--project", default=None, help="Optional project name")
-    p.add_argument("--version", default=None, help="Optional version")
-
-
-def _add_heuristic_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument(
-        "--no-llm",
-        dest="use_llm",
-        action="store_false",
-        help="Do not call LLM; use heuristics only for category, empty summary/keywords.",
-    )
-    p.add_argument(
-        "--prefer-llm",
-        dest="prefer_llm_category",
-        action="store_true",
-        help="On category conflict, use LLM (default). Heuristic fills gaps only.",
-    )
-    p.add_argument(
-        "--lenient-llm-json",
-        dest="lenient_llm_json",
-        action="store_true",
-        help="Try to extract JSON from LLM responses that don't start with '{' (regex fallback).",
-    )
-    p.add_argument(
-        "--prefer-heuristic",
-        dest="prefer_heuristic",
-        action="store_true",
-        help="On category conflict, use heuristic instead of LLM (legacy override).",
-    )
-    p.add_argument(
-        "--date-format",
-        dest="date_locale",
-        default=None,
-        choices=["dmy", "mdy"],
-        help="Date order: dmy (day-month-year) or mdy (month-day-year). Default: dmy",
-    )
-    p.add_argument(
-        "--date-prefer-leading-chars",
-        dest="date_prefer_leading_chars",
-        type=int,
-        default=8000,
-        metavar="N",
-        help="Prefer date from first N chars of text (default 8000). Use 0 to search full text.",
-    )
-    p.add_argument(
-        "--no-pdf-metadata-date",
-        dest="use_pdf_metadata_for_date",
-        action="store_false",
-        help="Do not use PDF CreationDate/ModDate as date fallback when content has no date.",
-    )
-    p.add_argument(
-        "--dry-run",
-        dest="dry_run",
-        action="store_true",
-        help="Do not rename files; only log what would be done.",
-    )
-    p.add_argument(
-        "--min-heuristic-gap",
-        dest="min_heuristic_score_gap",
-        type=float,
-        default=0.0,
-        metavar="DELTA",
-        help="Heuristic best category must lead by DELTA; else 'unknown'. Default: 0",
-    )
-    p.add_argument(
-        "--min-heuristic-score",
-        dest="min_heuristic_score",
-        type=float,
-        default=0.0,
-        metavar="T",
-        help="If heuristic score < T, prefer LLM category. Default: 0",
-    )
-    p.add_argument(
-        "--title-weight-region",
-        dest="title_weight_region",
-        type=int,
-        default=2000,
-        metavar="N",
-        help="Weight matches in first N chars by title-weight-factor (default 2000). Use 0 to disable.",
-    )
-    p.add_argument(
-        "--title-weight-factor",
-        dest="title_weight_factor",
-        type=float,
-        default=1.5,
-        metavar="F",
-        help="Multiplier for matches in title region. Default: 1.5",
-    )
-    p.add_argument(
-        "--max-score-per-category",
-        dest="max_score_per_category",
-        type=float,
-        default=None,
-        metavar="M",
-        help="Cap heuristic score per category at M. Default: no cap",
-    )
-    p.add_argument(
-        "--no-keyword-overlap",
-        dest="use_keyword_overlap_for_category",
-        action="store_false",
-        help="Disable keyword-overlap on category conflict (default: overlap on)",
-    )
-    p.add_argument(
-        "--embeddings-conflict",
-        dest="use_embeddings_for_conflict",
-        action="store_true",
-        help="Use embedding similarity (sentence-transformers) for conflict resolution. Requires [embeddings].",
-    )
-    p.add_argument(
-        "--category-display",
-        dest="category_display",
-        default="specific",
-        choices=["specific", "with_parent", "parent_only"],
-        help="Category in filename: specific | with_parent | parent_only",
-    )
-    p.add_argument(
-        "--skip-llm-if-heuristic-score-ge",
-        dest="skip_llm_category_if_heuristic_score_ge",
-        type=float,
-        default=None,
-        metavar="S",
-        help="Skip LLM category when heuristic score >= S (use with gap-ge)",
-    )
-    p.add_argument(
-        "--skip-llm-if-heuristic-gap-ge",
-        dest="skip_llm_category_if_heuristic_gap_ge",
-        type=float,
-        default=None,
-        metavar="G",
-        help="Skip LLM category when heuristic gap >= G (use with score-ge)",
-    )
-    p.add_argument(
-        "--heuristic-suggestions-top-n",
-        dest="heuristic_suggestions_top_n",
-        type=int,
-        default=5,
-        metavar="N",
-        help="Top-N heuristic categories passed to LLM as suggestions (default 5)",
-    )
-    p.add_argument(
-        "--heuristic-score-weight",
-        dest="heuristic_score_weight",
-        type=float,
-        default=0.15,
-        metavar="W",
-        help="Weight heuristic score in overlap comparison (default 0.15)",
-    )
-    p.add_argument(
-        "--heuristic-override-min-score",
-        dest="heuristic_override_min_score",
-        type=float,
-        default=None,
-        metavar="S",
-        help="When heuristic score >= S and gap >= override-min-gap, use heuristic",
-    )
-    p.add_argument(
-        "--heuristic-override-min-gap",
-        dest="heuristic_override_min_gap",
-        type=float,
-        default=None,
-        metavar="G",
-        help="When heuristic gap >= G and score >= override-min-score, use heuristic",
-    )
-    p.add_argument(
-        "--no-heuristic-override",
-        dest="no_heuristic_override",
-        action="store_true",
-        help="Disable high-confidence heuristic override (default: override at score>=0.55, gap>=0.3)",
-    )
-    p.add_argument(
-        "--no-constrained-llm",
-        dest="use_constrained_llm_category",
-        action="store_false",
-        help="Do not restrict LLM to heuristic category list (default: constrained)",
-    )
-    p.add_argument(
-        "--heuristic-leading-chars",
-        dest="heuristic_leading_chars",
-        type=int,
-        default=0,
-        metavar="N",
-        help="Use only first N chars of text for category heuristic (0 = full text)",
-    )
-    p.add_argument(
-        "--heuristic-long-doc-threshold",
-        dest="heuristic_long_doc_chars_threshold",
-        type=int,
-        default=40000,
-        metavar="N",
-        help="When text length >= N, use first --heuristic-long-doc-leading chars (0=off)",
-    )
-    p.add_argument(
-        "--heuristic-long-doc-leading",
-        dest="heuristic_long_doc_leading_chars",
-        type=int,
-        default=12000,
-        metavar="N",
-        help="For long docs, use first N chars for heuristic (default 12000)",
-    )
-    p.add_argument(
-        "--max-pages-for-extraction",
-        dest="max_pages_for_extraction",
-        type=int,
-        default=0,
-        metavar="N",
-        help="Extract text only from first N pages of each PDF (0 = all pages)",
-    )
-
-
-def _add_llm_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument(
-        "--llm-url",
-        dest="llm_base_url",
-        default=None,
-        metavar="URL",
-        help="LLM endpoint URL (default: env AI_PDF_RENAMER_LLM_URL or http://127.0.0.1:11434/v1/completions)",
-    )
-    p.add_argument(
-        "--llm-model",
-        dest="llm_model",
-        default=None,
-        metavar="MODEL",
-        help="LLM model name (default: env AI_PDF_RENAMER_LLM_MODEL or qwen3:8b)",
-    )
-    p.add_argument(
-        "--llm-timeout",
-        dest="llm_timeout_s",
-        type=float,
-        default=None,
-        metavar="SEC",
-        help="LLM request timeout in seconds (default: env AI_PDF_RENAMER_LLM_TIMEOUT or 60)",
-    )
-    p.add_argument(
-        "--max-tokens",
-        dest="max_tokens_for_extraction",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Max tokens for PDF text extraction (default: env AI_PDF_RENAMER_MAX_TOKENS or 120000)",
-    )
-    p.add_argument(
-        "--preset",
-        dest="preset",
-        default=None,
-        choices=["high-confidence-heuristic"],
-        help="Apply preset: high-confidence-heuristic = skip LLM when heuristic score>=0.5, gap>=0.3",
-    )
-
-
-def _add_output_and_ux_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument(
-        "--quiet",
-        dest="quiet",
-        action="store_true",
-        help="Less output (log level WARNING). Overridden by --verbose.",
-    )
-    p.add_argument(
-        "--verbose",
-        dest="verbose",
-        action="store_true",
-        help="More output (log level DEBUG). Overrides --quiet.",
-    )
-    p.add_argument(
-        "--log-file",
-        dest="log_file",
-        default=None,
-        metavar="PATH",
-        help="Log file path (default: env AI_PDF_RENAMER_LOG_FILE or error.log)",
-    )
-    p.add_argument(
-        "--log-level",
-        dest="log_level",
-        default=None,
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Log level (default: env AI_PDF_RENAMER_LOG_LEVEL or INFO). Overridden by --verbose/--quiet.",
-    )
-    p.add_argument(
-        "--ocr",
-        dest="use_ocr",
-        action="store_true",
-        help="Run OCR (OCRmyPDF) when PDF has little/no text (scanned PDFs). Requires [ocr] and Tesseract.",
-    )
-    p.add_argument(
-        "--skip-already-named",
-        dest="skip_if_already_named",
-        action="store_true",
-        help="Skip PDFs whose name already matches YYYYMMDD-*.pdf.",
-    )
-    p.add_argument(
-        "--backup-dir",
-        dest="backup_dir",
-        default=None,
-        metavar="DIR",
-        help="Copy each PDF to DIR before renaming (for undo).",
-    )
-    p.add_argument(
-        "--rename-log",
-        dest="rename_log_path",
-        default=None,
-        metavar="FILE",
-        help="Append old_path\\tnew_path to FILE after each rename.",
-    )
-    p.add_argument(
-        "--export-metadata",
-        dest="export_metadata_path",
-        default=None,
-        metavar="FILE",
-        help="Write proposed renames + category/summary/keywords to CSV or JSON (.csv/.json).",
-    )
-    p.add_argument(
-        "--max-filename-chars",
-        dest="max_filename_chars",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Truncate generated filenames to N characters (at separator).",
-    )
-    p.add_argument(
-        "--config",
-        dest="config",
-        default=None,
-        metavar="FILE",
-        help="Load defaults from JSON or YAML file; CLI options override.",
-    )
-    p.add_argument(
-        "--override-category-file",
-        dest="override_category_file",
-        default=None,
-        metavar="FILE",
-        help="CSV with filename,category to force category per file.",
-    )
-    p.add_argument(
-        "--workers",
-        dest="workers",
-        type=int,
-        default=1,
-        metavar="N",
-        help="Parallel workers for extract+generate (default 1). Renames applied sequentially.",
-    )
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Rename PDFs based on their content.")
-    _add_dirs_and_file_args(p.add_argument_group("Directories and files"))
-    _add_template_and_plan_args(p.add_argument_group("Template and plan"))
-    _add_language_case_project_args(p.add_argument_group("Language, case, project"))
-    _add_heuristic_args(p.add_argument_group("Heuristics and behaviour"))
-    _add_llm_args(p.add_argument_group("LLM"))
-    _add_output_and_ux_args(p.add_argument_group("Output and UX"))
-    return p
 
 
 def _resolve_option(
@@ -684,20 +216,28 @@ def _resolve_log_config(args: argparse.Namespace) -> tuple[str, int]:
 
 def _resolve_dirs(args: argparse.Namespace) -> tuple[list[str], str | None]:
     """Resolve directory list and optional single-file path from args. Raises SystemExit on error."""
-    single_file = getattr(args, "single_file", None)
+    single_file = getattr(args, "single_file", None) or getattr(args, "manual_file", None)
     dirs: list[str] = list(getattr(args, "dirs", None) or [])
     dirs_from_file = getattr(args, "dirs_from_file", None)
     if dirs_from_file:
         try:
-            dirs.extend(
-                line.strip() for line in Path(dirs_from_file).read_text(encoding="utf-8").splitlines() if line.strip()
-            )
+            lines = Path(dirs_from_file).read_text(encoding="utf-8").splitlines()
+            # Cap to avoid unbounded memory on huge or malicious input (P3).
+            _MAX_DIRS_FROM_FILE_LINES = 10_000
+            if len(lines) > _MAX_DIRS_FROM_FILE_LINES:
+                logger.warning(
+                    "--dirs-from-file has %s lines; using first %s only.",
+                    len(lines),
+                    _MAX_DIRS_FROM_FILE_LINES,
+                )
+                lines = lines[:_MAX_DIRS_FROM_FILE_LINES]
+            dirs.extend(line.strip() for line in lines if line.strip())
         except OSError as e:
             raise SystemExit(f"Error: could not read --dirs-from-file: {e}") from e
     if single_file:
         single_path = Path(single_file).resolve()
         if not single_path.is_file():
-            raise SystemExit(f"Error: --file must be an existing file: {single_path}")
+            raise SystemExit(f"Error: --file/--manual must be an existing file: {single_path}")
         dirs = [str(single_path.parent)]
     if not dirs:
         if _is_interactive():
@@ -722,7 +262,7 @@ def _resolve_dirs(args: argparse.Namespace) -> tuple[list[str], str | None]:
     if not resolved_dirs:
         msg = (
             "Error: --dir must be non-empty. Provide a path or set the directory when prompted."
-            if (dirs and not single_file) # Use original 'dirs' to check if any were provided before filtering
+            if (dirs and not single_file)  # Use original 'dirs' to check if any were provided before filtering
             else "Error: at least one directory or --file is required. Use --dir or --file."
         )
         raise SystemExit(msg)
@@ -792,6 +332,24 @@ def _build_config_from_args(
 
     x_max_tokens = getattr(args, "max_tokens_for_extraction", None)
     max_tokens_for_extraction = int(x_max_tokens) if x_max_tokens is not None and x_max_tokens > 0 else None
+    x_max_content = getattr(args, "max_content_chars", None) or os.environ.get("AI_PDF_RENAMER_MAX_CONTENT_CHARS")
+    max_content_chars = None
+    if x_max_content not in (None, ""):
+        try:
+            n = int(x_max_content)
+            max_content_chars = n if n > 0 else None
+        except (TypeError, ValueError):
+            max_content_chars = None
+    x_max_content_tokens = getattr(args, "max_content_tokens", None) or os.environ.get(
+        "AI_PDF_RENAMER_MAX_CONTENT_TOKENS"
+    )
+    max_content_tokens = None
+    if x_max_content_tokens not in (None, ""):
+        try:
+            n = int(x_max_content_tokens)
+            max_content_tokens = n if n > 0 else None
+        except (TypeError, ValueError):
+            max_content_tokens = None
     x_max_filename = getattr(args, "max_filename_chars", None)
     max_filename_chars = int(x_max_filename) if x_max_filename is not None and x_max_filename > 0 else None
 
@@ -828,6 +386,8 @@ def _build_config_from_args(
         "llm_model": getattr(args, "llm_model", None) or None,
         "llm_timeout_s": getattr(args, "llm_timeout_s", None),
         "max_tokens_for_extraction": max_tokens_for_extraction,
+        "max_content_chars": max_content_chars,
+        "max_content_tokens": max_content_tokens,
         "use_ocr": _bool_opt(args, "use_ocr", False),
         "skip_if_already_named": _bool_opt(args, "skip_if_already_named", False),
         "backup_dir": getattr(args, "backup_dir", None) or None,
@@ -839,6 +399,10 @@ def _build_config_from_args(
             if getattr(args, "override_category_file", None)
             else None
         ),
+        "rules_file": getattr(args, "rules_file", None) or None,
+        "post_rename_hook": getattr(args, "post_rename_hook", None)
+        or os.environ.get("AI_PDF_RENAMER_POST_RENAME_HOOK")
+        or None,
         "workers": max(1, _int_opt(args, "workers", 1)),
         "recursive": _bool_opt(args, "recursive", False),
         "max_depth": _int_opt(args, "max_depth", 0),
@@ -847,11 +411,24 @@ def _build_config_from_args(
         "filename_template": getattr(args, "filename_template", None) or file_defaults.get("filename_template"),
         "use_structured_fields": _bool_opt(args, "use_structured_fields", True),
         "plan_file_path": getattr(args, "plan_file_path", None) or None,
-        "interactive": _bool_opt(args, "interactive", False),
+        "interactive": _bool_opt(args, "interactive", False) or bool(getattr(args, "manual_file", None)),
+        "manual_mode": bool(getattr(args, "manual_file", None)),
         "write_pdf_metadata": _bool_opt(args, "write_pdf_metadata", False),
         "use_llm": _bool_opt(args, "use_llm", True),
         "lenient_llm_json": _bool_opt(args, "lenient_llm_json", False),
+        "use_timestamp_fallback": _bool_opt(args, "use_timestamp_fallback", True),
+        "timestamp_fallback_segment": _str_opt(args, "timestamp_fallback_segment", "document"),
+        "simple_naming_mode": _bool_opt(args, "simple_naming_mode", False),
+        "use_vision_fallback": _bool_opt(args, "use_vision_fallback", False)
+        or (os.environ.get("AI_PDF_RENAMER_USE_VISION_FALLBACK") or "").strip().lower() in ("1", "true", "yes"),
+        "vision_fallback_min_text_len": _int_opt(args, "vision_fallback_min_text_len", 50),
+        "vision_model": getattr(args, "vision_model", None) or None,
+        "vision_first": _bool_opt(args, "vision_first", False)
+        or (os.environ.get("AI_PDF_RENAMER_VISION_FIRST") or "").strip().lower() in ("1", "true", "yes"),
     }
+    if getattr(args, "preset", None) == "scanned":
+        kwargs["use_vision_fallback"] = True
+        kwargs["simple_naming_mode"] = True
     try:
         return RenamerConfig(**kwargs)
     except ValueError as exc:
@@ -879,7 +456,6 @@ def _run_renamer_or_watch(
             for directory in dirs:
                 if not directory:
                     continue
-                path_obj = Path(directory)
                 files_override = None
                 if single_file:
                     single_path = Path(single_file).resolve()
@@ -903,7 +479,7 @@ def _run_renamer_or_watch(
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = _build_parser()
+    parser = build_parser()
     args = parser.parse_args(argv)
 
     log_file, log_level = _resolve_log_config(args)

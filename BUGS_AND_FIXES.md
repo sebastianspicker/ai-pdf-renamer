@@ -8,6 +8,8 @@ List derived from documentation, known limitations, and code review. Each item c
 
 ### 1. [Bug] Empty `--dir` is treated as current directory
 
+**Status:** ✅ FIXED (2026-02-23)
+
 **Description:** When `--dir ""` is passed (e.g. from `--dir "$DIR"` with unset variable), the CLI uses the current working directory. There is no validation that the directory argument is non-empty before calling `rename_pdfs_in_directory()`.
 
 **Impact:** Accidental bulk renames in whatever directory the command is run from (data integrity risk).
@@ -20,6 +22,8 @@ List derived from documentation, known limitations, and code review. Each item c
 
 ### 2. [Bug/Operational] CLI is implicitly interactive; blocks when flags are omitted
 
+**Status:** ✅ FIXED (2026-02-23)
+
 **Description:** If `--dir`, `--language`, `--case`, or optional `--project`/`--version` are omitted, the tool prompts for input. There is no non-interactive default for "optional" parameters.
 
 **Impact:** In CI, cron, or any run without a TTY/stdin, the process can block indefinitely. "Optional" in docs does not match behavior (no silent default).
@@ -31,6 +35,8 @@ List derived from documentation, known limitations, and code review. Each item c
 ---
 
 ### 3. [Bug] LLM variability and non-JSON output
+
+**Status:** ✅ FIXED (2026-02-23)
 
 **Description:** Some local LLMs return non-JSON or partial answers. The code retries with fallback prompts but may still return `na` or empty; response parsing rejects anything not starting with `{` (no extraction from code fences or leading prose).
 
@@ -68,6 +74,8 @@ List derived from documentation, known limitations, and code review. Each item c
 
 ### 6. [Bug/Config] Data files not found – unclear or traceback
 
+**Status:** ✅ FIXED (2026-02-23)
+
 **Description:** When data files (e.g. `heuristic_scores.json`, `meta_stopwords.json`) are missing, `data_path()` now raises a clear `FileNotFoundError`. Malformed JSON in those files still raises `json.JSONDecodeError` and is not caught at CLI level. Unsupported `data_path(filename)` raises `ValueError`.
 
 **Impact:** Missing files: clear message. Malformed JSON or wrong filename: traceback instead of user-facing error.
@@ -82,6 +90,8 @@ List derived from documentation, known limitations, and code review. Each item c
 
 ### 7. [Enhancement] Guard interactive prompts against EOF/KeyboardInterrupt
 
+**Status:** ✅ FIXED (2026-02-23)
+
 **Description:** `input()` and `_prompt_choice()` have no try/except; EOF (Ctrl-D) or Ctrl-C during prompts can raise `EOFError`/`KeyboardInterrupt` and produce a traceback.
 
 **Fix:** Wrap interactive input in try/except; on EOF/KeyboardInterrupt, print a short message and exit with a non-zero code (e.g. 130 for interrupt).
@@ -91,6 +101,8 @@ List derived from documentation, known limitations, and code review. Each item c
 ---
 
 ### 8. [Enhancement] Broader top-level exception handling in CLI
+
+**Status:** ✅ FIXED (2026-02-23)
 
 **Description:** `main()` only catches `(FileNotFoundError, NotADirectoryError, OSError)` around the rename flow. JSON decode errors, `ValueError` from data_paths, PDF/LLM library errors, etc. result in an unhandled traceback.
 
@@ -102,6 +114,8 @@ List derived from documentation, known limitations, and code review. Each item c
 
 ### 9. [Enhancement] Distinguish "empty PDF" from "extraction failed"
 
+**Status:** ✅ FIXED (2026-02-23)
+
 **Description:** When `pdf_to_text()` returns `""`, the renamer logs "PDF appears to be empty. Skipping." and continues. The same behavior occurs when the PDF could not be opened, is encrypted, or extraction raised and was swallowed inside `pdf_to_text()`.
 
 **Fix:** Differentiate: e.g. let `pdf_to_text()` signal failure (return a sentinel or raise), or document that "empty" includes extraction failure; consider logging at WARNING when content is empty and the file is non-zero size.
@@ -111,6 +125,8 @@ List derived from documentation, known limitations, and code review. Each item c
 ---
 
 ### 10. [Enhancement] Per-file error containment in batch rename
+
+**Status:** ✅ FIXED (2026-02-23)
 
 **Description:** A single exception during PDF extraction or filename generation (e.g. malformed JSON in data, LLM crash) aborts the entire directory run with no summary of which files succeeded or failed.
 
@@ -122,6 +138,8 @@ List derived from documentation, known limitations, and code review. Each item c
 
 ### 11. [Enhancement] `--dir` help text and default behavior aligned
 
+**Status:** ✅ FIXED (2026-02-23)
+
 **Description:** Help says "default: ./input_files" but the parser default is `None` and the actual default is applied only after prompting when `--dir` is omitted.
 
 **Fix:** Document that when `--dir` is omitted the tool prompts, or implement a real default (e.g. `./input_files`) when not in interactive mode.
@@ -132,6 +150,8 @@ List derived from documentation, known limitations, and code review. Each item c
 
 ### 12. [Enhancement] Filename length and cross-platform safety
 
+**Status:** ✅ FIXED (2026-02-23)
+
 **Description:** No total filename-length cap; long LLM keywords/summary or long project/version can exceed path-component limits (e.g. 255 bytes) and cause `os.rename()` to fail (e.g. ENAMETOOLONG), aborting the run. `clean_token()` does not handle all reserved names (e.g. trailing dots, device names on Windows).
 
 **Fix:** Enforce a max filename length (e.g. truncate or cap segment lengths); harden `clean_token()` for reserved names and trailing/control chars; document platform limits.
@@ -141,6 +161,8 @@ List derived from documentation, known limitations, and code review. Each item c
 ---
 
 ### 13. [Operational] Stuck or ambiguous run summary
+
+**Status:** ✅ FIXED (2026-02-23)
 
 **Description:** When no PDFs are found or all are skipped, there is no explicit user-facing summary; success vs. no-op can be ambiguous.
 
@@ -154,6 +176,8 @@ List derived from documentation, known limitations, and code review. Each item c
 
 ### 14. [Bug] Rename loop TOCTOU: non-atomic exists check and rename
 
+**Status:** ⚠️ DOCUMENTED (2026-02-23) - Added warning in docstring
+
 **Description:** The code checks `target.exists()` then later calls `os.rename(file_path, target)`. Another process can create `target` in between, leading to overwrite (data loss) or platform-dependent rename failure.
 
 **Impact:** Concurrent runs or external tools creating files in the same directory can cause overwrites or unpredictable failures.
@@ -166,6 +190,8 @@ List derived from documentation, known limitations, and code review. Each item c
 
 ### 15. [Bug] LLM response parsing can crash on empty/invalid `choices`
 
+**Status:** ✅ FIXED (2026-02-23)
+
 **Description:** `LocalLLMClient.complete()` uses `data.get("choices", [{}])[0].get("text", "").strip()`. If the server returns `"choices": []`, indexing `[0]` raises `IndexError`. If `text` is not a string, `.strip()` raises `AttributeError`. These are not caught by the current `except (requests.RequestException, json.JSONDecodeError)`.
 
 **Impact:** A single bad or empty LLM response can abort the entire rename run with a traceback.
@@ -177,6 +203,8 @@ List derived from documentation, known limitations, and code review. Each item c
 ---
 
 ### 16. [Bug] Security: proxy can route "local" LLM traffic off-device
+
+**Status:** ✅ FIXED (2026-02-23)
 
 **Description:** `requests.post(self.base_url, ...)` honors proxy env vars (e.g. `HTTP_PROXY`). If the environment has a proxy and loopback is not in `NO_PROXY`, requests to `http://127.0.0.1:11434` can be sent via the proxy, exposing PDF-derived prompt content off-device.
 
@@ -192,6 +220,8 @@ List derived from documentation, known limitations, and code review. Each item c
 
 ### 17. [Bug] Collision suffix logic can skip suffixes (e.g. `_1`) under races
 
+**Status:** ✅ FIXED (2026-02-23) - MAX_RENAME_RETRIES=20 added
+
 **Description:** On `FileExistsError`, the code increments `counter` and builds a new target. Depending on ordering, the first retry can be `base_2` instead of `base_1`; combined with the `exists()` loop, suffix numbering can be inconsistent.
 
 **Fix:** Ensure suffix progression is deterministic (e.g. re-check existing files and pick the next free suffix in one place); document best-effort behavior under concurrency.
@@ -201,6 +231,8 @@ List derived from documentation, known limitations, and code review. Each item c
 ---
 
 ### 18. [Bug] Unbounded retry loop on rename under contention
+
+**Status:** ✅ FIXED (2026-02-23) - MAX_RENAME_RETRIES=20 added
 
 **Description:** The rename loop has no upper bound on retries. If another process repeatedly creates the next candidate filename, the loop can run indefinitely.
 
@@ -212,11 +244,57 @@ List derived from documentation, known limitations, and code review. Each item c
 
 ### 19. [Bug] EXDEV fallback (copy2 + unlink) is non-atomic
 
+**Status:** ✅ FIXED (2026-02-23)
+
 **Description:** Cross-filesystem rename uses `shutil.copy2` then `file_path.unlink()`. On unlink failure the code removes the target and re-raises, but copy failure is not wrapped; crashes or I/O errors can leave duplicate or partial files.
 
 **Fix:** On copy failure, remove the target if it was created; document that EXDEV path is best-effort and that duplicates are possible on failure.
 
 **Sources:** `src/ai_pdf_renamer/renamer.py:221-235`
+
+---
+
+## New Issues Found (2026-02-23 Code Review)
+
+### 20. [P0-Critical] Missing `import os` in pdf_extract.py
+
+**Status:** ✅ FIXED (2026-02-23)
+
+**Description:** The function `_ocr_language_code()` in `pdf_extract.py` uses `os.environ.get("AI_PDF_RENAMER_OCR_LANG")` but the `os` module was never imported in this file. This causes a `NameError` at runtime when OCR is used.
+
+**Impact:** OCR feature completely broken - any use of `--ocr` flag would crash with `NameError: name 'os' is not defined`.
+
+**Fix:** Added `import os` to the imports at the top of `pdf_extract.py`.
+
+**Sources:** `src/ai_pdf_renamer/pdf_extract.py:130`
+
+---
+
+### 21. [P2-Enhancement] ReDoS risk via heuristic regex patterns
+
+**Status:** ✅ DOCUMENTED (2026-02-23) - Added security note in docstring
+
+**Description:** The `_score_text()` function applies regex patterns loaded from `heuristic_scores.json`. If a malicious pattern with catastrophic backtracking is inserted, it could cause denial of service.
+
+**Mitigating factors:** Text length is capped at 100,000 characters, and patterns are loaded from a local file (not user input).
+
+**Fix:** Added security documentation in `_score_text()` docstring noting that pattern files should only be modified by trusted users.
+
+**Sources:** `src/ai_pdf_renamer/heuristics.py:105-133`
+
+---
+
+### 22. [P2-Enhancement] Global mutable state for sessions/cache
+
+**Status:** ✅ DOCUMENTED (2026-02-23) - Added thread-safety notes
+
+**Description:** Global variables `_llm_sessions`, `_CATEGORY_ALIASES`, and `_embedding_model` are mutable and could cause issues in multi-threaded environments.
+
+**Mitigating factors:** `_llm_sessions` has a lock (`_llm_sessions_lock`), and the application is primarily single-threaded.
+
+**Fix:** Added documentation comments noting thread-safety considerations and suggesting dependency injection for multi-process deployments.
+
+**Sources:** `src/ai_pdf_renamer/llm.py:16-17`, `src/ai_pdf_renamer/heuristics.py:286,342`
 
 ---
 
@@ -353,6 +431,32 @@ List derived from documentation, known limitations, and code review. Each item c
 | Block/hang | Missing flags in non-interactive run | Pass all args or ensure stdin; §2 |
 | Accidental rename in cwd | `--dir ""` | Reject empty dir; §1 |
 | Proxy sending data off-device | Proxy set, loopback not in NO_PROXY | §16; disable proxy for client or set NO_PROXY |
+
+---
+
+## Deep code inspection (2026-02-28)
+
+Findings from a thorough pass over `src/ai_pdf_renamer` (excluding `_local`) for potential errors and security risks. Prioritized P0 (critical) through P3 (nice-to-have).
+
+### Suspicious areas and priority
+
+| ID | Area | Why suspicious | Priority | Why it could occur |
+|----|------|----------------|----------|---------------------|
+| D1 | Post-rename hook uses `shell=True` | Hook string is executed by the shell; if it ever included user-controlled content (e.g. PDF or filename), risk of injection. Paths are passed via env vars only. | P2 | Design: user configures the hook; doc must state not to embed untrusted data. |
+| D2 | `_load_override_category_map`: `except OSError: pass` | Silently returns empty dict on permission error or lock; user may believe overrides are applied when they are not. | P2 | Intent was to allow missing file; OSError also covers unreadable file. |
+| D3 | `--dirs-from-file`: `read_text()` loads entire file | Very large file could cause MemoryError or long delay. | P3 | No line limit; edge case for misconfigured or malicious input. |
+| D4 | `rename_log_path` / `export_metadata_path` | User can set any path; we create parent and write. Could write into sensitive location if user config is wrong. | P3 | By design (user-controlled paths); document as operator responsibility. |
+| D5 | PDF paths / symlinks | Opening PDFs under a directory could follow symlinks to sensitive files (e.g. /etc/shadow). | P3 | Standard for file tools; document or accept. |
+| D6 | `data_path(filename)` | Only allows fixed allowlist of filenames; no path traversal. `data_dir()` is env-controlled. | OK | Allowlist prevents `../` in filename. |
+| D7 | Override category CSV: keys/values | Keys are basenames (lookup); values go through filename pipeline (sanitized). No path injection. | OK | Sanitization in place. |
+| D8 | Config validation | `RenamerConfig.__post_init__` validates desired_case, date_locale, category_display. | OK | Invoked on build. |
+| D9 | ReDoS in heuristics | Heuristic regex runs on capped text (`max_text_length`). | OK | Documented and mitigated in code. |
+
+### Resolution plan
+
+- **P0/P1:** None identified; existing BUGS_AND_FIXES items cover critical/breaking items.
+- **P2:** D1 → document in SECURITY.md (done); D2 → log OSError in _load_override_category_map (done).
+- **P3:** D3 → cap lines read from dirs-from-file at 10_000 (done); D4/D5 → document only (paths and PDF/symlinks are operator responsibility; see SECURITY.md for hook).
 
 ---
 

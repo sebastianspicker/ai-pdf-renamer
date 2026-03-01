@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import logging
+import os
 import re
 import tempfile
 from datetime import date
@@ -14,6 +16,9 @@ _PDF_DATE_PREFIX = re.compile(r"^D:(\d{4})(\d{2})(\d{2})")
 
 # Minimum extracted characters below which we try OCR (image-only PDFs).
 MIN_CHARS_BEFORE_OCR = 50
+
+# Default DPI for first-page render when using vision fallback.
+VISION_FALLBACK_DPI = 300
 
 # Default token limit for local LLMs: 32K is more compatible than 128K.
 # reserve ~4K tokens for prompt + response.
@@ -121,6 +126,62 @@ def pdf_to_text(
         return ""
 
     return _shrink_to_token_limit(content, max_tokens=max_tokens)
+
+
+def pdf_first_page_to_image_base64(
+    filepath: str | Path | None,
+    *,
+    dpi: int = VISION_FALLBACK_DPI,
+) -> str | None:
+    """
+    Render the first page of the PDF to an image and return base64-encoded JPEG.
+    Returns None if rendering fails (no fitz, encrypted, or error).
+    Used by the optional vision fallback when text extraction is empty or very short.
+    """
+    if filepath is None:
+        return None
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:
+        return None
+    path = Path(filepath)
+    try:
+        doc = fitz.open(path)
+    except Exception as exc:
+        logger.debug("Could not open PDF for vision render %s: %s", path.name, exc)
+        return None
+    try:
+        if getattr(doc, "is_encrypted", False):
+            logger.debug("PDF %s is encrypted; skipping vision render.", path.name)
+            return None
+        page_count = getattr(doc, "page_count", 0) or 0
+        if page_count == 0:
+            return None
+        page = doc.load_page(0)
+        pix = page.get_pixmap(dpi=dpi, alpha=False)
+        # Prefer JPEG for smaller payload; Pixmap.tobytes(output=...) in PyMuPDF 1.23+.
+        image_bytes: bytes
+        if hasattr(pix, "tobytes"):
+            try:
+                image_bytes = pix.tobytes(output="jpeg", jpg_quality=85)  # type: ignore[attr-defined]
+            except (TypeError, ValueError):
+                image_bytes = pix.tobytes(output="png")  # type: ignore[attr-defined]
+        elif hasattr(pix, "getImageData"):
+            image_bytes = pix.getImageData("jpeg")  # type: ignore[attr-defined]
+        elif hasattr(pix, "getPNGData"):
+            image_bytes = pix.getPNGData()  # type: ignore[attr-defined]
+        else:
+            return None
+        if not image_bytes:
+            return None
+        return base64.b64encode(image_bytes).decode("ascii")
+    except Exception as exc:
+        logger.debug("Vision render failed for %s: %s", path.name, exc)
+        return None
+    finally:
+        closer = getattr(doc, "close", None)
+        if callable(closer):
+            closer()
 
 
 def _ocr_language_code(lang: str) -> str:

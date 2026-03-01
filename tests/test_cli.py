@@ -235,23 +235,25 @@ def test_cli_renames_with_mocked_llm_no_network(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(cli, "setup_logging", lambda **k: None)
     monkeypatch.setattr(cli, "_is_interactive", lambda: False)
 
+    import ai_pdf_renamer.filename as filename_mod
+
     monkeypatch.setattr(
-        renamer,
+        filename_mod,
         "get_document_summary",
         lambda *args, **kwargs: "Mocked summary for testing",
     )
     monkeypatch.setattr(
-        renamer,
+        filename_mod,
         "get_document_keywords",
         lambda *args, **kwargs: ["mock", "keywords"],
     )
     monkeypatch.setattr(
-        renamer,
+        filename_mod,
         "get_document_category",
         lambda *args, **kwargs: "document",
     )
     monkeypatch.setattr(
-        renamer,
+        filename_mod,
         "get_final_summary_tokens",
         lambda *args, **kwargs: ["mocked", "tokens"],
     )

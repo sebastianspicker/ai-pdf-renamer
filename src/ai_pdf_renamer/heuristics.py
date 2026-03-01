@@ -112,6 +112,14 @@ def _score_text(
     max_score_per_category: float | None = None,
     max_text_length: int = 100000,
 ) -> dict[str, float]:
+    """
+    Score text against heuristic rules. Returns dict of category -> score.
+
+    Security note: Regex patterns are loaded from heuristic_scores.json. To prevent
+    ReDoS (Regular Expression Denial of Service), the text length is capped at
+    max_text_length characters. Only trusted users should modify heuristic pattern files.
+    Pattern files should be validated for catastrophic backtracking before deployment.
+    """
     scores: dict[str, float] = {}
     # Mitigate potential ReDoS by capping the text length searched by regexes.
     search_text = text if len(text) <= max_text_length else text[:max_text_length]
@@ -275,6 +283,9 @@ class HeuristicScorer:
         return category
 
 
+# Global cache for category aliases (loaded once from category_aliases.json).
+# Thread-safe for read-only access after initialization. If concurrent reloads
+# are needed, add a threading.Lock similar to llm.py's _llm_sessions_lock.
 _CATEGORY_ALIASES: dict[str, str] | None = None
 
 
@@ -328,6 +339,9 @@ def _overlap_count(category_tokens: set[str], context_tokens: set[str]) -> int:
     return len(category_tokens & context_tokens)
 
 
+# Global cache for embedding model (loaded lazily when embeddings feature is used).
+# Thread-safe for read-only access after initialization. For multi-threaded init,
+# consider adding a threading.Lock similar to llm.py's _llm_sessions_lock.
 _embedding_model: object = None
 
 

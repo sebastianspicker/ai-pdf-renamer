@@ -31,7 +31,7 @@ flowchart TB
 ```
 
 - **Entry:** CLI (`ai-pdf-renamer --dir <path>`) or GUI (folder picker, options, dry-run/apply).
-- **Per PDF:** Extract text → generate filename (date + heuristic + optional LLM → combine → build) → rename with collision handling.
+- **Per PDF:** Extract text (or, when `--vision-fallback` and text short, first-page image → Ollama vision) → generate filename (date + heuristic + optional LLM → combine → build; or `--simple-naming` for one LLM call; or timestamp fallback when both heuristic and LLM fail) → rename with collision handling.
 - **Data:** `heuristic_scores.json`, `meta_stopwords.json` (and optional `category_aliases.json`) from package data or `AI_PDF_RENAMER_DATA_DIR`.
 
 ## 3. Component map
@@ -55,18 +55,26 @@ flowchart TB
 │  .pdf only, sorted by mtime (newest first). Per file: extract → name → rename│
 └─────────────────────────────────────────────────────────────────────────────┘
         │
+        ├── config.py         RenamerConfig, build_config_from_flat_dict
+        ├── filename.py       Date, category, keywords, summary → filename (generate_filename)
+        ├── loaders.py        default_stopwords, default_heuristic_scorer, load_meta_stopwords
         ├── pdf_extract.py    PDF → raw text (PyMuPDF)
-        ├── renamer.py        generate_filename(), collision handling, os.rename
-        ├── llm.py            Summary, keywords, category, final tokens (HTTP)
-        ├── heuristics.py     Regex scoring → category (heuristic_scores.json)
+        ├── renamer.py        Orchestration, extract, rename loop, export/hooks (re-exports config, filename)
+        ├── llm.py            Client, document APIs (re-exports schema, parsing; uses llm_prompts)
+        ├── llm_schema.py     DocumentAnalysisResult, validate_llm_document_result
+        ├── llm_parsing.py    parse_json_field, truncate_for_llm, _replace_prompt_placeholders
+        ├── llm_prompts.py    Summary/category prompt builders (text in/out)
+        ├── heuristics.py      Regex scoring → category (heuristic_scores.json)
         ├── text_utils.py     Date, stopwords, clean_token, case, subtract_tokens
-        └── data_paths.py     Resolve heuristic_scores.json, meta_stopwords.json
+        ├── data_paths.py     Resolve heuristic_scores.json, meta_stopwords.json
+        └── cli_parser.py     build_parser() for CLI (used by cli.py)
 ```
 
 ## 4. Layer dependencies (logical)
 
-- **CLI** depends on **Renamer** and **Config**.
-- **Renamer** depends on: **pdf_extract**, **llm**, **heuristics**, **text_utils**, **data_paths**.
+- **CLI** depends on **cli_parser**, **Renamer**, and **Config**.
+- **Renamer** depends on: **config**, **filename**, **loaders**, **pdf_extract**, **llm**, **heuristics**, **text_utils**, **data_paths**, **rename_ops**, **rules**.
+- **LLM** (llm.py) depends on: **llm_schema**, **llm_parsing**, **llm_prompts**, **text_utils**.
 - **Data:** JSON config under package data or `AI_PDF_RENAMER_DATA_DIR`; no DB.
 
 Strict layering is not enforced by linters (small codebase); this document is the architectural contract. New code should not introduce circular imports or bypass these boundaries.
@@ -78,6 +86,7 @@ Strict layering is not enforced by linters (small codebase); this document is th
 | 1 | cli.py | Directory, language, case, project, version, prefer_llm, date_format |
 | 2 | renamer.py | List PDFs, sort by mtime |
 | 3 | pdf_extract.py | Extract text (PyMuPDF); single strategy per page (text → blocks → rawdict fallback) |
+| 3b | renamer/llm | When `max_content_chars` is set, truncate text to this length before any LLM call (summary, simple naming) |
 | 4 | llm.py | Summary (chunked if long; doc-type hint when heuristic suggests type), keywords (optional suggested_category), category, final_summary_tokens (JSON) |
 | 5 | heuristics.py | Regex category from heuristic_scores.json (optionally on leading chars for long docs); combine with LLM (heuristic wins unless prefer_llm) |
 | 6 | text_utils.py | Date from content (optional prefer_leading_chars; Stand:/Datum:/month-year formats), stopwords filter, clean_token, case, subtract_tokens |
@@ -95,8 +104,8 @@ Strict layering is not enforced by linters (small codebase); this document is th
 |------|------|
 | `src/ai_pdf_renamer/cli.py` | Argument parsing, prompts, RenamerConfig, call renamer |
 | `src/ai_pdf_renamer/renamer.py` | Directory iteration, generate_filename, collision, rename |
-| `src/ai_pdf_renamer/pdf_extract.py` | pdf_to_text (PyMuPDF) |
-| `src/ai_pdf_renamer/llm.py` | LocalLLMClient, JSON parsing, chunking for long text |
+| `src/ai_pdf_renamer/pdf_extract.py` | pdf_to_text (PyMuPDF), pdf_first_page_to_image_base64 (vision fallback) |
+| `src/ai_pdf_renamer/llm.py` | LocalLLMClient, complete_vision (Ollama /api/chat), JSON parsing, schema validation, chunking |
 | `src/ai_pdf_renamer/heuristics.py` | HeuristicScorer, load_heuristic_rules, combine_categories |
 | `src/ai_pdf_renamer/text_utils.py` | Dates, stopwords, clean_token, convert_case, subtract_tokens |
 | `src/ai_pdf_renamer/data_paths.py` | data_path(filename) for allowed JSON data files |

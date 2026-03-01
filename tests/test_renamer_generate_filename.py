@@ -11,17 +11,17 @@ from ai_pdf_renamer.text_utils import Stopwords
 
 
 def test_generate_filename_stopwords_and_dedup(monkeypatch) -> None:
-    import ai_pdf_renamer.renamer as renamer_mod
+    import ai_pdf_renamer.filename as filename_mod
 
-    monkeypatch.setattr(renamer_mod, "get_document_summary", lambda *a, **k: "Some summary")
+    monkeypatch.setattr(filename_mod, "get_document_summary", lambda *a, **k: "Some summary")
     monkeypatch.setattr(
-        renamer_mod,
+        filename_mod,
         "get_document_keywords",
         lambda *a, **k: ["invoice", "summary", "tax"],
     )
-    monkeypatch.setattr(renamer_mod, "get_document_category", lambda *a, **k: "invoice")
+    monkeypatch.setattr(filename_mod, "get_document_category", lambda *a, **k: "invoice")
     monkeypatch.setattr(
-        renamer_mod,
+        filename_mod,
         "get_final_summary_tokens",
         lambda *a, **k: ["invoice", "payment", "json"],
     )
@@ -50,12 +50,12 @@ def test_generate_filename_stopwords_and_dedup(monkeypatch) -> None:
 
 
 def test_generate_filename_camel_case(monkeypatch) -> None:
-    import ai_pdf_renamer.renamer as renamer_mod
+    import ai_pdf_renamer.filename as filename_mod
 
-    monkeypatch.setattr(renamer_mod, "get_document_summary", lambda *a, **k: "x")
-    monkeypatch.setattr(renamer_mod, "get_document_keywords", lambda *a, **k: ["Foo Bar"])
-    monkeypatch.setattr(renamer_mod, "get_document_category", lambda *a, **k: "My Category")
-    monkeypatch.setattr(renamer_mod, "get_final_summary_tokens", lambda *a, **k: ["Baz"])
+    monkeypatch.setattr(filename_mod, "get_document_summary", lambda *a, **k: "x")
+    monkeypatch.setattr(filename_mod, "get_document_keywords", lambda *a, **k: ["Foo Bar"])
+    monkeypatch.setattr(filename_mod, "get_document_category", lambda *a, **k: "My Category")
+    monkeypatch.setattr(filename_mod, "get_final_summary_tokens", lambda *a, **k: ["Baz"])
 
     name, _ = generate_filename(
         "2024-02-01",

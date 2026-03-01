@@ -16,10 +16,17 @@ import sys
 import threading
 import tkinter as tk
 from collections.abc import Callable
+from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from .logging_utils import setup_logging
-from .renamer import RenamerConfig, build_config_from_flat_dict, rename_pdfs_in_directory
+from .rename_ops import apply_single_rename, sanitize_filename_base
+from .renamer import (
+    RenamerConfig,
+    build_config_from_flat_dict,
+    rename_pdfs_in_directory,
+    suggest_rename_for_file,
+)
 
 # --- Constants for theming ---
 FONT_FAMILY = "Helvetica"
@@ -123,10 +130,20 @@ def _build_config_from_gui(vars: dict) -> RenamerConfig:
         "rename_log_path": (vars["rename_log"].get() or "").strip() or None,
         "write_pdf_metadata": vars["write_pdf_metadata"].get(),
         "filename_template": (vars["template"].get() or "").strip() or None,
+        "use_timestamp_fallback": True,
+        "timestamp_fallback_segment": "document",
+        "simple_naming_mode": vars["simple_naming_mode"].get(),
+        "use_vision_fallback": vars["use_vision_fallback"].get(),
+        "vision_fallback_min_text_len": 50,
+        "vision_model": None,
+        "vision_first": vars["vision_first"].get(),
         "workers": 1,
         "skip_llm_category_if_heuristic_score_ge": skip_llm_score,
         "skip_llm_category_if_heuristic_gap_ge": skip_llm_gap,
     }
+    if preset == "scanned":
+        data["use_vision_fallback"] = True
+        data["simple_naming_mode"] = True
     return build_config_from_flat_dict(data)
 
 
@@ -165,6 +182,9 @@ def main() -> None:
     vars["recursive"] = tk.BooleanVar(value=False)
     vars["write_pdf_metadata"] = tk.BooleanVar(value=False)
     vars["preset"] = tk.StringVar(value="")
+    vars["use_vision_fallback"] = tk.BooleanVar(value=False)
+    vars["simple_naming_mode"] = tk.BooleanVar(value=False)
+    vars["vision_first"] = tk.BooleanVar(value=False)
     vars["dark_theme"] = tk.BooleanVar(value=False)
 
     # --- Directory ---
@@ -183,6 +203,23 @@ def main() -> None:
             dir_var.set(path)
 
     ttk.Button(row_dir, text="Browse…", command=choose_dir).pack(side=tk.LEFT)
+
+    single_file_var = tk.StringVar(value="")
+    row_single = ttk.Frame(f_dir)
+    row_single.pack(fill=tk.X, pady=(PAD_SM, 0))
+    ttk.Label(row_single, text="Single file (optional):").pack(side=tk.LEFT, padx=(0, PAD_SM))
+    entry_single = ttk.Entry(row_single, textvariable=single_file_var, width=52)
+    entry_single.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=PAD_SM)
+
+    def choose_single_file() -> None:
+        path = filedialog.askopenfilename(
+            title="Select a single PDF",
+            filetypes=[("PDF", "*.pdf"), ("All", "*.*")],
+        )
+        if path:
+            single_file_var.set(path)
+
+    ttk.Button(row_single, text="Browse…", command=choose_single_file).pack(side=tk.LEFT)
 
     # --- Naming ---
     f_naming = ttk.LabelFrame(root, text="Naming", padding=PAD)
@@ -272,11 +309,11 @@ def main() -> None:
     ttk.Combobox(
         row_preset,
         textvariable=vars["preset"],
-        values=("", "high-confidence-heuristic"),
+        values=("", "high-confidence-heuristic", "scanned"),
         state="readonly",
         width=24,
     ).pack(side=tk.LEFT)
-    ttk.Label(row_preset, text=" (heuristic-led when confident)").pack(side=tk.LEFT)
+    ttk.Label(row_preset, text=" (heuristic-led / scanned)").pack(side=tk.LEFT)
 
     # --- Safety & output ---
     f_safe = ttk.LabelFrame(root, text="Safety & output", padding=PAD)
@@ -292,6 +329,21 @@ def main() -> None:
         safe_inner,
         text="Write new filename into PDF /Title metadata after rename",
         variable=vars["write_pdf_metadata"],
+    ).pack(anchor=tk.W)
+    ttk.Checkbutton(
+        safe_inner,
+        text="Use vision fallback when text is short",
+        variable=vars["use_vision_fallback"],
+    ).pack(anchor=tk.W)
+    ttk.Checkbutton(
+        safe_inner,
+        text="Simple naming (single LLM call for filename)",
+        variable=vars["simple_naming_mode"],
+    ).pack(anchor=tk.W)
+    ttk.Checkbutton(
+        safe_inner,
+        text="Vision first (skip text extraction; use first-page image only; requires vision model)",
+        variable=vars["vision_first"],
     ).pack(anchor=tk.W)
     row_backup = ttk.Frame(safe_inner)
     row_backup.pack(fill=tk.X, pady=(PAD_SM, 0))
@@ -390,8 +442,124 @@ def main() -> None:
 
         root.after(100, poll)
 
+    single_result_queue: queue.Queue = queue.Queue()
+
+    def process_one_file() -> None:
+        path_str = single_file_var.get().strip()
+        if not path_str:
+            path_str = filedialog.askopenfilename(
+                title="Select a PDF to process",
+                filetypes=[("PDF", "*.pdf"), ("All", "*.*")],
+            )
+            if path_str:
+                single_file_var.set(path_str)
+        if not path_str:
+            messagebox.showwarning("No file", "Select a file first or choose one when prompted.")
+            return
+        if running[0]:
+            messagebox.showinfo("Busy", "A run is already in progress.")
+            return
+        file_path = Path(path_str)
+        if not file_path.is_file() or file_path.suffix.lower() != ".pdf":
+            messagebox.showerror("Invalid file", "Not a PDF file or file not found.")
+            return
+        try:
+            config = _build_config_from_gui(vars)
+        except ValueError as e:
+            messagebox.showerror("Invalid options", str(e))
+            return
+        running[0] = True
+        status_var.set("Processing one file…")
+
+        def work() -> None:
+            new_base, meta, error = suggest_rename_for_file(file_path, config)
+            single_result_queue.put((file_path, new_base, meta, error))
+
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll_single() -> None:
+            try:
+                fp, new_base, meta, err = single_result_queue.get_nowait()
+            except queue.Empty:
+                root.after(100, poll_single)
+                return
+            running[0] = False
+            status_var.set("Idle")
+            if err is not None:
+                messagebox.showerror("Error", str(err))
+                return
+            if new_base is None:
+                messagebox.showinfo("Skipped", "File had no content or could not be processed.")
+                return
+            # Dialog: suggest name (editable), Apply / Cancel
+            dlg = tk.Toplevel(root)
+            dlg.title("Rename suggestion")
+            dlg.transient(root)
+            dlg.grab_set()
+            ttk.Label(dlg, text=f"File: {fp.name}").pack(anchor=tk.W, padx=PAD, pady=(PAD, PAD_SM))
+            meta_parts = []
+            if meta:
+                for k in ("category", "summary", "keywords"):
+                    if meta.get(k):
+                        meta_parts.append(f"{k}: {meta.get(k)}")
+            if meta_parts:
+                ttk.Label(dlg, text=" | ".join(meta_parts[:3]), font=(FONT_FAMILY, FONT_SIZE - 1)).pack(
+                    anchor=tk.W, padx=PAD, pady=(0, PAD_SM)
+                )
+            suggested = new_base + fp.suffix
+            edit_var = tk.StringVar(value=suggested)
+            row_edit = ttk.Frame(dlg)
+            row_edit.pack(fill=tk.X, padx=PAD, pady=PAD_SM)
+            ttk.Label(row_edit, text="New name:").pack(side=tk.LEFT, padx=(0, PAD_SM))
+            entry_edit = ttk.Entry(row_edit, textvariable=edit_var, width=50)
+            entry_edit.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            def do_apply() -> None:
+                raw = edit_var.get().strip()
+                if not raw:
+                    messagebox.showwarning("Empty", "Enter a filename.", parent=dlg)
+                    return
+                base = raw.removesuffix(fp.suffix) if raw.lower().endswith(fp.suffix.lower()) else raw
+                base = sanitize_filename_base(base)
+                if not base:
+                    messagebox.showwarning("Invalid", "Filename is invalid after sanitization.", parent=dlg)
+                    return
+                try:
+                    success, target = apply_single_rename(
+                        fp,
+                        base,
+                        plan_file_path=None,
+                        plan_entries=[],
+                        dry_run=False,
+                        backup_dir=config.backup_dir,
+                        on_success=None,
+                        max_filename_chars=config.max_filename_chars,
+                    )
+                    if success:
+                        log_text.insert(tk.END, f"Renamed to {target.name}\n")
+                        log_text.see(tk.END)
+                        messagebox.showinfo("Done", f"Renamed to {target.name}", parent=dlg)
+                    else:
+                        messagebox.showerror("Failed", "Rename did not succeed.", parent=dlg)
+                except Exception as e:
+                    messagebox.showerror("Error", str(e), parent=dlg)
+                    return
+                dlg.destroy()
+
+            def do_cancel() -> None:
+                dlg.destroy()
+
+            f_btns = ttk.Frame(dlg)
+            f_btns.pack(fill=tk.X, padx=PAD, pady=PAD)
+            ttk.Button(f_btns, text="Apply", command=do_apply).pack(side=tk.LEFT, padx=(0, PAD_SM))
+            ttk.Button(f_btns, text="Cancel", command=do_cancel).pack(side=tk.LEFT)
+            dlg.protocol("WM_DELETE_WINDOW", do_cancel)
+
+        root.after(100, poll_single)
+
     ttk.Button(f_btn, text="Preview (dry run)", command=lambda: run(True)).pack(side=tk.LEFT, padx=(0, PAD))
-    ttk.Button(f_btn, text="Apply renames", command=lambda: run(False)).pack(side=tk.LEFT)
+    ttk.Button(f_btn, text="Apply renames", command=lambda: run(False)).pack(side=tk.LEFT, padx=(0, PAD))
+    ttk.Button(f_btn, text="Process one file", command=process_one_file).pack(side=tk.LEFT)
 
     root.mainloop()
 

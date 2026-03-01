@@ -54,6 +54,10 @@ So the heuristic “applies” as: (1) suggestion to the LLM (top-N / allowed li
 
 **Single-shot vs chunking:** For Qwen-8B-128K, PDFs whose extracted text stays below ~480k characters (~120k tokens) use a single summary call; only longer documents are chunked (100k chars per chunk, 5k overlap) and then summarized again. Most typical business PDFs therefore never trigger chunking.
 
+**Timestamp fallback:** When both heuristic and LLM yield no useful category/summary/keywords, the filename becomes `YYYYMMDD-document-HHMMSS.pdf` (or a custom segment via `--timestamp-fallback-segment`). Disable with `--no-timestamp-fallback`.
+
+**Simple naming mode:** `--simple-naming` skips the full pipeline and asks the LLM for a single short filename (3–6 words). Reduces malformed or verbose output at the cost of less structured filenames. Prompts are kept strict (bullet rules, concrete example, “ONLY the filename”) to minimise junk output.
+
 ---
 
 ## 4. Concrete improvements derived from behaviour

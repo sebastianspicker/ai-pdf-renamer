@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
-
-from .rename_ops import FILENAME_UNSAFE_RE
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
+
+from .rename_ops import FILENAME_UNSAFE_RE
 
 _DATE_RE_YMD = re.compile(r"\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b")
 _DATE_RE_DMY = re.compile(r"\b(\d{1,2})[./-](\d{1,2})[./-](\d{4})\b")

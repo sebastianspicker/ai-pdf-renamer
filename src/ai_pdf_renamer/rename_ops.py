@@ -40,6 +40,27 @@ def sanitize_filename_base(name: str) -> str:
     return safe
 
 
+def sanitize_filename_from_llm(raw: str) -> str:
+    """
+    Sanitize raw LLM or vision API output for use as filename or content.
+    Strips invalid chars, newlines, .pdf extension; collapses spaces to underscores; max 120 chars.
+    Use this for vision/simple-naming output before using as content or filename part.
+    sanitize_filename_base() remains for the final base name before rename.
+    """
+    if not raw or not isinstance(raw, str):
+        return "document"
+    s = raw.strip()
+    for char in '/\\:*?"<>|':
+        s = s.replace(char, "_")
+    s = s.replace("\n", " ").replace("\r", " ")
+    s = " ".join(s.split())
+    s = s.replace(" ", "_")
+    if s.lower().endswith(".pdf"):
+        s = s[:-4]
+    s = s.strip("._") or "document"
+    return s[:120] if len(s) > 120 else s
+
+
 def apply_single_rename(
     file_path: Path,
     base: str,
@@ -57,6 +78,11 @@ def apply_single_rename(
 
     Uses rename as the existence check to reduce TOCTOU. On FileExistsError, tries next suffix.
     EXDEV (cross-fs): best-effort copy+unlink.
+
+    WARNING: This function is not safe for concurrent renames in the same directory.
+    A small TOCTOU race window exists between target.exists() check and the actual rename.
+    For single-process usage, the retry loop handles collisions gracefully. If concurrent
+    renames are expected, use external file locking or run sequentially.
     """
     suffix = file_path.suffix
     current_base = base

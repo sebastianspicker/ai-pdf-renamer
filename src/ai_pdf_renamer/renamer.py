@@ -7,48 +7,36 @@ import logging
 import os
 import re
 import signal
+import subprocess
 import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
-from datetime import date
-from functools import lru_cache
 from pathlib import Path
 
-from .data_paths import data_path
-from .heuristics import (
-    HeuristicScorer,
-    combine_categories,
-    load_heuristic_rules_for_language,
-    normalize_llm_category,
-)
-from .llm import (
-    LocalLLMClient,
-    get_document_category,
-    get_document_keywords,
-    get_document_summary,
-    get_final_summary_tokens,
-)
+from .config import RenamerConfig, build_config_from_flat_dict  # noqa: F401 re-export
+from .filename import _llm_client_from_config, generate_filename
+from .llm import complete_vision
+from .loaders import _heuristic_scorer_cached, _stopwords_cached  # noqa: F401 re-export for tests
 from .pdf_extract import (
     DEFAULT_MAX_CONTENT_TOKENS,
     get_pdf_metadata,
+    pdf_first_page_to_image_base64,
     pdf_to_text,
     pdf_to_text_with_ocr,
 )
-from .rename_ops import MAX_RENAME_RETRIES, apply_single_rename, sanitize_filename_base
-from .text_utils import (
-    Stopwords,
-    clean_token,
-    convert_case,
-    extract_date_from_content,
-    extract_structured_fields,
-    normalize_keywords,
-    split_to_tokens,
-    subtract_tokens,
+from .rename_ops import (
+    MAX_RENAME_RETRIES,
+    apply_single_rename,
+    sanitize_filename_base,
+    sanitize_filename_from_llm,
 )
-
-# Min heuristic score to suggest doc type to LLM summary (otherwise None).
-_HEURISTIC_SUGGESTED_DOC_TYPE_MIN_SCORE = 0.25
+from .llm_prompts import build_vision_filename_prompt
+from .rules import (
+    ProcessingRules,
+    force_category_for_basename,
+    load_processing_rules,
+    should_skip_file_by_rules,
+)
 
 
 def _matches_patterns(name: str, include: list[str] | None, exclude: list[str] | None) -> bool:
@@ -71,8 +59,9 @@ def _collect_pdf_files(
     exclude_patterns: list[str] | None = None,
     skip_if_already_named: bool = False,
     files_override: list[Path] | None = None,
+    rules: ProcessingRules | None = None,
 ) -> list[Path]:
-    """Collect PDF file paths from directory (or use files_override)."""
+    """Collect PDFs from directory (or files_override). Rules skip_files_by_pattern filters out matches."""
     if files_override is not None:
         candidates = [p for p in files_override if p.is_file() and p.suffix.lower() == ".pdf"]
     elif recursive:
@@ -93,6 +82,8 @@ def _collect_pdf_files(
             p for p in directory.iterdir() if p.is_file() and p.suffix.lower() == ".pdf" and not p.name.startswith(".")
         ]
     out = [p for p in candidates if _matches_patterns(p.name, include_patterns, exclude_patterns)]
+    if rules is not None:
+        out = [p for p in out if not should_skip_file_by_rules(rules, p.name)]
     if skip_if_already_named:
         already_named = re.compile(r"^\d{8}-.+\.[pP][dD][fF]$")
         out = [p for p in out if not already_named.match(p.name)]
@@ -139,6 +130,28 @@ def _write_json_or_csv(
             json.dump(rows, f, ensure_ascii=False, indent=2)
 
 
+def _run_post_rename_hook(hook_cmd: str, old_path: Path, new_path: Path, meta: dict) -> None:
+    """Run post-rename hook in a subprocess. On failure log and continue; do not fail the run."""
+    env = {**os.environ, "AI_PDF_RENAMER_OLD_PATH": str(old_path), "AI_PDF_RENAMER_NEW_PATH": str(new_path)}
+    try:
+        meta_json = json.dumps(meta, default=str)
+    except (TypeError, ValueError):
+        meta_json = "{}"
+    env["AI_PDF_RENAMER_META"] = meta_json
+    try:
+        subprocess.run(
+            hook_cmd,
+            shell=True,
+            env=env,
+            timeout=120,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("Post-rename hook timed out (120s): %s", hook_cmd[:80])
+    except Exception as e:
+        logger.warning("Post-rename hook failed: %s", e)
+
+
 def _apply_post_rename_actions(
     config: RenamerConfig,
     file_path: Path,
@@ -162,36 +175,19 @@ def _apply_post_rename_actions(
                 "category": meta.get("category", ""),
                 "summary": meta.get("summary", ""),
                 "keywords": meta.get("keywords", ""),
+                "category_source": meta.get("category_source", ""),
+                "llm_failed": meta.get("llm_failed", False),
+                "used_vision_fallback": meta.get("used_vision_fallback", False),
                 "invoice_id": meta.get("invoice_id", ""),
                 "amount": meta.get("amount", ""),
                 "company": meta.get("company", ""),
             }
         )
-
-
-def _config_or_env(value: str | None, env_key: str, default: str) -> str:
-    """Resolve string from config value, then env, then default. Empty string treated as unset."""
-    s = (value or "").strip() or (os.environ.get(env_key) or "").strip()
-    return s or default
-
-
-def _llm_client_from_config(config: RenamerConfig) -> LocalLLMClient:
-    """Build LocalLLMClient from config and env (AI_PDF_RENAMER_LLM_*)."""
-    base_url = _config_or_env(
-        config.llm_base_url,
-        "AI_PDF_RENAMER_LLM_URL",
-        "http://127.0.0.1:11434/v1/completions",
-    )
-    model = _config_or_env(config.llm_model, "AI_PDF_RENAMER_LLM_MODEL", "qwen3:8b")
-    timeout_s = config.llm_timeout_s
-    if timeout_s is None or timeout_s <= 0:
-        try:
-            timeout_s = float(os.environ.get("AI_PDF_RENAMER_LLM_TIMEOUT", "") or 0)
-        except ValueError:
-            timeout_s = 60.0
-        if timeout_s <= 0:
-            timeout_s = 60.0
-    return LocalLLMClient(base_url=base_url, model=model, timeout_s=timeout_s)
+    hook_cmd = (config.post_rename_hook or "").strip() or (
+        os.environ.get("AI_PDF_RENAMER_POST_RENAME_HOOK") or ""
+    ).strip()
+    if hook_cmd:
+        _run_post_rename_hook(hook_cmd, file_path, target, meta)
 
 
 def _effective_max_tokens(config: RenamerConfig) -> int:
@@ -207,630 +203,97 @@ def _effective_max_tokens(config: RenamerConfig) -> int:
     return DEFAULT_MAX_CONTENT_TOKENS
 
 
-def _extract_pdf_content(path: Path, config: RenamerConfig) -> str:
-    """Extract text from PDF (OCR or plain) according to config. Used by _process_one_file and single-worker loop."""
+def _extract_pdf_content(path: Path, config: RenamerConfig) -> tuple[str, bool]:
+    """Extract text from PDF (OCR or plain) according to config. Used by _process_one_file and single-worker loop.
+    When vision_first is True, tries vision on first page first; on success returns (vision_result, True).
+    When use_vision_fallback is True and extracted text is shorter than vision_fallback_min_text_len,
+    tries Ollama vision on the first page and uses the result as synthetic content.
+    Returns (content, used_vision_fallback)."""
+    if getattr(config, "vision_first", False):
+        image_b64 = pdf_first_page_to_image_base64(path)
+        if image_b64:
+            client = _llm_client_from_config(config)
+            model = getattr(config, "vision_model", None) or client.model
+            prompt = build_vision_filename_prompt(config.language)
+            timeout = getattr(config, "llm_timeout_s", None) or 60.0
+            vision_text = complete_vision(
+                client.base_url,
+                model,
+                image_b64,
+                prompt,
+                timeout_s=max(60.0, timeout * 2),
+            )
+            if vision_text:
+                vision_text = sanitize_filename_from_llm(vision_text)
+                return (vision_text, True)
+        # vision_first but image or vision failed: fall through to text extraction
     if config.use_ocr:
-        return pdf_to_text_with_ocr(
+        content = pdf_to_text_with_ocr(
             path,
             max_pages=config.max_pages_for_extraction or 0,
             max_tokens=_effective_max_tokens(config),
             language=config.language,
         )
-    return pdf_to_text(
-        path,
-        max_pages=config.max_pages_for_extraction or 0,
-        max_tokens=_effective_max_tokens(config),
-    )
-
-
-def load_meta_stopwords(path: str | Path) -> Stopwords:
-    path_obj = Path(path)
-    try:
-        raw = path_obj.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ValueError(f"Could not read data file at {path_obj.absolute()}: {exc!s}") from exc
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid JSON in data file at {path_obj.absolute()}. {exc!s}") from exc
-    raw = data.get("stopwords", [])
-    if not isinstance(raw, list):
-        raw = []
-    words = {str(w).lower() for w in raw if str(w).strip()}
-    return Stopwords(words=words)
-
-
-@lru_cache(maxsize=32)
-def _stopwords_cached(path_str: str) -> Stopwords:
-    return load_meta_stopwords(Path(path_str))
-
-
-def default_stopwords() -> Stopwords:
-    return _stopwords_cached(str(data_path("meta_stopwords.json")))
-
-
-@lru_cache(maxsize=32)
-def _heuristic_scorer_cached(path_str: str, language: str) -> HeuristicScorer:
-    rules = load_heuristic_rules_for_language(Path(path_str), language)
-    return HeuristicScorer(rules)
-
-
-def default_heuristic_scorer(language: str = "de") -> HeuristicScorer:
-    return _heuristic_scorer_cached(str(data_path("heuristic_scores.json")), language)
-
-
-_VALID_DESIRED_CASES = frozenset({"camelCase", "kebabCase", "snakeCase"})
-_VALID_DATE_LOCALES = frozenset({"dmy", "mdy"})
-_VALID_CATEGORY_DISPLAY = frozenset({"specific", "with_parent", "parent_only"})
-
-
-@dataclass(frozen=True)
-class RenamerConfig:
-    language: str = "de"
-    desired_case: str = "kebabCase"
-    project: str = ""
-    version: str = ""
-    prefer_llm_category: bool = True  # Prefer LLM; --prefer-heuristic uses heuristic
-    date_locale: str = "dmy"
-    date_prefer_leading_chars: int = 8000  # Prefer date from first N chars (0 = full text)
-    use_pdf_metadata_for_date: bool = True  # Use PDF CreationDate/ModDate when content has no date
-    dry_run: bool = False
-    min_heuristic_score_gap: float = 0.0
-    min_heuristic_score: float = 0.0
-    title_weight_region: int = 2000  # Weight first N chars (0 = off)
-    title_weight_factor: float = 1.5
-    max_score_per_category: float | None = None
-    use_keyword_overlap_for_category: bool = True  # On conflict pick by context overlap
-    use_embeddings_for_conflict: bool = False  # If True and [embeddings], use embedding similarity instead of overlap
-    category_display: str = "specific"
-    # Skip LLM category call when heuristic is confident (saves latency/cost)
-    skip_llm_category_if_heuristic_score_ge: float | None = None
-    skip_llm_category_if_heuristic_gap_ge: float | None = None
-    heuristic_suggestions_top_n: int = 5  # Top-N heuristic categories to LLM
-    heuristic_score_weight: float = 0.15  # Bonus for heuristic in overlap comparison
-    heuristic_override_min_score: float | None = None  # Override LLM when score >= this
-    heuristic_override_min_gap: float | None = None  # and gap >= this
-    use_constrained_llm_category: bool = True  # Pass full category list to LLM
-    heuristic_leading_chars: int = 0  # If > 0, score category only on first N chars
-    # When len(content) >= threshold, use first leading_chars for heuristic
-    heuristic_long_doc_chars_threshold: int = 40_000
-    heuristic_long_doc_leading_chars: int = 12_000
-    max_pages_for_extraction: int = 0  # If > 0, only extract text from first N pages
-    # LLM (env: AI_PDF_RENAMER_LLM_URL, AI_PDF_RENAMER_LLM_MODEL, AI_PDF_RENAMER_LLM_TIMEOUT)
-    llm_base_url: str | None = None
-    llm_model: str | None = None
-    llm_timeout_s: float | None = None
-    # PDF extraction token cap (env: AI_PDF_RENAMER_MAX_TOKENS)
-    max_tokens_for_extraction: int | None = None
-    # UX: skip PDFs whose name already matches YYYYMMDD-*.pdf
-    skip_if_already_named: bool = False
-    # Optional backup dir (copy before rename) and/or rename log (old_path -> new_path)
-    backup_dir: str | Path | None = None
-    rename_log_path: str | Path | None = None
-    # Optional export of proposed renames + metadata to CSV/JSON before applying
-    export_metadata_path: str | Path | None = None
-    # Cap filename length (truncate from right at separator)
-    max_filename_chars: int | None = None
-    # Per-file category override: filename -> category (from --override-category-file)
-    override_category_map: dict[str, str] | None = None
-    # If True, run OCR (OCRmyPDF) when extracted text is too short (scanned PDFs). Optional [ocr].
-    use_ocr: bool = False
-    # Number of parallel workers for extract+generate_filename (default 1). Renames are applied sequentially.
-    workers: int = 1
-    # Recursive: collect PDFs from subdirectories (default False).
-    recursive: bool = False
-    # Max depth when recursive (0 = unlimited). Only used when recursive=True.
-    max_depth: int = 0
-    # Include/exclude fnmatch patterns for basename (e.g. ["*.pdf"], ["draft-*"]). None = no filter.
-    include_patterns: list[str] | None = None
-    exclude_patterns: list[str] | None = None
-    # Custom filename template. Placeholders: date, project, category, keywords, summary, version,
-    # invoice_id, amount, company. None = default schema.
-    filename_template: str | None = None
-    # If True, extract structured fields (invoice_id, amount, company) from content for template placeholders.
-    use_structured_fields: bool = True
-    # Write rename plan to this file without applying (old_path, new_path). Implies no renames.
-    plan_file_path: str | Path | None = None
-    # Interactive: prompt for each file (y/n/e=edit) before renaming.
-    interactive: bool = False
-    # Write new filename as PDF /Title metadata after rename (requires PyMuPDF).
-    write_pdf_metadata: bool = False
-    # If False, do not call LLM (heuristic-only: category from heuristics, summary/keywords empty).
-    use_llm: bool = True
-    # If True, try to extract JSON fields from LLM responses that don't start with "{" (regex fallback).
-    lenient_llm_json: bool = False
-
-    def __post_init__(self) -> None:
-        if self.desired_case not in _VALID_DESIRED_CASES:
-            raise ValueError(f"desired_case must be one of {sorted(_VALID_DESIRED_CASES)}, got {self.desired_case!r}")
-        loc = (self.date_locale or "dmy").strip().lower()
-        if loc not in _VALID_DATE_LOCALES:
-            raise ValueError(f"date_locale must be one of {sorted(_VALID_DATE_LOCALES)}, got {self.date_locale!r}")
-        disp = (self.category_display or "specific").strip().lower()
-        if disp not in _VALID_CATEGORY_DISPLAY:
-            raise ValueError(
-                f"category_display must be one of {sorted(_VALID_CATEGORY_DISPLAY)}, got {self.category_display!r}"
-            )
-
-
-def build_config_from_flat_dict(data: dict) -> RenamerConfig:
-    """Build RenamerConfig from a flat dict of option names -> values. Used by CLI and GUI to avoid duplication."""
-    allowed = set(RenamerConfig.__dataclass_fields__)
-    kwargs = {k: v for k, v in data.items() if k in allowed}
-    return RenamerConfig(**kwargs)
-
-
-def _get_date_str(
-    pdf_content: str,
-    config: RenamerConfig,
-    today: date | None = None,
-    pdf_metadata: dict | None = None,
-) -> str:
-    """Extract date from content (and optionally PDF metadata fallback) and return YYYYMMDD string."""
-    content_date = extract_date_from_content(
-        pdf_content,
-        today=today,
-        date_locale=config.date_locale,
-        prefer_leading_chars=config.date_prefer_leading_chars or 0,
-    )
-    if not getattr(config, "use_pdf_metadata_for_date", True):
-        return content_date.replace("-", "")
-    if today is None:
-        today = date.today()
-    today_str = today.strftime("%Y-%m-%d")
-    if content_date != today_str and content_date:
-        return content_date.replace("-", "")
-    if pdf_metadata:
-        for key in ("creation_date", "mod_date"):
-            meta_date = pdf_metadata.get(key)
-            if meta_date and isinstance(meta_date, str):
-                return meta_date.replace("-", "")
-    return content_date.replace("-", "")
-
-
-def _heuristic_text_for_category(pdf_content: str, config: RenamerConfig) -> str:
-    """Return the slice of PDF content used for heuristic category scoring."""
-    if config.heuristic_leading_chars > 0:
-        return pdf_content[: config.heuristic_leading_chars]
-    if config.heuristic_long_doc_chars_threshold > 0 and len(pdf_content) >= config.heuristic_long_doc_chars_threshold:
-        return pdf_content[: config.heuristic_long_doc_leading_chars]
-    return pdf_content
-
-
-def _resolve_heuristic_category(
-    heuristic_text: str,
-    config: RenamerConfig,
-    heuristic_scorer: HeuristicScorer,
-) -> tuple[str, float, str, float, float, str | None]:
-    """Run heuristic scoring; return (cat_heur, score, runner_up_cat, runner_up_score, gap, suggested_doc_type)."""
-    cat_heur, heuristic_score, runner_up_cat, runner_up_score = heuristic_scorer.best_category_with_confidence(
-        heuristic_text,
-        language=config.language,
-        min_score_gap=config.min_heuristic_score_gap,
-        max_score_per_category=config.max_score_per_category,
-        title_weight_region=config.title_weight_region,
-        title_weight_factor=config.title_weight_factor,
-    )
-    heuristic_gap = (
-        heuristic_score - runner_up_score if (cat_heur != "unknown" and runner_up_score is not None) else 0.0
-    )
-    suggested_doc_type = (
-        cat_heur if (cat_heur != "unknown" and heuristic_score >= _HEURISTIC_SUGGESTED_DOC_TYPE_MIN_SCORE) else None
-    )
-    return (
-        cat_heur,
-        heuristic_score,
-        runner_up_cat,
-        runner_up_score,
-        heuristic_gap,
-        suggested_doc_type,
-    )
-
-
-def _resolve_category_with_llm(
-    heuristic_text: str,
-    cat_heur: str,
-    heuristic_score: float,
-    heuristic_gap: float,
-    config: RenamerConfig,
-    heuristic_scorer: HeuristicScorer,
-    llm_client: LocalLLMClient,
-    summary: str,
-    keywords: list[str],
-) -> tuple[str, str]:
-    """Resolve final category (heuristic + optional LLM, combine_categories).
-    Returns (category, category_for_filename)."""
-    if not config.use_llm:
-        category_for_filename = heuristic_scorer.get_display_category(cat_heur, config.category_display)
-        logger.info(
-            "CategorySource source=heuristic category=%s (use_llm=False)",
-            cat_heur,
-        )
-        return (cat_heur, category_for_filename)
-    skip_llm = False
-    if (
-        config.skip_llm_category_if_heuristic_score_ge is not None
-        and config.skip_llm_category_if_heuristic_gap_ge is not None
-        and cat_heur != "unknown"
-        and heuristic_score >= config.skip_llm_category_if_heuristic_score_ge
-        and heuristic_gap >= config.skip_llm_category_if_heuristic_gap_ge
-    ):
-        skip_llm = True
-    if skip_llm:
-        cat_llm = cat_heur
     else:
-        top_n = heuristic_scorer.top_n_categories(
-            heuristic_text,
-            n=config.heuristic_suggestions_top_n,
-            language=config.language,
-            max_score_per_category=config.max_score_per_category,
-            title_weight_region=config.title_weight_region,
-            title_weight_factor=config.title_weight_factor,
+        content = pdf_to_text(
+            path,
+            max_pages=config.max_pages_for_extraction or 0,
+            max_tokens=_effective_max_tokens(config),
         )
-        suggested = [c for c in top_n if c and c != "unknown"]
-        allowed = list(heuristic_scorer.all_categories()) if config.use_constrained_llm_category else None
-        cat_llm = get_document_category(
-            llm_client,
-            summary=summary,
-            keywords=keywords,
-            language=config.language,
-            suggested_categories=suggested if not allowed else None,
-            allowed_categories=allowed,
-            lenient_json=config.lenient_llm_json,
-        )
-        if allowed:
-            norm = normalize_llm_category(cat_llm).strip().lower().replace(" ", "_")
-            allowed_set = frozenset(c.strip().lower().replace(" ", "_") for c in allowed)
-            if norm and norm not in allowed_set and norm not in {"unknown", "na", "document"}:
+    min_len = getattr(config, "vision_fallback_min_text_len", 50)
+    if getattr(config, "use_vision_fallback", False) and len(content.strip()) < min_len:
+        image_b64 = pdf_first_page_to_image_base64(path)
+        if image_b64:
+            client = _llm_client_from_config(config)
+            model = getattr(config, "vision_model", None) or client.model
+            prompt = build_vision_filename_prompt(config.language)
+            timeout = getattr(config, "llm_timeout_s", None) or 60.0
+            vision_text = complete_vision(
+                client.base_url,
+                model,
+                image_b64,
+                prompt,
+                timeout_s=max(60.0, timeout * 2),
+            )
+            if vision_text:
+                vision_text = sanitize_filename_from_llm(vision_text)
                 logger.info(
-                    "LLM category %r not in allowed set; using heuristic.",
-                    cat_llm,
+                    "Used vision fallback for %s (text length %d < %d)",
+                    path.name,
+                    len(content.strip()),
+                    min_len,
                 )
-                cat_llm = "unknown"
-    context_for_overlap = None
-    if config.use_keyword_overlap_for_category:
-        context_for_overlap = (summary + " " + " ".join(keywords)).strip()
-    category = combine_categories(
-        cat_llm,
-        cat_heur,
-        prefer_llm=config.prefer_llm_category,
-        heuristic_score=heuristic_score if cat_heur != "unknown" else None,
-        heuristic_gap=heuristic_gap if cat_heur != "unknown" else None,
-        min_heuristic_score=config.min_heuristic_score,
-        heuristic_override_min_score=config.heuristic_override_min_score,
-        heuristic_override_min_gap=config.heuristic_override_min_gap,
-        heuristic_score_weight=config.heuristic_score_weight,
-        context_for_overlap=context_for_overlap,
-        use_keyword_overlap=config.use_keyword_overlap_for_category,
-        use_embeddings_for_conflict=config.use_embeddings_for_conflict,
-        category_parent_map=heuristic_scorer._category_to_parent(),
-    )
-    category_for_filename = heuristic_scorer.get_display_category(category, config.category_display)
-    if skip_llm:
-        category_source = "heuristic"
-    elif cat_heur == "unknown":
-        category_source = "llm"
-    else:
-        category_source = "combined"
-    logger.info(
-        "CategorySource source=%s heuristic=%s llm=%s category=%s",
-        category_source,
-        cat_heur,
-        cat_llm,
-        category,
-    )
-    return (category, category_for_filename)
-
-
-def _build_metadata_tokens(
-    category_for_filename: str,
-    keywords: list[str],
-    final_summary_tokens: list[str],
-    stopwords: Stopwords,
-) -> tuple[list[str], list[str], list[str], dict]:
-    """Filter, clean, subtract tokens; return (category_clean, keyword_clean, summary_clean, metadata)."""
-    category_tokens = stopwords.filter_tokens(split_to_tokens(category_for_filename))
-    keyword_tokens = stopwords.filter_tokens(keywords)[:3]
-    summary_tokens = stopwords.filter_tokens(final_summary_tokens)[:5]
-
-    category_clean = [clean_token(t) for t in category_tokens]
-    keyword_clean = [clean_token(t) for t in keyword_tokens]
-    summary_clean = [clean_token(t) for t in summary_tokens]
-
-    keyword_clean = subtract_tokens(keyword_clean, category_clean)
-    summary_clean = subtract_tokens(summary_clean, category_clean + keyword_clean)
-
-    metadata = {
-        "category": " ".join(category_clean) or (category_for_filename or ""),
-        "summary": " ".join(summary_clean),
-        "keywords": " ".join(keyword_clean),
-    }
-    return (category_clean, keyword_clean, summary_clean, metadata)
-
-
-def _get_category_summary_keywords_metadata(
-    pdf_content: str,
-    config: RenamerConfig,
-    llm_client: LocalLLMClient,
-    heuristic_scorer: HeuristicScorer,
-    stopwords: Stopwords,
-    override_category: str | None,
-) -> tuple[str, list[str], list[str], list[str], dict]:
-    """Resolve category (override/heuristic/LLM), run LLM summary/keywords, clean tokens, build metadata.
-    Returns (category_for_filename, category_clean, keyword_clean, summary_clean, metadata)."""
-    if override_category is not None:
-        category = override_category
-        cat_heur = override_category
-        category_for_filename = heuristic_scorer.get_display_category(override_category, config.category_display)
-        logger.info(
-            "CategorySource source=override category=%s",
-            category,
-        )
-        suggested_doc_type_for_summary = override_category
-    else:
-        heuristic_text = _heuristic_text_for_category(pdf_content, config)
-        (
-            cat_heur,
-            heuristic_score,
-            runner_up_cat,
-            runner_up_score,
-            heuristic_gap,
-            suggested_doc_type_for_summary,
-        ) = _resolve_heuristic_category(heuristic_text, config, heuristic_scorer)
-
-    if config.use_llm:
-        summary = get_document_summary(
-            llm_client,
-            pdf_content,
-            language=config.language,
-            suggested_doc_type=suggested_doc_type_for_summary,
-            lenient_json=config.lenient_llm_json,
-        )
-        raw_keywords = (
-            get_document_keywords(
-                llm_client,
-                summary,
-                language=config.language,
-                suggested_category=cat_heur if cat_heur != "unknown" else None,
-                lenient_json=config.lenient_llm_json,
-            )
-            or []
-        )
-    else:
-        summary = ""
-        raw_keywords = []
-    keywords = normalize_keywords(raw_keywords)
-
-    if override_category is None:
-        category, category_for_filename = _resolve_category_with_llm(
-            heuristic_text,
-            cat_heur,
-            heuristic_score,
-            heuristic_gap,
-            config,
-            heuristic_scorer,
-            llm_client,
-            summary,
-            keywords,
-        )
-
-    if config.use_llm:
-        final_summary_tokens = (
-            get_final_summary_tokens(
-                llm_client,
-                summary=summary,
-                keywords=keywords,
-                category=category,
-                language=config.language,
-                lenient_json=config.lenient_llm_json,
-            )
-            or []
-        )
-    else:
-        final_summary_tokens = []
-
-    category_clean, keyword_clean, summary_clean, metadata = _build_metadata_tokens(
-        category_for_filename, keywords, final_summary_tokens, stopwords
-    )
-    return (
-        category_for_filename,
-        category_clean,
-        keyword_clean,
-        summary_clean,
-        metadata,
-    )
-
-
-def _filename_sep(config: RenamerConfig) -> str:
-    """Return filename part separator: '_' for snakeCase, '-' otherwise."""
-    return "_" if config.desired_case == "snakeCase" else "-"
-
-
-def _apply_filename_template(
-    filename: str,
-    date_str: str,
-    project: str,
-    version: str,
-    category_for_filename: str,
-    category_clean: list[str],
-    keyword_clean: list[str],
-    summary_clean: list[str],
-    config: RenamerConfig,
-    structured_fields: dict[str, str] | None = None,
-) -> str:
-    """If config has a filename template, format and return; else return filename unchanged."""
-    if not config.filename_template or not isinstance(config.filename_template, str):
-        return filename
-    cat_str = convert_case(category_clean, config.desired_case) if category_clean else (category_for_filename or "")
-    kw_str = convert_case(keyword_clean, config.desired_case) if keyword_clean else ""
-    sum_str = convert_case(summary_clean, config.desired_case) if summary_clean else ""
-    sf = structured_fields or {}
-    repl = {
-        "date": date_str,
-        "project": project or "",
-        "category": cat_str,
-        "keywords": kw_str,
-        "summary": sum_str,
-        "version": version or "",
-        "invoice_id": sf.get("invoice_id", ""),
-        "amount": sf.get("amount", ""),
-        "company": sf.get("company", ""),
-    }
-    try:
-        filename = config.filename_template.format(**repl).strip()
-    except (KeyError, AttributeError, TypeError) as e:
-        logger.warning("Template failed (%s); using default filename", e)
-        return filename
-    if filename.lower().endswith(".pdf"):
-        filename = filename[:-4]
-    return sanitize_filename_base(filename) if filename else filename
-
-
-def _truncate_filename_to_max_chars(filename: str, config: RenamerConfig) -> str:
-    """Truncate filename to config.max_filename_chars (at separator if possible)."""
-    if not config.max_filename_chars or config.max_filename_chars <= 0 or len(filename) <= config.max_filename_chars:
-        return filename
-    sep = _filename_sep(config)
-    while len(filename) > config.max_filename_chars and sep in filename:
-        filename = filename.rsplit(sep, 1)[0]
-    if len(filename) > config.max_filename_chars:
-        filename = filename[: config.max_filename_chars]
-    return filename
-
-
-def _build_filename_str(
-    date_str: str,
-    category_for_filename: str,
-    category_clean: list[str],
-    keyword_clean: list[str],
-    summary_clean: list[str],
-    config: RenamerConfig,
-    structured_fields: dict[str, str] | None = None,
-) -> str:
-    """Build final filename from date, cleaned tokens, and config (project, version, case, template, max chars)."""
-    project = (config.project or "").strip()
-    version = (config.version or "").strip()
-    if project.lower() == "default":
-        project = ""
-    if version.lower() == "default":
-        version = ""
-
-    if config.desired_case == "camelCase":
-        tokens: list[str] = [date_str]
-        tokens += split_to_tokens(project) if project else []
-        tokens += category_clean
-        tokens += keyword_clean
-        tokens += summary_clean
-        tokens += split_to_tokens(version) if version else []
-        filename = convert_case(tokens, "camelCase")
-    else:
-        parts: list[str] = [date_str]
-        if project:
-            parts.append(convert_case(split_to_tokens(project), config.desired_case))
-        parts.append(convert_case(category_clean, config.desired_case))
-        if keyword_clean:
-            parts.append(convert_case(keyword_clean, config.desired_case))
-        if summary_clean:
-            parts.append(convert_case(summary_clean, config.desired_case))
-        if version:
-            parts.append(convert_case(split_to_tokens(version), config.desired_case))
-        sep = _filename_sep(config)
-        filename = sep.join(p for p in parts if p)
-        # Ensure consistent separators: if we are in snakeCase, no dashes; if kebabCase, no underscores.
-        alt_sep = "-" if sep == "_" else "_"
-        filename = filename.replace(alt_sep, sep)
-        filename = sep.join(x for x in filename.split(sep) if x)
-
-    filename = _apply_filename_template(
-        filename,
-        date_str,
-        project,
-        version,
-        category_for_filename,
-        category_clean,
-        keyword_clean,
-        summary_clean,
-        config,
-        structured_fields=structured_fields,
-    )
-    return _truncate_filename_to_max_chars(filename, config)
-
-
-def generate_filename(
-    pdf_content: str,
-    *,
-    config: RenamerConfig,
-    llm_client: LocalLLMClient | None = None,
-    heuristic_scorer: HeuristicScorer | None = None,
-    stopwords: Stopwords | None = None,
-    override_category: str | None = None,
-    today: date | None = None,
-    pdf_metadata: dict | None = None,
-) -> tuple[str, dict]:
-    """
-    Constructs the final filename and metadata:
-    - date (YYYYMMDD), optionally from PDF metadata when content has no date
-    - optional project
-    - category (heuristic + optional LLM)
-    - keywords (<=3)
-    - short summary tokens (<=5)
-    - optional version
-    """
-    if pdf_content is None or not isinstance(pdf_content, str):
-        raise ValueError("pdf_content must be a non-None string")
-    llm_client = llm_client or _llm_client_from_config(config)
-    stopwords = stopwords or default_stopwords()
-    heuristic_scorer = heuristic_scorer or default_heuristic_scorer(config.language)
-
-    date_str = _get_date_str(pdf_content, config, today, pdf_metadata)
-    category_for_filename, category_clean, keyword_clean, summary_clean, metadata = (
-        _get_category_summary_keywords_metadata(
-            pdf_content,
-            config,
-            llm_client,
-            heuristic_scorer,
-            stopwords,
-            override_category,
-        )
-    )
-    structured_fields: dict[str, str] = {}
-    if getattr(config, "use_structured_fields", True):
-        structured_fields = extract_structured_fields(pdf_content)
-        metadata["invoice_id"] = structured_fields.get("invoice_id", "")
-        metadata["amount"] = structured_fields.get("amount", "")
-        metadata["company"] = structured_fields.get("company", "")
-    filename = _build_filename_str(
-        date_str,
-        category_for_filename,
-        category_clean,
-        keyword_clean,
-        summary_clean,
-        config,
-        structured_fields=structured_fields,
-    )
-    return filename, metadata
+                return (vision_text, True)
+    return (content, False)
 
 
 def _process_content_to_result(
     file_path: Path,
     content: str,
     config: RenamerConfig,
+    rules: ProcessingRules | None = None,
+    used_vision: bool = False,
 ) -> tuple[Path, str | None, dict | None, BaseException | None]:
     """
     Generate filename from already-extracted content. Returns (path, new_base, meta, error).
     Caller must ensure content is non-empty if expecting a non-skip result.
     """
     try:
-        override_cat = (config.override_category_map or {}).get(file_path.name) or None
+        override_cat = (config.override_category_map or {}).get(file_path.name) or force_category_for_basename(
+            rules, file_path.name
+        )
         pdf_meta = get_pdf_metadata(file_path) if getattr(config, "use_pdf_metadata_for_date", True) else None
         filename_str, meta = generate_filename(
             content,
             config=config,
             override_category=override_cat,
             pdf_metadata=pdf_meta,
+            rules=rules,
         )
         new_base = sanitize_filename_base(filename_str)
-        return (file_path, new_base, meta or {}, None)
+        meta = meta or {}
+        meta["used_vision_fallback"] = used_vision
+        return (file_path, new_base, meta, None)
     except Exception as exc:
         return (file_path, None, None, exc)
 
@@ -839,8 +302,10 @@ def _interactive_rename_prompt(
     file_path: Path,
     target: Path,
     default_base: str,
+    edit_default_base: str | None = None,
 ) -> tuple[str, str, Path]:
-    """Prompt for y/n/e=edit. Returns (reply, base, target); reply in {'y','n'}; base/target may change on edit."""
+    """Prompt for y/n/e=edit. Returns (reply, base, target); reply in {'y','n'}; base/target may change on edit.
+    When edit_default_base is set, the edit prompt shows it as default; Enter accepts it."""
     reply: str = "y"
     base = default_base
     current_target = target
@@ -858,7 +323,13 @@ def _interactive_rename_prompt(
             return ("n", base, current_target)
         if reply == "e":
             try:
-                custom = input("New filename (without path): ").strip()
+                prompt = "New filename (without path)"
+                if edit_default_base:
+                    prompt += f" [default: {edit_default_base}]"
+                prompt += ": "
+                custom = input(prompt).strip()
+                if not custom and edit_default_base:
+                    custom = edit_default_base
                 if custom:
                     custom_base = sanitize_filename_base(
                         custom.removesuffix(file_path.suffix)
@@ -877,6 +348,7 @@ def _interactive_rename_prompt(
 def _process_one_file(
     file_path: Path,
     config: RenamerConfig,
+    rules: ProcessingRules | None = None,
 ) -> tuple[Path, str | None, dict | None, BaseException | None]:
     """
     Extract text and generate filename for one file. Returns (path, new_base, meta, error).
@@ -884,20 +356,48 @@ def _process_one_file(
     Empty or unextractable PDF: returns (path, None, None, None); caller logs and skips the file.
     """
     try:
-        content = _extract_pdf_content(file_path, config)
+        content, used_vision = _extract_pdf_content(file_path, config)
     except Exception as exc:
         return (file_path, None, None, exc)
     if not content.strip():
         return (file_path, None, None, None)  # skipped empty
     try:
-        return _process_content_to_result(file_path, content, config)
+        return _process_content_to_result(file_path, content, config, rules=rules, used_vision=used_vision)
     except Exception as exc:
         return (file_path, None, None, exc)
+
+
+def suggest_rename_for_file(
+    file_path: Path,
+    config: RenamerConfig,
+) -> tuple[str | None, dict | None, BaseException | None]:
+    """
+    Run the pipeline for one file and return the suggested new basename and metadata.
+    Does not rename or prompt. Returns (new_base, meta, error).
+    new_base is None if content is empty or an error occurred.
+    """
+    rules = load_processing_rules(config.rules_file)
+    try:
+        content, used_vision = _extract_pdf_content(file_path, config)
+    except Exception as exc:
+        return (None, None, exc)
+    if not content.strip():
+        return (None, None, None)
+    try:
+        _path, new_base, meta, exc = _process_content_to_result(
+            file_path, content, config, rules=rules, used_vision=used_vision
+        )
+        if exc is not None:
+            return (None, None, exc)
+        return (new_base, meta, None)
+    except Exception as exc:
+        return (None, None, exc)
 
 
 def _produce_rename_results(
     files: list[Path],
     config: RenamerConfig,
+    rules: ProcessingRules | None = None,
 ) -> list[tuple[Path, str | None, dict | None, BaseException | None]]:
     """Produce (file_path, new_base, meta, exc) per file; parallel or single-worker with prefetch."""
     workers = max(1, getattr(config, "workers", 1) or 1)
@@ -907,7 +407,7 @@ def _produce_rename_results(
         with ThreadPoolExecutor(max_workers=workers) as executor:
             results = list(
                 executor.map(
-                    lambda p: _process_one_file(p, config),
+                    lambda p: _process_one_file(p, config, rules),
                     files,
                 )
             )
@@ -915,11 +415,13 @@ def _produce_rename_results(
         results.sort(key=lambda r: order.get(r[0], 0))
         return results
     results = []
-    prefetched: Future[str] | None = None
+    prefetched: Future[tuple[str, bool]] | None = None
     with ThreadPoolExecutor(max_workers=1) as executor:
         for i, file_path in enumerate(files):
             try:
-                content = prefetched.result() if prefetched is not None else _extract_pdf_content(file_path, config)
+                content, used_vision = (
+                    prefetched.result() if prefetched is not None else _extract_pdf_content(file_path, config)
+                )
             except Exception as exc:
                 results.append((file_path, None, None, exc))
                 prefetched = None
@@ -929,7 +431,9 @@ def _produce_rename_results(
                 results.append((file_path, None, None, None))
                 continue
             try:
-                results.append(_process_content_to_result(file_path, content, config))
+                results.append(
+                    _process_content_to_result(file_path, content, config, rules=rules, used_vision=used_vision)
+                )
             except Exception as exc:
                 results.append((file_path, None, None, exc))
     return results
@@ -951,6 +455,7 @@ def rename_pdfs_in_directory(
         raise NotADirectoryError(f"Not a directory: {path}")
     path = path.resolve()
 
+    rules = load_processing_rules(config.rules_file)
     files = _collect_pdf_files(
         path,
         recursive=config.recursive,
@@ -959,6 +464,7 @@ def rename_pdfs_in_directory(
         exclude_patterns=config.exclude_patterns,
         skip_if_already_named=config.skip_if_already_named,
         files_override=files_override,
+        rules=rules,
     )
     if not files:
         logger.info("No matching PDF files found in %s", path)
@@ -981,7 +487,7 @@ def rename_pdfs_in_directory(
     export_rows: list[dict] = []
     plan_entries: list[dict[str, str]] = []
 
-    results = _produce_rename_results(files, config)
+    results = _produce_rename_results(files, config, rules=rules)
 
     for i, (file_path, new_base, meta, exc) in enumerate(results):
         logger.info("Processing %s/%s: %s", i + 1, len(files), file_path)
@@ -1005,7 +511,17 @@ def rename_pdfs_in_directory(
         base = new_base
         target = file_path.with_name(new_base + file_path.suffix)
         if config.interactive:
-            reply, base, target = _interactive_rename_prompt(file_path, target, new_base)
+            if getattr(config, "manual_mode", False):
+                print(f"Suggested: {new_base}{file_path.suffix}")
+                for k, v in (meta or {}).items():
+                    if k in ("category", "summary", "keywords", "category_source") and v:
+                        print(f"  {k}: {v}")
+            reply, base, target = _interactive_rename_prompt(
+                file_path,
+                target,
+                new_base,
+                edit_default_base=new_base if getattr(config, "manual_mode", False) else None,
+            )
             if reply == "n":
                 skipped_count += 1
                 continue
@@ -1057,6 +573,9 @@ def rename_pdfs_in_directory(
                 "category",
                 "summary",
                 "keywords",
+                "category_source",
+                "llm_failed",
+                "used_vision_fallback",
                 "invoice_id",
                 "amount",
                 "company",

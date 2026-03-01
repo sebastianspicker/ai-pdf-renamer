@@ -14,7 +14,7 @@ Failure modes, mitigations, and operational assumptions. Complements [RUNBOOK.md
 |--------------|------------|------------|
 | Empty or invalid `--dir` | Reject empty; document; CLI validates (BUGS §1). | - |
 | Non-interactive block (no TTY) | EOF on input returns defaults; pass all flags in scripts. | - |
-| LLM unreachable or non-JSON | Retries and fallback prompts; can still yield `na` or empty. Use `--no-llm` for heuristic-only. | User may see degraded filenames without clear message. |
+| LLM unreachable or non-JSON | Retries and fallback prompts; can still yield `na` or empty. Use `--no-llm` for heuristic-only. Metadata includes `category_source` and `llm_failed`; a warning is logged when LLM was used but category is unknown. Timestamp fallback yields `YYYYMMDD-document-HHMMSS.pdf` when both heuristic and LLM fail. | User may see degraded filenames; warning and metadata aid diagnosis. |
 | LLM `choices` empty or wrong shape | Guard with isinstance and str(); avoid IndexError/AttributeError. | - |
 | Data files missing / bad JSON | FileNotFoundError for missing; catch JSONDecodeError/ValueError at boundary and exit with message (BUGS §6, §8). | - |
 | PDF extraction fails or empty | Log “PDF appears to be empty”; skip file. Don’t distinguish empty vs extraction error (BUGS §9, §22). | - |
@@ -23,6 +23,7 @@ Failure modes, mitigations, and operational assumptions. Complements [RUNBOOK.md
 | Rename collision / TOCTOU | Suffix _1,_2…; rename used as existence check to reduce TOCTOU; after 20 attempts raise with clear message (BUGS §14, §17). | Concurrency can still cause overwrite or inconsistent suffixes; single-process recommended. |
 | EXDEV (cross-filesystem) | copy2 + unlink; on unlink failure remove target and re-raise. Copy failure can leave partial (BUGS §19). | - |
 | Proxy sends local LLM traffic off-device | Disable proxy for LLM client or set NO_PROXY (BUGS §16). | Document in SECURITY/README. |
+| Post-rename hook fails or times out | Hook runs in subprocess; on failure or timeout (120s) the tool logs and continues; renames are not rolled back. | Hook is best-effort; do not rely on it for critical path. |
 
 ## 3. Recovery
 
@@ -31,7 +32,8 @@ Failure modes, mitigations, and operational assumptions. Complements [RUNBOOK.md
 
 ## 4. Observability
 
-- **Logs:** Structured logging; destination configurable (default error.log). See RUNBOOK.
+- **Logs:** Structured logging; destination configurable (default error.log). See RUNBOOK. When the LLM returns no useful category, a warning is logged: "LLM was used but category is unknown; using heuristic or timestamp fallback."
+- **Metadata (per-file):** Export and rename metadata include `category_source` (heuristic / llm / combined / override) and `llm_failed` (true when LLM was used but category ended up unknown). Useful for auditing and tuning.
 - **Exit codes:** 0 = success, 1 = error, 130 = interrupt (Ctrl+C). See RUNBOOK.
 - **Metrics/traces:** None; add if needed for production-style ops.
 
