@@ -4,6 +4,26 @@ List derived from documentation, known limitations, and code review. Each item c
 
 ---
 
+## Release Cut Scope (GitHub hardening cycle)
+
+This section tracks what is included in the current release-prep cut versus deferred.
+
+### In release
+
+- Repository hygiene hardening (`make clean`, `make release-check`, CI temp-artifact guard).
+- Documentation consolidation to canonical set (README/AGENTS/ARCHITECTURE/RUNBOOK/PRD/SECURITY/BUGS_AND_FIXES).
+- README onboarding rebuild with runtime flowchart and lifecycle diagram.
+- Security doc alignment with current hook process semantics.
+- Release process documentation (`docs/RELEASE.md`) and changelog baseline (`CHANGELOG.md`).
+
+### Deferred post-release
+
+- Additional GUI feature parity refinements beyond current high-impact options.
+- Non-critical wording/style polish across docs.
+- Broader automation extensions (for example, publish automation) not required for GitHub release readiness.
+
+---
+
 ## Known Limitations / Bugs
 
 ### 1. [Bug] Empty `--dir` is treated as current directory

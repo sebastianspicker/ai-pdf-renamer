@@ -6,10 +6,17 @@ from __future__ import annotations
 
 import argparse
 
+from .pdf_extract import DEFAULT_MAX_CONTENT_TOKENS
 from .text_utils import VALID_CASE_CHOICES
 
 
 def _add_dirs_and_file_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--doctor",
+        dest="doctor",
+        action="store_true",
+        help="Run environment and dependency preflight checks, then exit.",
+    )
     p.add_argument(
         "--dir",
         dest="dirs",
@@ -390,7 +397,10 @@ def _add_llm_args(p: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         metavar="N",
-        help="Max tokens for PDF text extraction (default: env AI_PDF_RENAMER_MAX_TOKENS or 120000)",
+        help=(
+            "Max tokens for PDF text extraction "
+            f"(default: env AI_PDF_RENAMER_MAX_TOKENS or {DEFAULT_MAX_CONTENT_TOKENS})"
+        ),
     )
     p.add_argument(
         "--max-content-chars",
@@ -505,6 +515,13 @@ def _add_output_and_ux_args(p: argparse.ArgumentParser) -> None:
         help="Write proposed renames + category/summary/keywords to CSV or JSON (.csv/.json).",
     )
     p.add_argument(
+        "--summary-json",
+        dest="summary_json_path",
+        default=None,
+        metavar="FILE",
+        help="Write run summary JSON (processed/renamed/skipped/failed and failure details).",
+    )
+    p.add_argument(
         "--max-filename-chars",
         dest="max_filename_chars",
         type=int,
@@ -532,6 +549,13 @@ def _add_output_and_ux_args(p: argparse.ArgumentParser) -> None:
         default=None,
         metavar="FILE",
         help="JSON rules: skip_llm_if_heuristic_category, force_category_by_pattern, skip_files_by_pattern.",
+    )
+    p.add_argument(
+        "--post-rename-hook",
+        dest="post_rename_hook",
+        default=None,
+        metavar="CMD",
+        help="Command run after each successful rename. Receives paths/meta via AI_PDF_RENAMER_* env vars.",
     )
     p.add_argument(
         "--workers",

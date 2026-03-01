@@ -59,6 +59,8 @@ class RenamerConfig:
     rename_log_path: str | Path | None = None
     # Optional export of proposed renames + metadata to CSV/JSON before applying
     export_metadata_path: str | Path | None = None
+    # Optional run summary JSON output (processed/renamed/skipped/failed and details)
+    summary_json_path: str | Path | None = None
     # Cap filename length (truncate from right at separator)
     max_filename_chars: int | None = None
     # Per-file category override: filename -> category (from --override-category-file)
@@ -111,6 +113,8 @@ class RenamerConfig:
     post_rename_hook: str | None = None
     # Manual mode: single file, print suggestion and metadata, then prompt with suggestion as default for edit.
     manual_mode: bool = False
+    # Optional cooperative stop signal (used by GUI cancel button).
+    stop_event: object | None = None
 
     def __post_init__(self) -> None:
         if self.desired_case not in _VALID_DESIRED_CASES:

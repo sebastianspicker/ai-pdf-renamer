@@ -43,3 +43,8 @@ def test_truncate_for_llm() -> None:
     assert len(out) == 50
     assert out.endswith("\n[...]")
     assert out == "x" * (50 - len("\n[...]")) + "\n[...]"
+
+
+def test_truncate_for_llm_handles_tiny_max_chars() -> None:
+    out = truncate_for_llm("abcdefghijklmnopqrstuvwxyz", 3)
+    assert out == "abc"

@@ -1,5 +1,6 @@
 {
   "skip_llm_if_heuristic_category": ["invoice", "receipt"],
+  "allowed_categories": ["invoice", "receipt", "contract", "letter"],
   "force_category_by_pattern": [
     { "pattern": "draft-*.pdf", "category": "draft" },
     { "pattern": "scan_*.pdf", "category": "scan" }

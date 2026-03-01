@@ -29,6 +29,22 @@ FILENAME_RESERVED_WIN = frozenset(
 MAX_RENAME_RETRIES = 20
 
 
+def _next_available_path(path: Path, *, max_tries: int = 10_000) -> Path:
+    """Return first non-existing sibling path using _N suffix before extension."""
+    if not path.exists():
+        return path
+    stem = path.stem
+    suffix = path.suffix
+    for i in range(1, max_tries + 1):
+        candidate = path.with_name(f"{stem}_{i}{suffix}")
+        if not candidate.exists():
+            return candidate
+    raise OSError(
+        errno.EEXIST,
+        f"Could not create unique path for backup after {max_tries} attempts: {path}",
+    )
+
+
 def sanitize_filename_base(name: str) -> str:
     """Remove path separators and control chars; ensure non-empty; avoid Windows reserved names."""
     if not name or not name.strip():
@@ -112,6 +128,7 @@ def apply_single_rename(
                 if backup_dir:
                     backup_path = Path(backup_dir) / file_path.name
                     backup_path.parent.mkdir(parents=True, exist_ok=True)
+                    backup_path = _next_available_path(backup_path)
                     shutil.copy2(file_path, backup_path)
 
                 # Cross-platform atomic rename attempt.

@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Thread-safe: all accesses are protected by _llm_sessions_lock.
 # Note: For multi-process deployments, consider using a connection pool manager
 # or passing sessions explicitly via dependency injection.
-_llm_sessions: dict[str, requests.Session] = {}
+_llm_sessions: dict[tuple[str, int], requests.Session] = {}
 _llm_sessions_lock = threading.Lock()
 
 
@@ -45,9 +45,28 @@ def close_all_sessions() -> None:
         for session in _llm_sessions.values():
             try:
                 session.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not close LLM session cleanly: %s", exc)
         _llm_sessions.clear()
+
+
+def _session_key(base_url: str) -> tuple[str, int]:
+    """Session cache key scoped to base_url and current thread."""
+    return (base_url, threading.get_ident())
+
+
+def _prune_dead_thread_sessions_locked() -> None:
+    """Close cached sessions that belong to threads that no longer exist."""
+    alive_ids = {tid for tid in (t.ident for t in threading.enumerate()) if tid is not None}
+    stale_keys = [k for k in _llm_sessions if k[1] not in alive_ids]
+    for key in stale_keys:
+        session = _llm_sessions.pop(key, None)
+        if session is None:
+            continue
+        try:
+            session.close()
+        except Exception as exc:
+            logger.debug("Could not close stale LLM session cleanly: %s", exc)
 
 
 @dataclass(frozen=True)
@@ -72,11 +91,13 @@ class LocalLLMClient:
             payload["max_tokens"] = max_tokens
         try:
             with _llm_sessions_lock:
-                session = _llm_sessions.get(self.base_url)
+                _prune_dead_thread_sessions_locked()
+                key = _session_key(self.base_url)
+                session = _llm_sessions.get(key)
                 if session is None:
                     session = requests.Session()
                     session.trust_env = False
-                    _llm_sessions[self.base_url] = session
+                    _llm_sessions[key] = session
 
             resp = session.post(
                 self.base_url,
@@ -161,11 +182,13 @@ def complete_vision(
     }
     try:
         with _llm_sessions_lock:
-            session = _llm_sessions.get(base_url)
+            _prune_dead_thread_sessions_locked()
+            key = _session_key(base_url)
+            session = _llm_sessions.get(key)
             if session is None:
                 session = requests.Session()
                 session.trust_env = False
-                _llm_sessions[base_url] = session
+                _llm_sessions[key] = session
         resp = session.post(chat_url, json=payload, timeout=timeout_s)
         resp.raise_for_status()
         data = resp.json()

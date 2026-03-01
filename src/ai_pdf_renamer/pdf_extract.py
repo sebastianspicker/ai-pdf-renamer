@@ -361,7 +361,7 @@ def _extract_pages(doc: Any, path: Path, *, max_pages: int = 0) -> tuple[list[st
             except Exception as exc:
                 msg = (
                     f"Page {page_number} get_text('rawdict') failed in {path.name}: {exc}. "
-                    f"Set AI_PDF_RENAMER_USE_OCR=1 (or --ocr) to try OCR. Skipping {path.name}."
+                    f"Use --ocr to try OCR extraction. Skipping {path.name}."
                 )
                 logger.info(msg)
                 errors.append(msg)

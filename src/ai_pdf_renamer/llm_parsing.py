@@ -233,12 +233,17 @@ def truncate_for_llm(
             tokens = enc.encode(text)
             if len(tokens) <= max_tokens:
                 return text
-            # Reserve space for suffix; decode truncated tokens and append suffix
-            keep = max(1, max_tokens - 1)
+            suffix_tokens = enc.encode(TRUNCATION_SUFFIX)
+            if max_tokens <= len(suffix_tokens):
+                return enc.decode(tokens[:max_tokens])
+            # Reserve suffix budget so the output stays within token cap.
+            keep = max(1, max_tokens - len(suffix_tokens))
             truncated = enc.decode(tokens[:keep]) + TRUNCATION_SUFFIX
             return truncated
     if max_chars is None or max_chars <= 0:
         return text
     if len(text) <= max_chars:
         return text
+    if max_chars <= len(TRUNCATION_SUFFIX):
+        return text[:max_chars]
     return text[: max_chars - len(TRUNCATION_SUFFIX)] + TRUNCATION_SUFFIX

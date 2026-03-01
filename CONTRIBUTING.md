@@ -18,18 +18,23 @@ Optional extras: `.[tokens]` for token counting, `.[ocr]` for OCR support (see [
 Before submitting a pull request, run:
 
 ```bash
-ruff format .
-ruff check .
-pytest -q
+make release-check
 ```
 
-CI runs the same lint and test steps. Fix any reported issues locally first.
+Clean ignored local artifacts (optional but recommended before reviews):
+
+```bash
+make clean
+```
+
+`make release-check` runs hygiene guard + lint + tests and matches release gate expectations.
+CI runs the same lint/test/hygiene checks. Fix any reported issues locally first.
 
 ## Scope and alignment
 
-- **Features and behavior changes:** Align with [docs/product-specs/PRD.md](docs/product-specs/PRD.md) and [docs/DESIGN.md](docs/DESIGN.md).
+- **Features and behavior changes:** Align with [docs/product-specs/PRD.md](docs/product-specs/PRD.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Bugs:** Consider documenting or linking in [BUGS_AND_FIXES.md](BUGS_AND_FIXES.md) and opening an issue.
-- **Data files:** Only allowlisted filenames are resolved (no path traversal). See [docs/DESIGN.md](docs/DESIGN.md) and `src/ai_pdf_renamer/data_paths.py`.
+- **Data files:** Only allowlisted filenames are resolved (no path traversal). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and `src/ai_pdf_renamer/data_paths.py`.
 
 ## Code style
 
@@ -52,4 +57,4 @@ CI runs the same lint and test steps. Fix any reported issues locally first.
 ## Questions
 
 - Open a GitHub issue for questions or discussion.
-- See [docs/README.md](docs/README.md) for the full documentation index.
+- See [README.md](README.md) and [docs/RUNBOOK.md](docs/RUNBOOK.md) for primary project documentation.

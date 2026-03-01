@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 
-from .rename_ops import FILENAME_UNSAFE_RE
+from .rename_ops import FILENAME_RESERVED_WIN, FILENAME_UNSAFE_RE
 
 _DATE_RE_YMD = re.compile(r"\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b")
 _DATE_RE_DMY = re.compile(r"\b(\d{1,2})[./-](\d{1,2})[./-](\d{4})\b")
@@ -236,9 +236,7 @@ def normalize_keywords(raw: str | list[str] | None) -> list[str]:
 
 
 # Windows reserved names (device names); avoid creating filenames that match on Windows.
-_FILENAME_RESERVED_WIN = frozenset(
-    {"con", "prn", "aux", "nul"} | {f"com{i}" for i in range(1, 10)} | {f"lpt{i}" for i in range(1, 10)}
-)
+_FILENAME_RESERVED_WIN = frozenset(name.lower() for name in FILENAME_RESERVED_WIN)
 
 
 def clean_token(text: str) -> str:

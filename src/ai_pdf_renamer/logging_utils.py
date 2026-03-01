@@ -49,7 +49,7 @@ def setup_logging(*, log_file: str | Path = "error.log", level: int = logging.IN
     else:
         formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
-    if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
+    if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in root.handlers):
         console_handler = logging.StreamHandler()
         console_handler.setLevel(level)
         console_handler.setFormatter(formatter)

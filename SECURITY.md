@@ -8,9 +8,15 @@ The built-in LLM client sends requests only to the URL you configure (default `h
 
 ## Post-rename hook
 
-The optional post-rename hook (`AI_PDF_RENAMER_POST_RENAME_HOOK` or config) is executed in a subprocess with **shell=True**. The hook string is **user-defined** and runs with your privileges. Old path, new path, and metadata are passed **only via environment variables** (`AI_PDF_RENAMER_OLD_PATH`, `AI_PDF_RENAMER_NEW_PATH`, `AI_PDF_RENAMER_META`), not interpolated into the hook command.
+The optional post-rename hook (`AI_PDF_RENAMER_POST_RENAME_HOOK` or config) runs in a subprocess with **shell=False**. The hook string is **operator-defined** and runs with your privileges. Old path, new path, and metadata are passed via environment variables:
 
-**Do not** embed PDF content, filenames, or other untrusted input into the hook command string itself (e.g. in config or env). Use the provided env vars inside your script if you need paths or metadata. Keep the hook under your control; if config or env can be influenced by others, they could run arbitrary commands.
+- `AI_PDF_RENAMER_OLD_PATH`
+- `AI_PDF_RENAMER_NEW_PATH`
+- `AI_PDF_RENAMER_META`
+
+If shell metacharacters are detected in the configured command string, the tool explicitly invokes your local shell executable as a subprocess argument (`/bin/sh -lc ...` on Unix, `cmd.exe /c ...` on Windows), still using `shell=False` for process creation.
+
+**Do not** embed PDF content, filenames, or other untrusted input into the hook command string itself (in config or env). Use the provided environment variables inside your script when you need paths or metadata. Keep hook configuration under your control; if config/env is attacker-controlled, arbitrary command execution is possible.
 
 ## Reporting a Vulnerability
 

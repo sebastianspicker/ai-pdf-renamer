@@ -230,7 +230,6 @@ def test_cli_non_interactive_uses_defaults_without_hanging(monkeypatch, tmp_path
 def test_cli_renames_with_mocked_llm_no_network(monkeypatch, tmp_path) -> None:
     """Rename flow without real LLM when get_document_* are mocked (CI-safe)."""
     import ai_pdf_renamer.cli as cli
-    import ai_pdf_renamer.renamer as renamer
 
     monkeypatch.setattr(cli, "setup_logging", lambda **k: None)
     monkeypatch.setattr(cli, "_is_interactive", lambda: False)

@@ -19,17 +19,24 @@ DATA_FILES: frozenset[str] = frozenset(
 )
 
 
+def _discover_repo_root(start: Path | None = None) -> Path | None:
+    """Return repo root containing pyproject.toml, or None when not found."""
+    if start is None:
+        start = Path(__file__).resolve()
+    for parent in [start, *start.parents]:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return None
+
+
 def project_root(start: Path | None = None) -> Path:
     """
     Best-effort discovery of the repo root for editable/dev runs.
     Falls back to CWD if nothing is found.
     """
-    if start is None:
-        start = Path(__file__).resolve()
-
-    for parent in [start, *start.parents]:
-        if (parent / "pyproject.toml").exists():
-            return parent
+    discovered = _discover_repo_root(start)
+    if discovered is not None:
+        return discovered
     return Path.cwd()
 
 
@@ -37,7 +44,11 @@ def data_dir() -> Path:
     override = (os.getenv("AI_PDF_RENAMER_DATA_DIR") or "").strip()
     if override:
         return Path(override).expanduser().resolve()
-    return project_root(Path(__file__).resolve()).resolve()
+    repo_root = _discover_repo_root(Path(__file__).resolve())
+    if repo_root is not None:
+        return repo_root.resolve()
+    # Installed-package fallback: use bundled data, not the process CWD.
+    return (Path(__file__).resolve().parent / "data").resolve()
 
 
 def package_data_path(filename: str) -> Path:
@@ -47,7 +58,7 @@ def package_data_path(filename: str) -> Path:
 def category_aliases_path() -> Path:
     """Path to category_aliases.json: data_dir first (if present), else package data."""
     override = data_dir() / "category_aliases.json"
-    if override.exists():
+    if override.exists() and override.is_file():
         return override
     return package_data_path("category_aliases.json")
 
@@ -56,11 +67,11 @@ def data_path(filename: DataFileName) -> Path:
     if filename not in DATA_FILES:
         raise ValueError(f"Unsupported data file: {filename}")
     candidate = data_dir() / filename
-    if candidate.exists():
+    if candidate.exists() and candidate.is_file():
         return candidate
 
     packaged = package_data_path(filename)
-    if packaged.exists():
+    if packaged.exists() and packaged.is_file():
         return packaged
 
     raise FileNotFoundError(

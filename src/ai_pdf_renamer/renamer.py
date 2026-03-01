@@ -1,53 +1,45 @@
 from __future__ import annotations
 
 import csv
-import fnmatch
 import json
 import logging
 import os
-import re
+import shlex
 import signal
-import subprocess
+import subprocess  # nosec B404
 import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
+import requests
+
 from .config import RenamerConfig, build_config_from_flat_dict  # noqa: F401 re-export
 from .filename import _llm_client_from_config, generate_filename
 from .llm import complete_vision
+from .llm_prompts import build_vision_filename_prompt
 from .loaders import _heuristic_scorer_cached, _stopwords_cached  # noqa: F401 re-export for tests
-from .pdf_extract import (
-    DEFAULT_MAX_CONTENT_TOKENS,
-    get_pdf_metadata,
-    pdf_first_page_to_image_base64,
-    pdf_to_text,
-    pdf_to_text_with_ocr,
-)
+from .pdf_extract import get_pdf_metadata, pdf_first_page_to_image_base64, pdf_to_text, pdf_to_text_with_ocr
 from .rename_ops import (
     MAX_RENAME_RETRIES,
     apply_single_rename,
     sanitize_filename_base,
     sanitize_filename_from_llm,
 )
-from .llm_prompts import build_vision_filename_prompt
+from .renamer_extract import effective_max_tokens as _effective_max_tokens_impl
+from .renamer_extract import extract_pdf_content_with as _extract_pdf_content_impl
+from .renamer_files import collect_pdf_files as _collect_pdf_files_impl
+from .renamer_files import matches_patterns as _matches_patterns_impl
 from .rules import (
     ProcessingRules,
     force_category_for_basename,
     load_processing_rules,
-    should_skip_file_by_rules,
 )
 
 
 def _matches_patterns(name: str, include: list[str] | None, exclude: list[str] | None) -> bool:
-    """True if basename matches include (if set) and does not match any exclude."""
-    if include is not None and include:
-        if not any(fnmatch.fnmatch(name, p) for p in include):
-            return False
-    if exclude is not None and exclude:
-        if any(fnmatch.fnmatch(name, p) for p in exclude):
-            return False
-    return True
+    """Compatibility wrapper for file-pattern matching helper."""
+    return _matches_patterns_impl(name, include, exclude)
 
 
 def _collect_pdf_files(
@@ -61,36 +53,25 @@ def _collect_pdf_files(
     files_override: list[Path] | None = None,
     rules: ProcessingRules | None = None,
 ) -> list[Path]:
-    """Collect PDFs from directory (or files_override). Rules skip_files_by_pattern filters out matches."""
-    if files_override is not None:
-        candidates = [p for p in files_override if p.is_file() and p.suffix.lower() == ".pdf"]
-    elif recursive:
-        candidates = []
-        for p in directory.rglob("*.pdf"):
-            if not p.is_file() or p.name.startswith("."):
-                continue
-            if max_depth > 0:
-                try:
-                    rel = p.relative_to(directory)
-                    if len(rel.parts) > max_depth:
-                        continue
-                except ValueError:
-                    continue
-            candidates.append(p)
-    else:
-        candidates = [
-            p for p in directory.iterdir() if p.is_file() and p.suffix.lower() == ".pdf" and not p.name.startswith(".")
-        ]
-    out = [p for p in candidates if _matches_patterns(p.name, include_patterns, exclude_patterns)]
-    if rules is not None:
-        out = [p for p in out if not should_skip_file_by_rules(rules, p.name)]
-    if skip_if_already_named:
-        already_named = re.compile(r"^\d{8}-.+\.[pP][dD][fF]$")
-        out = [p for p in out if not already_named.match(p.name)]
-    return out
+    """Compatibility wrapper for PDF file collection helper."""
+    return _collect_pdf_files_impl(
+        directory,
+        recursive=recursive,
+        max_depth=max_depth,
+        include_patterns=include_patterns,
+        exclude_patterns=exclude_patterns,
+        skip_if_already_named=skip_if_already_named,
+        files_override=files_override,
+        rules=rules,
+    )
 
 
 logger = logging.getLogger(__name__)
+
+
+def _stop_requested(config: RenamerConfig) -> bool:
+    stop_event = getattr(config, "stop_event", None)
+    return bool(stop_event is not None and hasattr(stop_event, "is_set") and stop_event.is_set())
 
 
 def _write_pdf_title_metadata(pdf_path: Path, title: str) -> None:
@@ -130,24 +111,83 @@ def _write_json_or_csv(
             json.dump(rows, f, ensure_ascii=False, indent=2)
 
 
+def _write_summary_json(
+    summary_path: str | Path | None,
+    *,
+    directory: Path,
+    processed: int,
+    renamed: int,
+    skipped: int,
+    failed: int,
+    dry_run: bool,
+    failures: list[dict[str, str]],
+) -> None:
+    """Write run summary JSON as a single object. Best-effort: logs warning on write failure."""
+    if not summary_path:
+        return
+    summary = {
+        "directory": str(directory),
+        "processed": processed,
+        "renamed": renamed,
+        "skipped": skipped,
+        "failed": failed,
+        "dry_run": dry_run,
+        "failures": failures,
+    }
+    target = Path(summary_path)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Could not write summary JSON %s: %s", target, exc)
+
+
 def _run_post_rename_hook(hook_cmd: str, old_path: Path, new_path: Path, meta: dict) -> None:
-    """Run post-rename hook in a subprocess. On failure log and continue; do not fail the run."""
+    """Run post-rename hook command or HTTP endpoint. On failure log and continue."""
     env = {**os.environ, "AI_PDF_RENAMER_OLD_PATH": str(old_path), "AI_PDF_RENAMER_NEW_PATH": str(new_path)}
     try:
         meta_json = json.dumps(meta, default=str)
     except (TypeError, ValueError):
         meta_json = "{}"
     env["AI_PDF_RENAMER_META"] = meta_json
+    cmd = (hook_cmd or "").strip()
+    if not cmd:
+        return
     try:
-        subprocess.run(
-            hook_cmd,
-            shell=True,
-            env=env,
-            timeout=120,
-            check=False,
-        )
+        cmd_lower = cmd.lower()
+        if cmd_lower.startswith("http://") or cmd_lower.startswith("https://"):
+            payload = {
+                "old_path": str(old_path),
+                "new_path": str(new_path),
+                "meta": meta,
+            }
+            with requests.Session() as session:
+                session.trust_env = False
+                resp = session.post(cmd, json=payload, timeout=10)
+                resp.raise_for_status()
+            return
+
+        shell_meta = {"|", "&", ";", "<", ">", "$", "`", "(", ")", "\n"}
+        needs_shell = any(ch in cmd for ch in shell_meta)
+
+        if needs_shell:
+            if os.name == "nt":
+                shell_exe = os.environ.get("COMSPEC", "cmd.exe")
+                args = [shell_exe, "/c", cmd]
+            else:
+                shell_exe = os.environ.get("SHELL", "/bin/sh")
+                args = [shell_exe, "-lc", cmd]
+        else:
+            args = shlex.split(cmd, posix=(os.name != "nt"))
+            if not args:
+                return
+
+        # Command comes from explicit local operator configuration (--post-rename-hook / env var).
+        subprocess.run(args, shell=False, env=env, timeout=120, check=False)  # nosec B603
     except subprocess.TimeoutExpired:
-        logger.warning("Post-rename hook timed out (120s): %s", hook_cmd[:80])
+        logger.warning("Post-rename hook timed out (120s): %s", cmd[:80])
+    except requests.RequestException as exc:
+        logger.warning("Post-rename hook HTTP call failed: %s", exc)
     except Exception as e:
         logger.warning("Post-rename hook failed: %s", e)
 
@@ -191,80 +231,23 @@ def _apply_post_rename_actions(
 
 
 def _effective_max_tokens(config: RenamerConfig) -> int:
-    """Max tokens for PDF extraction from config or env (AI_PDF_RENAMER_MAX_TOKENS)."""
-    if config.max_tokens_for_extraction is not None and config.max_tokens_for_extraction > 0:
-        return config.max_tokens_for_extraction
-    try:
-        v = int(os.environ.get("AI_PDF_RENAMER_MAX_TOKENS", "") or 0)
-        if v > 0:
-            return v
-    except ValueError:
-        pass
-    return DEFAULT_MAX_CONTENT_TOKENS
+    """Compatibility wrapper for shared extraction-token resolver."""
+    return _effective_max_tokens_impl(config)
 
 
 def _extract_pdf_content(path: Path, config: RenamerConfig) -> tuple[str, bool]:
-    """Extract text from PDF (OCR or plain) according to config. Used by _process_one_file and single-worker loop.
-    When vision_first is True, tries vision on first page first; on success returns (vision_result, True).
-    When use_vision_fallback is True and extracted text is shorter than vision_fallback_min_text_len,
-    tries Ollama vision on the first page and uses the result as synthetic content.
-    Returns (content, used_vision_fallback)."""
-    if getattr(config, "vision_first", False):
-        image_b64 = pdf_first_page_to_image_base64(path)
-        if image_b64:
-            client = _llm_client_from_config(config)
-            model = getattr(config, "vision_model", None) or client.model
-            prompt = build_vision_filename_prompt(config.language)
-            timeout = getattr(config, "llm_timeout_s", None) or 60.0
-            vision_text = complete_vision(
-                client.base_url,
-                model,
-                image_b64,
-                prompt,
-                timeout_s=max(60.0, timeout * 2),
-            )
-            if vision_text:
-                vision_text = sanitize_filename_from_llm(vision_text)
-                return (vision_text, True)
-        # vision_first but image or vision failed: fall through to text extraction
-    if config.use_ocr:
-        content = pdf_to_text_with_ocr(
-            path,
-            max_pages=config.max_pages_for_extraction or 0,
-            max_tokens=_effective_max_tokens(config),
-            language=config.language,
-        )
-    else:
-        content = pdf_to_text(
-            path,
-            max_pages=config.max_pages_for_extraction or 0,
-            max_tokens=_effective_max_tokens(config),
-        )
-    min_len = getattr(config, "vision_fallback_min_text_len", 50)
-    if getattr(config, "use_vision_fallback", False) and len(content.strip()) < min_len:
-        image_b64 = pdf_first_page_to_image_base64(path)
-        if image_b64:
-            client = _llm_client_from_config(config)
-            model = getattr(config, "vision_model", None) or client.model
-            prompt = build_vision_filename_prompt(config.language)
-            timeout = getattr(config, "llm_timeout_s", None) or 60.0
-            vision_text = complete_vision(
-                client.base_url,
-                model,
-                image_b64,
-                prompt,
-                timeout_s=max(60.0, timeout * 2),
-            )
-            if vision_text:
-                vision_text = sanitize_filename_from_llm(vision_text)
-                logger.info(
-                    "Used vision fallback for %s (text length %d < %d)",
-                    path.name,
-                    len(content.strip()),
-                    min_len,
-                )
-                return (vision_text, True)
-    return (content, False)
+    """Compatibility wrapper for shared extraction helper."""
+    return _extract_pdf_content_impl(
+        path,
+        config,
+        pdf_first_page_to_image_base64_fn=pdf_first_page_to_image_base64,
+        llm_client_from_config_fn=_llm_client_from_config,
+        build_vision_prompt_fn=build_vision_filename_prompt,
+        complete_vision_fn=complete_vision,
+        sanitize_filename_from_llm_fn=sanitize_filename_from_llm,
+        pdf_to_text_fn=pdf_to_text,
+        pdf_to_text_with_ocr_fn=pdf_to_text_with_ocr,
+    )
 
 
 def _process_content_to_result(
@@ -355,6 +338,8 @@ def _process_one_file(
     If error is not None or new_base is None, the file should be counted as failed/skipped.
     Empty or unextractable PDF: returns (path, None, None, None); caller logs and skips the file.
     """
+    if _stop_requested(config):
+        return (file_path, None, None, None)
     try:
         content, used_vision = _extract_pdf_content(file_path, config)
     except Exception as exc:
@@ -404,20 +389,42 @@ def _produce_rename_results(
     if config.interactive:
         workers = 1
     if workers > 1:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            results = list(
-                executor.map(
-                    lambda p: _process_one_file(p, config, rules),
-                    files,
-                )
-            )
-        order = {f: i for i, f in enumerate(files)}
-        results.sort(key=lambda r: order.get(r[0], 0))
+        executor = ThreadPoolExecutor(max_workers=workers)
+        futures: list[tuple[Future[tuple[Path, str | None, dict | None, BaseException | None]], Path]] = []
+        results: list[tuple[Path, str | None, dict | None, BaseException | None]] = []
+        stop_early = False
+        try:
+            for p in files:
+                if _stop_requested(config):
+                    logger.info("Stop requested. Ending processing early.")
+                    stop_early = True
+                    break
+                futures.append((executor.submit(_process_one_file, p, config, rules), p))
+
+            for future, p in futures:
+                if _stop_requested(config):
+                    logger.info("Stop requested. Ending processing early.")
+                    stop_early = True
+                    break
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    results.append((p, None, None, exc))
+        finally:
+            if stop_early:
+                for pending, _ in futures:
+                    pending.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
+            else:
+                executor.shutdown(wait=True, cancel_futures=False)
         return results
     results = []
     prefetched: Future[tuple[str, bool]] | None = None
     with ThreadPoolExecutor(max_workers=1) as executor:
         for i, file_path in enumerate(files):
+            if _stop_requested(config):
+                logger.info("Stop requested. Ending processing early.")
+                break
             try:
                 content, used_vision = (
                     prefetched.result() if prefetched is not None else _extract_pdf_content(file_path, config)
@@ -468,6 +475,16 @@ def rename_pdfs_in_directory(
     )
     if not files:
         logger.info("No matching PDF files found in %s", path)
+        _write_summary_json(
+            config.summary_json_path,
+            directory=path,
+            processed=0,
+            renamed=0,
+            skipped=0,
+            failed=0,
+            dry_run=bool(config.dry_run),
+            failures=[],
+        )
         return
 
     def _mtime_key(p: Path) -> float:
@@ -482,14 +499,20 @@ def rename_pdfs_in_directory(
         logger.info("Heuristic-only mode (LLM disabled). Category from heuristics; summary and keywords will be empty.")
 
     renamed_count = 0
+    processed_count = 0
     skipped_count = 0
     failed_count = 0
+    failure_details: list[dict[str, str]] = []
     export_rows: list[dict] = []
     plan_entries: list[dict[str, str]] = []
 
     results = _produce_rename_results(files, config, rules=rules)
 
     for i, (file_path, new_base, meta, exc) in enumerate(results):
+        if _stop_requested(config):
+            logger.info("Stop requested. Ending rename/apply phase.")
+            break
+        processed_count += 1
         logger.info("Processing %s/%s: %s", i + 1, len(files), file_path)
         if exc is not None:
             # Data-file/config errors (e.g. invalid JSON) should propagate so CLI can exit with clear message.
@@ -501,6 +524,7 @@ def rename_pdfs_in_directory(
                 continue
             logger.exception("Failed to process %s: %s", file_path, exc)
             failed_count += 1
+            failure_details.append({"file": str(file_path), "error": str(exc)})
             continue
         if new_base is None:
             # This case usually means truly empty content without causing an error.
@@ -549,6 +573,12 @@ def rename_pdfs_in_directory(
                     MAX_RENAME_RETRIES,
                 )
                 failed_count += 1
+                failure_details.append(
+                    {
+                        "file": str(file_path),
+                        "error": f"Could not rename after {MAX_RENAME_RETRIES} attempts.",
+                    }
+                )
             else:
                 if config.dry_run:
                     logger.info(
@@ -562,6 +592,7 @@ def rename_pdfs_in_directory(
         except Exception as e:
             logger.exception("Failed to process %s: %s", file_path, e)
             failed_count += 1
+            failure_details.append({"file": str(file_path), "error": str(e)})
 
     if config.export_metadata_path and export_rows:
         _write_json_or_csv(
@@ -587,21 +618,28 @@ def rename_pdfs_in_directory(
         _write_json_or_csv(plan_path, plan_entries, ["old", "new"])
         logger.info("Wrote rename plan (%s entries) to %s", len(plan_entries), plan_path)
 
-    if not files:
-        logger.info("No PDFs found in %s", path)
-        print(f"No PDFs found in {path}.", file=sys.stderr)
-    else:
-        logger.info(
-            "Summary: %s file(s) processed, %s renamed, %s skipped, %s failed",
-            len(files),
-            renamed_count,
-            skipped_count,
-            failed_count,
-        )
-        print(
-            f"Processed {len(files)}, renamed {renamed_count}, skipped {skipped_count}, failed {failed_count}.",
-            file=sys.stderr,
-        )
+    _write_summary_json(
+        config.summary_json_path,
+        directory=path,
+        processed=processed_count,
+        renamed=renamed_count,
+        skipped=skipped_count,
+        failed=failed_count,
+        dry_run=bool(config.dry_run),
+        failures=failure_details,
+    )
+
+    logger.info(
+        "Summary: %s file(s) processed, %s renamed, %s skipped, %s failed",
+        processed_count,
+        renamed_count,
+        skipped_count,
+        failed_count,
+    )
+    print(
+        f"Processed {processed_count}, renamed {renamed_count}, skipped {skipped_count}, failed {failed_count}.",
+        file=sys.stderr,
+    )
 
 
 def run_watch_loop(

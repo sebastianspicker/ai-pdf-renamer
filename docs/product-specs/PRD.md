@@ -1,6 +1,6 @@
 # Product Requirements Document – AI-PDF-Renamer
 
-Product goals, requirements, and personas. For architecture and design see [ARCHITECTURE.md](../ARCHITECTURE.md) and [DESIGN.md](../DESIGN.md).
+Product goals, requirements, and personas. For implementation and runtime details see [ARCHITECTURE.md](../ARCHITECTURE.md) and [RUNBOOK.md](../RUNBOOK.md).
 
 ---
 
@@ -70,5 +70,5 @@ The tool is **local-first**: no cloud dependency; optional LLM runs on a local e
 ## 6. References
 
 - [ARCHITECTURE.md](../ARCHITECTURE.md) – Workflow and component map.
-- [DESIGN.md](../DESIGN.md) – Design goals and key decisions.
+- [RUNBOOK.md](../RUNBOOK.md) – Setup, execution, and operational defaults.
 - [BUGS_AND_FIXES.md](../../BUGS_AND_FIXES.md) – Known bugs and required fixes.

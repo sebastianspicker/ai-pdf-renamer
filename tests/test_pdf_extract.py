@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import sys
 
+import pytest
+
 from ai_pdf_renamer import pdf_extract
 
-
-import pytest
 
 def test_pdf_to_text_raises_on_open_error(monkeypatch) -> None:
     class DummyFitz:

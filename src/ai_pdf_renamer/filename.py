@@ -178,7 +178,13 @@ def _resolve_category_with_llm(
             title_weight_factor=config.title_weight_factor,
         )
         suggested = [c for c in top_n if c and c != "unknown"]
-        allowed = list(heuristic_scorer.all_categories()) if config.use_constrained_llm_category else None
+        # Rules-level allowlist has precedence over default constrained category set.
+        if rules is not None and rules.allowed_categories:
+            allowed = [c for c in rules.allowed_categories if c and c.strip()]
+        elif config.use_constrained_llm_category:
+            allowed = list(heuristic_scorer.all_categories())
+        else:
+            allowed = None
         cat_llm = get_document_category(
             llm_client,
             summary=summary,

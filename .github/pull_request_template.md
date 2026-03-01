@@ -8,6 +8,6 @@
 
 ## Checklist
 
-- [ ] `ruff format .` and `ruff check .` pass
-- [ ] `pytest -q` passes
-- [ ] Docs updated if behavior or setup changed (see [docs/README.md](docs/README.md))
+- [ ] `make release-check` passes
+- [ ] `make clean` run locally (recommended before final push)
+- [ ] Docs updated if behavior or setup changed (see [README.md](README.md) and [docs/RUNBOOK.md](docs/RUNBOOK.md))

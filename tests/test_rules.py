@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from ai_pdf_renamer.rules import (
     ProcessingRules,
     force_category_for_basename,

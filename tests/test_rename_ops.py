@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
+from pathlib import Path
 
-from ai_pdf_renamer.rename_ops import sanitize_filename_base, sanitize_filename_from_llm
+from ai_pdf_renamer.rename_ops import (
+    apply_single_rename,
+    sanitize_filename_base,
+    sanitize_filename_from_llm,
+)
 
 
 def test_sanitize_filename_from_llm_empty() -> None:
@@ -13,7 +17,7 @@ def test_sanitize_filename_from_llm_empty() -> None:
 
 
 def test_sanitize_filename_from_llm_unsafe_chars() -> None:
-    assert sanitize_filename_from_llm("a/b\\c:d*e?f\"g<h>i|j") == "a_b_c_d_e_f_g_h_i_j"
+    assert sanitize_filename_from_llm('a/b\\c:d*e?f"g<h>i|j') == "a_b_c_d_e_f_g_h_i_j"
 
 
 def test_sanitize_filename_from_llm_strip_pdf() -> None:
@@ -43,3 +47,29 @@ def test_sanitize_filename_base_unchanged() -> None:
 def test_sanitize_filename_base_empty() -> None:
     assert sanitize_filename_base("") == "unnamed"
     assert sanitize_filename_base("   ") == "unnamed"
+
+
+def test_apply_single_rename_backup_collision_does_not_overwrite(tmp_path: Path) -> None:
+    src = tmp_path / "doc.pdf"
+    src.write_text("new-content", encoding="utf-8")
+
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    existing_backup = backup_dir / "doc.pdf"
+    existing_backup.write_text("old-content", encoding="utf-8")
+
+    success, target = apply_single_rename(
+        src,
+        "renamed",
+        plan_file_path=None,
+        plan_entries=[],
+        dry_run=False,
+        backup_dir=backup_dir,
+        on_success=None,
+        max_filename_chars=None,
+    )
+
+    assert success is True
+    assert target.exists()
+    assert existing_backup.read_text(encoding="utf-8") == "old-content"
+    assert (backup_dir / "doc_1.pdf").read_text(encoding="utf-8") == "new-content"

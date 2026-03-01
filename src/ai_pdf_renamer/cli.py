@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib.util
 import json
 import logging
 import os
@@ -12,6 +13,8 @@ from pathlib import Path
 import requests
 
 from .cli_parser import build_parser
+from .config_resolver import build_config
+from .data_paths import data_path
 from .logging_utils import setup_logging
 from .renamer import (
     RenamerConfig,
@@ -35,14 +38,16 @@ def _load_config_file(path: str | Path) -> dict:
     suf = p.suffix.lower()
     if suf == ".json":
         try:
-            return json.loads(raw)
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else {}
         except json.JSONDecodeError:
             return {}
     if suf in (".yaml", ".yml"):
         try:
             import yaml
 
-            return yaml.safe_load(raw) or {}
+            data = yaml.safe_load(raw)
+            return data if isinstance(data, dict) else {}
         except Exception:
             return {}
     return {}
@@ -214,6 +219,83 @@ def _resolve_log_config(args: argparse.Namespace) -> tuple[str, int]:
     return (log_file, log_level)
 
 
+def run_doctor_checks(args: argparse.Namespace) -> int:
+    """Run preflight diagnostics for local environment and dependencies."""
+    ok = True
+
+    print("AI-PDF-Renamer doctor")
+    print("=====================")
+
+    for filename in ("heuristic_scores.json", "meta_stopwords.json"):
+        try:
+            path = data_path(filename)
+            raw = path.read_text(encoding="utf-8")
+            json.loads(raw)
+            print(f"[OK] data file: {filename} -> {path}")
+        except Exception as exc:
+            ok = False
+            print(f"[FAIL] data file: {filename} ({exc})")
+
+    if importlib.util.find_spec("fitz") is not None:
+        print("[OK] optional dep: PyMuPDF (fitz)")
+    else:
+        print("[WARN] optional dep missing: PyMuPDF (fitz) -> install with: pip install -e '.[pdf]'")
+
+    if importlib.util.find_spec("ocrmypdf") is not None:
+        print("[OK] optional dep: ocrmypdf")
+    else:
+        print("[INFO] optional dep missing: ocrmypdf (only needed for --ocr)")
+
+    if importlib.util.find_spec("tiktoken") is not None:
+        print("[OK] optional dep: tiktoken")
+    else:
+        print("[INFO] optional dep missing: tiktoken (only needed for token-based truncation)")
+
+    use_llm = _bool_opt(args, "use_llm", True)
+    if use_llm:
+        from .filename import _llm_client_from_config
+
+        probe_cfg = RenamerConfig(
+            llm_base_url=getattr(args, "llm_base_url", None) or None,
+            llm_model=getattr(args, "llm_model", None) or None,
+            llm_timeout_s=getattr(args, "llm_timeout_s", None),
+            use_llm=True,
+        )
+        client = _llm_client_from_config(probe_cfg)
+        try:
+            # Keep check lightweight and bounded, and verify completions shape.
+            payload = {
+                "model": client.model,
+                "prompt": "ping",
+                "max_tokens": 1,
+                "temperature": 0.0,
+            }
+            with requests.Session() as session:
+                session.trust_env = False
+                resp = session.post(
+                    client.base_url,
+                    json=payload,
+                    timeout=min(float(client.timeout_s), 3.0),
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            if not isinstance(data, dict) or not isinstance(data.get("choices"), list):
+                raise ValueError("Response is not OpenAI-compatible completions JSON.")
+            print(f"[OK] LLM endpoint reachable: {client.base_url}")
+        except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
+            ok = False
+            print(f"[FAIL] LLM endpoint unreachable: {client.base_url} ({exc})")
+    else:
+        print("[INFO] LLM checks skipped (--no-llm)")
+
+    print("=====================")
+    if ok:
+        print("Doctor checks passed.")
+        return 0
+    print("Doctor checks found issues.")
+    return 1
+
+
 def _resolve_dirs(args: argparse.Namespace) -> tuple[list[str], str | None]:
     """Resolve directory list and optional single-file path from args. Raises SystemExit on error."""
     single_file = getattr(args, "single_file", None) or getattr(args, "manual_file", None)
@@ -266,7 +348,7 @@ def _resolve_dirs(args: argparse.Namespace) -> tuple[list[str], str | None]:
             else "Error: at least one directory or --file is required. Use --dir or --file."
         )
         raise SystemExit(msg)
-    return (dirs, single_file)
+    return (resolved_dirs, single_file)
 
 
 def _build_config_from_args(
@@ -311,54 +393,13 @@ def _build_config_from_args(
         free_prompt="Version (optional): ",
     )
 
-    prefer_llm_category = _bool_opt(args, "prefer_llm_category", False) or not _bool_opt(
-        args, "prefer_heuristic", False
-    )
-    skip_llm_score = _optional_float(args, "skip_llm_category_if_heuristic_score_ge")
-    skip_llm_gap = _optional_float(args, "skip_llm_category_if_heuristic_gap_ge")
-    if getattr(args, "preset", None) == "high-confidence-heuristic":
-        if skip_llm_score is None:
-            skip_llm_score = 0.5
-        if skip_llm_gap is None:
-            skip_llm_gap = 0.3
-    heuristic_override_min_score = _optional_float(args, "heuristic_override_min_score")
-    heuristic_override_min_gap = _optional_float(args, "heuristic_override_min_gap")
-    if _bool_opt(args, "no_heuristic_override", False):
-        heuristic_override_min_score = None
-        heuristic_override_min_gap = None
-    elif heuristic_override_min_score is None and heuristic_override_min_gap is None:
-        heuristic_override_min_score = 0.55
-        heuristic_override_min_gap = 0.3
-
-    x_max_tokens = getattr(args, "max_tokens_for_extraction", None)
-    max_tokens_for_extraction = int(x_max_tokens) if x_max_tokens is not None and x_max_tokens > 0 else None
-    x_max_content = getattr(args, "max_content_chars", None) or os.environ.get("AI_PDF_RENAMER_MAX_CONTENT_CHARS")
-    max_content_chars = None
-    if x_max_content not in (None, ""):
-        try:
-            n = int(x_max_content)
-            max_content_chars = n if n > 0 else None
-        except (TypeError, ValueError):
-            max_content_chars = None
-    x_max_content_tokens = getattr(args, "max_content_tokens", None) or os.environ.get(
-        "AI_PDF_RENAMER_MAX_CONTENT_TOKENS"
-    )
-    max_content_tokens = None
-    if x_max_content_tokens not in (None, ""):
-        try:
-            n = int(x_max_content_tokens)
-            max_content_tokens = n if n > 0 else None
-        except (TypeError, ValueError):
-            max_content_tokens = None
-    x_max_filename = getattr(args, "max_filename_chars", None)
-    max_filename_chars = int(x_max_filename) if x_max_filename is not None and x_max_filename > 0 else None
-
-    kwargs: dict = {
+    raw: dict = {
         "language": language,
         "desired_case": desired_case,
         "project": project,
         "version": version,
-        "prefer_llm_category": prefer_llm_category,
+        "prefer_llm_category": _bool_opt(args, "prefer_llm_category", True),
+        "prefer_heuristic": _bool_opt(args, "prefer_heuristic", False),
         "date_locale": _str_opt(args, "date_locale", "dmy"),
         "date_prefer_leading_chars": _int_opt(args, "date_prefer_leading_chars", 8000),
         "use_pdf_metadata_for_date": _bool_opt(args, "use_pdf_metadata_for_date", True),
@@ -371,12 +412,13 @@ def _build_config_from_args(
         "use_keyword_overlap_for_category": _bool_opt(args, "use_keyword_overlap_for_category", True),
         "use_embeddings_for_conflict": _bool_opt(args, "use_embeddings_for_conflict", False),
         "category_display": _str_opt(args, "category_display", "specific"),
-        "skip_llm_category_if_heuristic_score_ge": skip_llm_score,
-        "skip_llm_category_if_heuristic_gap_ge": skip_llm_gap,
+        "skip_llm_category_if_heuristic_score_ge": _optional_float(args, "skip_llm_category_if_heuristic_score_ge"),
+        "skip_llm_category_if_heuristic_gap_ge": _optional_float(args, "skip_llm_category_if_heuristic_gap_ge"),
         "heuristic_suggestions_top_n": _int_opt(args, "heuristic_suggestions_top_n", 5),
         "heuristic_score_weight": _float_opt(args, "heuristic_score_weight", 0.15),
-        "heuristic_override_min_score": heuristic_override_min_score,
-        "heuristic_override_min_gap": heuristic_override_min_gap,
+        "heuristic_override_min_score": _optional_float(args, "heuristic_override_min_score"),
+        "heuristic_override_min_gap": _optional_float(args, "heuristic_override_min_gap"),
+        "no_heuristic_override": _bool_opt(args, "no_heuristic_override", False),
         "use_constrained_llm_category": _bool_opt(args, "use_constrained_llm_category", True),
         "heuristic_leading_chars": _int_opt(args, "heuristic_leading_chars", 0),
         "heuristic_long_doc_chars_threshold": _int_opt(args, "heuristic_long_doc_chars_threshold", 40000),
@@ -385,25 +427,24 @@ def _build_config_from_args(
         "llm_base_url": getattr(args, "llm_base_url", None) or None,
         "llm_model": getattr(args, "llm_model", None) or None,
         "llm_timeout_s": getattr(args, "llm_timeout_s", None),
-        "max_tokens_for_extraction": max_tokens_for_extraction,
-        "max_content_chars": max_content_chars,
-        "max_content_tokens": max_content_tokens,
+        "max_tokens_for_extraction": getattr(args, "max_tokens_for_extraction", None),
+        "max_content_chars": getattr(args, "max_content_chars", None),
+        "max_content_tokens": getattr(args, "max_content_tokens", None),
         "use_ocr": _bool_opt(args, "use_ocr", False),
         "skip_if_already_named": _bool_opt(args, "skip_if_already_named", False),
         "backup_dir": getattr(args, "backup_dir", None) or None,
         "rename_log_path": getattr(args, "rename_log_path", None) or None,
         "export_metadata_path": getattr(args, "export_metadata_path", None) or None,
-        "max_filename_chars": max_filename_chars,
+        "summary_json_path": getattr(args, "summary_json_path", None) or None,
+        "max_filename_chars": getattr(args, "max_filename_chars", None),
         "override_category_map": (
             _load_override_category_map(args.override_category_file)
             if getattr(args, "override_category_file", None)
             else None
         ),
         "rules_file": getattr(args, "rules_file", None) or None,
-        "post_rename_hook": getattr(args, "post_rename_hook", None)
-        or os.environ.get("AI_PDF_RENAMER_POST_RENAME_HOOK")
-        or None,
-        "workers": max(1, _int_opt(args, "workers", 1)),
+        "post_rename_hook": getattr(args, "post_rename_hook", None) or None,
+        "workers": _int_opt(args, "workers", 1),
         "recursive": _bool_opt(args, "recursive", False),
         "max_depth": _int_opt(args, "max_depth", 0),
         "include_patterns": getattr(args, "include_patterns", None),
@@ -419,18 +460,14 @@ def _build_config_from_args(
         "use_timestamp_fallback": _bool_opt(args, "use_timestamp_fallback", True),
         "timestamp_fallback_segment": _str_opt(args, "timestamp_fallback_segment", "document"),
         "simple_naming_mode": _bool_opt(args, "simple_naming_mode", False),
-        "use_vision_fallback": _bool_opt(args, "use_vision_fallback", False)
-        or (os.environ.get("AI_PDF_RENAMER_USE_VISION_FALLBACK") or "").strip().lower() in ("1", "true", "yes"),
+        "use_vision_fallback": _bool_opt(args, "use_vision_fallback", False),
         "vision_fallback_min_text_len": _int_opt(args, "vision_fallback_min_text_len", 50),
         "vision_model": getattr(args, "vision_model", None) or None,
-        "vision_first": _bool_opt(args, "vision_first", False)
-        or (os.environ.get("AI_PDF_RENAMER_VISION_FIRST") or "").strip().lower() in ("1", "true", "yes"),
+        "vision_first": _bool_opt(args, "vision_first", False),
+        "preset": getattr(args, "preset", None) or "",
     }
-    if getattr(args, "preset", None) == "scanned":
-        kwargs["use_vision_fallback"] = True
-        kwargs["simple_naming_mode"] = True
     try:
-        return RenamerConfig(**kwargs)
+        return build_config(raw, file_defaults=file_defaults)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
@@ -484,6 +521,9 @@ def main(argv: list[str] | None = None) -> None:
 
     log_file, log_level = _resolve_log_config(args)
     setup_logging(log_file=log_file, level=log_level)
+
+    if _bool_opt(args, "doctor", False):
+        raise SystemExit(run_doctor_checks(args))
 
     dirs, single_file = _resolve_dirs(args)
     file_defaults = _load_config_file(args.config) if getattr(args, "config", None) else {}
