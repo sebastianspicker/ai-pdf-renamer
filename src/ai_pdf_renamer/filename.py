@@ -7,7 +7,6 @@ Uses config, heuristics, LLM, text_utils, rules, loaders; re-export generate_fil
 from __future__ import annotations
 
 import logging
-import os
 from datetime import date, datetime
 
 from .config import RenamerConfig
@@ -17,13 +16,13 @@ from .heuristics import (
     normalize_llm_category,
 )
 from .llm import (
-    LocalLLMClient,
     get_document_category,
     get_document_filename_simple,
     get_document_keywords,
     get_document_summary,
     get_final_summary_tokens,
 )
+from .llm_backend import LLMClient, create_llm_client_from_config
 from .loaders import default_heuristic_scorer, default_stopwords
 from .rename_ops import sanitize_filename_base
 from .rules import ProcessingRules
@@ -43,30 +42,8 @@ logger = logging.getLogger(__name__)
 # Min heuristic score to suggest doc type to LLM summary (otherwise None).
 _HEURISTIC_SUGGESTED_DOC_TYPE_MIN_SCORE = 0.25
 
-
-def _config_or_env(value: str | None, env_key: str, default: str) -> str:
-    """Resolve string from config value, then env, then default. Empty string treated as unset."""
-    s = (value or "").strip() or (os.environ.get(env_key) or "").strip()
-    return s or default
-
-
-def _llm_client_from_config(config: RenamerConfig) -> LocalLLMClient:
-    """Build LocalLLMClient from config and env (AI_PDF_RENAMER_LLM_*)."""
-    base_url = _config_or_env(
-        config.llm_base_url,
-        "AI_PDF_RENAMER_LLM_URL",
-        "http://127.0.0.1:11434/v1/completions",
-    )
-    model = _config_or_env(config.llm_model, "AI_PDF_RENAMER_LLM_MODEL", "qwen3:8b")
-    timeout_s = config.llm_timeout_s
-    if timeout_s is None or timeout_s <= 0:
-        try:
-            timeout_s = float(os.environ.get("AI_PDF_RENAMER_LLM_TIMEOUT", "") or 0)
-        except ValueError:
-            timeout_s = 60.0
-        if timeout_s <= 0:
-            timeout_s = 60.0
-    return LocalLLMClient(base_url=base_url, model=model, timeout_s=timeout_s)
+# Alias for backward compatibility within this module
+_llm_client_from_config = create_llm_client_from_config
 
 
 def _get_date_str(
@@ -82,7 +59,7 @@ def _get_date_str(
         date_locale=config.date_locale,
         prefer_leading_chars=config.date_prefer_leading_chars or 0,
     )
-    if not getattr(config, "use_pdf_metadata_for_date", True):
+    if not config.use_pdf_metadata_for_date:
         return content_date.replace("-", "")
     if today is None:
         today = date.today()
@@ -143,7 +120,7 @@ def _resolve_category_with_llm(
     heuristic_gap: float,
     config: RenamerConfig,
     heuristic_scorer: HeuristicScorer,
-    llm_client: LocalLLMClient,
+    llm_client: LLMClient,
     summary: str,
     keywords: list[str],
     rules: ProcessingRules | None = None,
@@ -267,7 +244,7 @@ def _build_metadata_tokens(
 def _get_category_summary_keywords_metadata(
     pdf_content: str,
     config: RenamerConfig,
-    llm_client: LocalLLMClient,
+    llm_client: LLMClient,
     heuristic_scorer: HeuristicScorer,
     stopwords: Stopwords,
     override_category: str | None,
@@ -540,7 +517,7 @@ def generate_filename(
     pdf_content: str,
     *,
     config: RenamerConfig,
-    llm_client: LocalLLMClient | None = None,
+    llm_client: LLMClient | None = None,
     heuristic_scorer: HeuristicScorer | None = None,
     stopwords: Stopwords | None = None,
     override_category: str | None = None,
@@ -564,7 +541,7 @@ def generate_filename(
     heuristic_scorer = heuristic_scorer or default_heuristic_scorer(config.language)
 
     date_str = _get_date_str(pdf_content, config, today, pdf_metadata)
-    if getattr(config, "simple_naming_mode", False):
+    if config.simple_naming_mode:
         simple_part = get_document_filename_simple(
             llm_client,
             pdf_content,
@@ -588,7 +565,7 @@ def generate_filename(
         )
         filename = _truncate_filename_to_max_chars(filename, config)
         metadata = {"category": simple_part, "summary": "", "keywords": ""}
-        if getattr(config, "use_structured_fields", True):
+        if config.use_structured_fields:
             structured_fields = extract_structured_fields(pdf_content)
             metadata["invoice_id"] = structured_fields.get("invoice_id", "")
             metadata["amount"] = structured_fields.get("amount", "")
@@ -611,7 +588,7 @@ def generate_filename(
         metadata["invoice_id"] = structured_fields.get("invoice_id", "")
         metadata["amount"] = structured_fields.get("amount", "")
         metadata["company"] = structured_fields.get("company", "")
-    if getattr(config, "use_timestamp_fallback", True) and _should_use_timestamp_fallback(
+    if config.use_timestamp_fallback and _should_use_timestamp_fallback(
         category_for_filename, category_clean, keyword_clean, summary_clean
     ):
         filename = _build_timestamp_fallback_filename(date_str, config)

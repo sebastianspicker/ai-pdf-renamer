@@ -199,6 +199,8 @@ def build_config(
         "vision_fallback_min_text_len": int(data.get("vision_fallback_min_text_len", 50) or 50),
         "vision_model": _str(data.get("vision_model"), "") or None,
         "vision_first": vision_first,
+        "llm_backend": _str(data.get("llm_backend"), "http"),
+        "llm_model_path": _normalize_str_or_none(data.get("llm_model_path")),
     }
 
     # Manual mode implies interactive behavior.

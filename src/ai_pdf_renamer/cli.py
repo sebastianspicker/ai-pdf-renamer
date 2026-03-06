@@ -219,6 +219,25 @@ def _resolve_log_config(args: argparse.Namespace) -> tuple[str, int]:
     return (log_file, log_level)
 
 
+def _probe_llm_endpoint(url: str, model: str, *, label: str, fail_is_warn: bool = False) -> bool:
+    """Probe an LLM completions endpoint. Returns True if reachable."""
+    payload = {"model": model, "prompt": "ping", "max_tokens": 1, "temperature": 0.0}
+    try:
+        with requests.Session() as session:
+            session.trust_env = False
+            resp = session.post(url, json=payload, timeout=3.0)
+            resp.raise_for_status()
+            data = resp.json()
+        if not isinstance(data, dict) or not isinstance(data.get("choices"), list):
+            raise ValueError("Response is not OpenAI-compatible completions JSON.")
+        print(f"[OK] LLM endpoint reachable ({label}): {url}")
+        return True
+    except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
+        tag = "[WARN]" if fail_is_warn else "[FAIL]"
+        print(f"{tag} LLM endpoint unreachable ({label}): {url} ({exc})")
+        return False
+
+
 def run_doctor_checks(args: argparse.Namespace) -> int:
     """Run preflight diagnostics for local environment and dependencies."""
     ok = True
@@ -251,40 +270,39 @@ def run_doctor_checks(args: argparse.Namespace) -> int:
     else:
         print("[INFO] optional dep missing: tiktoken (only needed for token-based truncation)")
 
+    if importlib.util.find_spec("llama_cpp") is not None:
+        print("[OK] optional dep: llama-cpp-python (in-process backend available)")
+    else:
+        print("[INFO] optional dep missing: llama-cpp-python (only needed for --llm-backend in-process)")
+
     use_llm = _bool_opt(args, "use_llm", True)
     if use_llm:
-        from .filename import _llm_client_from_config
+        from .llm_backend import create_llm_client_from_config
 
         probe_cfg = RenamerConfig(
             llm_base_url=getattr(args, "llm_base_url", None) or None,
             llm_model=getattr(args, "llm_model", None) or None,
             llm_timeout_s=getattr(args, "llm_timeout_s", None),
+            llm_backend=getattr(args, "llm_backend", None) or "http",
+            llm_model_path=getattr(args, "llm_model_path", None) or None,
             use_llm=True,
         )
-        client = _llm_client_from_config(probe_cfg)
-        try:
-            # Keep check lightweight and bounded, and verify completions shape.
-            payload = {
-                "model": client.model,
-                "prompt": "ping",
-                "max_tokens": 1,
-                "temperature": 0.0,
-            }
-            with requests.Session() as session:
-                session.trust_env = False
-                resp = session.post(
-                    client.base_url,
-                    json=payload,
-                    timeout=min(float(client.timeout_s), 3.0),
-                )
-                resp.raise_for_status()
-                data = resp.json()
-            if not isinstance(data, dict) or not isinstance(data.get("choices"), list):
-                raise ValueError("Response is not OpenAI-compatible completions JSON.")
-            print(f"[OK] LLM endpoint reachable: {client.base_url}")
-        except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
+        client = create_llm_client_from_config(probe_cfg)
+        print(f"[INFO] LLM backend: {probe_cfg.llm_backend}, model: {client.model}")
+
+        # Probe llama.cpp at port 8080 (primary)
+        if not _probe_llm_endpoint(client.base_url, client.model, label="llama.cpp (primary)"):
             ok = False
-            print(f"[FAIL] LLM endpoint unreachable: {client.base_url} ({exc})")
+
+        # Also probe Ollama at port 11434 if not using a custom URL
+        default_url = "http://127.0.0.1:8080/v1/completions"
+        if (probe_cfg.llm_base_url or default_url) == default_url:
+            _probe_llm_endpoint(
+                "http://127.0.0.1:11434/v1/completions",
+                client.model,
+                label="Ollama (fallback)",
+                fail_is_warn=True,
+            )
     else:
         print("[INFO] LLM checks skipped (--no-llm)")
 
@@ -465,6 +483,8 @@ def _build_config_from_args(
         "vision_model": getattr(args, "vision_model", None) or None,
         "vision_first": _bool_opt(args, "vision_first", False),
         "preset": getattr(args, "preset", None) or "",
+        "llm_backend": getattr(args, "llm_backend", None) or None,
+        "llm_model_path": getattr(args, "llm_model_path", None) or None,
     }
     try:
         return build_config(raw, file_defaults=file_defaults)

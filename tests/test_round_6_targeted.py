@@ -1,7 +1,6 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from ai_pdf_renamer.llm import _llm_sessions, close_all_sessions
 from ai_pdf_renamer.pdf_extract import _shrink_to_token_limit, _token_count
 from ai_pdf_renamer.renamer import _write_pdf_title_metadata
 
@@ -44,11 +43,3 @@ def test_write_pdf_metadata_fallback():
         assert "encryption" in kwargs
 
 
-def test_close_all_sessions():
-    mock_session = MagicMock()
-    _llm_sessions[("http://test", 123)] = mock_session
-
-    close_all_sessions()
-
-    mock_session.close.assert_called_once()
-    assert len(_llm_sessions) == 0

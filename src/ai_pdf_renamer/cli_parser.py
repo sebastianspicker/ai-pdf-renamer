@@ -370,18 +370,37 @@ def _add_heuristic_args(p: argparse.ArgumentParser) -> None:
 
 def _add_llm_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
+        "--llm-backend",
+        dest="llm_backend",
+        default=None,
+        choices=["http", "in-process", "auto"],
+        help=(
+            "LLM backend: http (any OpenAI-compatible server, default), "
+            "in-process (llama-cpp-python, requires --llm-model-path), "
+            "or auto (use in-process if --llm-model-path set, else http). "
+            "Env: AI_PDF_RENAMER_LLM_BACKEND"
+        ),
+    )
+    p.add_argument(
+        "--llm-model-path",
+        dest="llm_model_path",
+        default=None,
+        metavar="PATH",
+        help="Path to GGUF model file for in-process backend (llama-cpp-python). Env: AI_PDF_RENAMER_LLM_MODEL_PATH",
+    )
+    p.add_argument(
         "--llm-url",
         dest="llm_base_url",
         default=None,
         metavar="URL",
-        help="LLM endpoint URL (default: env AI_PDF_RENAMER_LLM_URL or http://127.0.0.1:11434/v1/completions)",
+        help="LLM HTTP endpoint URL (default: env AI_PDF_RENAMER_LLM_URL or http://127.0.0.1:8080/v1/completions)",
     )
     p.add_argument(
         "--llm-model",
         dest="llm_model",
         default=None,
         metavar="MODEL",
-        help="LLM model name (default: env AI_PDF_RENAMER_LLM_MODEL or qwen3:8b)",
+        help="LLM model name for HTTP backend (default: env AI_PDF_RENAMER_LLM_MODEL or 'default')",
     )
     p.add_argument(
         "--llm-timeout",
@@ -422,7 +441,7 @@ def _add_llm_args(p: argparse.ArgumentParser) -> None:
         "--vision-fallback",
         dest="use_vision_fallback",
         action="store_true",
-        help="When text extraction is short, use Ollama vision on first page (requires vision model e.g. llava).",
+        help="When text extraction is short, use LLM vision on first page (requires vision-capable model).",
     )
     p.add_argument(
         "--vision-fallback-min-len",
@@ -437,13 +456,13 @@ def _add_llm_args(p: argparse.ArgumentParser) -> None:
         dest="vision_model",
         default=None,
         metavar="MODEL",
-        help="Ollama model for vision (default: same as --llm-model; e.g. llava).",
+        help="Model for vision (default: same as --llm-model; e.g. llava for vision-capable models).",
     )
     p.add_argument(
         "--vision-first",
         dest="vision_first",
         action="store_true",
-        help="Vision on first page first; else extract text (scan-only; needs vision model).",
+        help="Vision on first page first; else extract text (scan-only; needs vision-capable model).",
     )
     p.add_argument(
         "--preset",

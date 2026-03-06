@@ -15,16 +15,13 @@ from pathlib import Path
 import requests
 
 from .config import RenamerConfig, build_config_from_flat_dict  # noqa: F401 re-export
-from .filename import _llm_client_from_config, generate_filename
-from .llm import complete_vision
-from .llm_prompts import build_vision_filename_prompt
+from .filename import generate_filename
 from .loaders import _heuristic_scorer_cached, _stopwords_cached  # noqa: F401 re-export for tests
 from .pdf_extract import get_pdf_metadata, pdf_first_page_to_image_base64, pdf_to_text, pdf_to_text_with_ocr
 from .rename_ops import (
     MAX_RENAME_RETRIES,
     apply_single_rename,
     sanitize_filename_base,
-    sanitize_filename_from_llm,
 )
 from .renamer_extract import effective_max_tokens as _effective_max_tokens_impl
 from .renamer_extract import extract_pdf_content_with as _extract_pdf_content_impl
@@ -241,10 +238,6 @@ def _extract_pdf_content(path: Path, config: RenamerConfig) -> tuple[str, bool]:
         path,
         config,
         pdf_first_page_to_image_base64_fn=pdf_first_page_to_image_base64,
-        llm_client_from_config_fn=_llm_client_from_config,
-        build_vision_prompt_fn=build_vision_filename_prompt,
-        complete_vision_fn=complete_vision,
-        sanitize_filename_from_llm_fn=sanitize_filename_from_llm,
         pdf_to_text_fn=pdf_to_text,
         pdf_to_text_with_ocr_fn=pdf_to_text_with_ocr,
     )

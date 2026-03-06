@@ -32,10 +32,18 @@ ocr = [
 embeddings = [
   "sentence-transformers>=2.0.0",
 ]
+llama-cpp = [
+  "llama-cpp-python>=0.2.0",
+]
+tui = [
+  "textual>=0.40.0",
+  "rich>=13.0.0",
+]
 
 [project.scripts]
 ai-pdf-renamer = "ai_pdf_renamer.cli:main"
-ai-pdf-renamer-gui = "ai_pdf_renamer.gui:main"
+ai-pdf-renamer-tui = "ai_pdf_renamer.tui:main"
+ai-pdf-renamer-gui = "ai_pdf_renamer.tui:main"
 ai-pdf-renamer-undo = "ai_pdf_renamer.undo_cli:main"
 
 [tool.setuptools]

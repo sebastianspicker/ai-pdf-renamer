@@ -9,15 +9,6 @@ from pathlib import Path
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def clear_llm_sessions_after_test() -> None:
-    import ai_pdf_renamer.llm as llm_mod
-
-    llm_mod.close_all_sessions()
-    yield
-    llm_mod.close_all_sessions()
-
-
 def test_parser_accepts_post_rename_hook_flag() -> None:
     from ai_pdf_renamer.cli_parser import build_parser
 
@@ -360,8 +351,9 @@ def test_doctor_checks_fail_on_invalid_data_file_json(monkeypatch, tmp_path: Pat
     assert code == 1
 
 
-def test_llm_sessions_are_thread_scoped(monkeypatch) -> None:
-    import ai_pdf_renamer.llm as llm_mod
+def test_llm_backend_concurrent_calls(monkeypatch) -> None:
+    """HttpLLMBackend.complete() works correctly from multiple threads sharing one instance."""
+    from ai_pdf_renamer.llm_backend import HttpLLMBackend
 
     class FakeResponse:
         def raise_for_status(self) -> None:
@@ -370,70 +362,23 @@ def test_llm_sessions_are_thread_scoped(monkeypatch) -> None:
         def json(self) -> dict[str, object]:
             return {"choices": [{"text": "ok"}]}
 
-    class FakeSession:
-        def __init__(self) -> None:
-            self.trust_env = True
+    results: dict[str, str] = {}
 
-        def post(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
-            return FakeResponse()
+    backend = HttpLLMBackend(base_url="http://example.invalid/v1/completions", model="x", timeout_s=1.0)
+    monkeypatch.setattr(backend._session, "post", lambda *a, **kw: FakeResponse())
 
-        def close(self) -> None:
-            return None
-
-    monkeypatch.setattr(llm_mod.requests, "Session", FakeSession)
-
-    client = llm_mod.LocalLLMClient(base_url="http://example.invalid/v1/completions", model="x", timeout_s=1.0)
-    assert client.complete("ping") == "ok"
-
-    result: dict[str, str] = {}
+    assert backend.complete("ping") == "ok"
+    results["main"] = backend.complete("ping")
 
     def worker() -> None:
-        result["text"] = client.complete("pong")
+        results["thread"] = backend.complete("pong")
 
     t = threading.Thread(target=worker)
     t.start()
     t.join()
 
-    assert result["text"] == "ok"
-    assert len(llm_mod._llm_sessions) == 2
-
-
-def test_llm_sessions_prune_dead_threads(monkeypatch) -> None:
-    import ai_pdf_renamer.llm as llm_mod
-
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict[str, object]:
-            return {"choices": [{"text": "ok"}]}
-
-    class FakeSession:
-        def __init__(self) -> None:
-            self.trust_env = True
-
-        def post(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
-            return FakeResponse()
-
-        def close(self) -> None:
-            return None
-
-    monkeypatch.setattr(llm_mod.requests, "Session", FakeSession)
-
-    client = llm_mod.LocalLLMClient(base_url="http://example.invalid/v1/completions", model="x", timeout_s=1.0)
-    thread_id: dict[str, int] = {}
-
-    def worker() -> None:
-        thread_id["value"] = threading.get_ident()
-        assert client.complete("worker") == "ok"
-
-    t = threading.Thread(target=worker)
-    t.start()
-    t.join()
-
-    assert any(k[1] == thread_id["value"] for k in llm_mod._llm_sessions)
-    assert client.complete("main") == "ok"
-    assert all(k[1] != thread_id["value"] for k in llm_mod._llm_sessions)
+    assert results["main"] == "ok"
+    assert results["thread"] == "ok"
 
 
 def test_build_config_parses_string_boolean_values() -> None:

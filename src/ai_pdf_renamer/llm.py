@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
-from dataclasses import dataclass
 
-import requests
-
+from .llm_backend import HttpLLMBackend, LLMClient, LocalLLMClient  # noqa: F401 (re-exports)
 from .llm_parsing import (
     CONTEXT_128K_CHUNK_OVERLAP,
     CONTEXT_128K_CHUNK_SIZE,
@@ -31,181 +28,9 @@ from .text_utils import chunk_text
 
 logger = logging.getLogger(__name__)
 
-# Session per base_url for connection reuse across multiple complete() calls.
-# Thread-safe: all accesses are protected by _llm_sessions_lock.
-# Note: For multi-process deployments, consider using a connection pool manager
-# or passing sessions explicitly via dependency injection.
-_llm_sessions: dict[tuple[str, int], requests.Session] = {}
-_llm_sessions_lock = threading.Lock()
-
-
-def close_all_sessions() -> None:
-    """Close all global requests sessions."""
-    with _llm_sessions_lock:
-        for session in _llm_sessions.values():
-            try:
-                session.close()
-            except Exception as exc:
-                logger.debug("Could not close LLM session cleanly: %s", exc)
-        _llm_sessions.clear()
-
-
-def _session_key(base_url: str) -> tuple[str, int]:
-    """Session cache key scoped to base_url and current thread."""
-    return (base_url, threading.get_ident())
-
-
-def _prune_dead_thread_sessions_locked() -> None:
-    """Close cached sessions that belong to threads that no longer exist."""
-    alive_ids = {tid for tid in (t.ident for t in threading.enumerate()) if tid is not None}
-    stale_keys = [k for k in _llm_sessions if k[1] not in alive_ids]
-    for key in stale_keys:
-        session = _llm_sessions.pop(key, None)
-        if session is None:
-            continue
-        try:
-            session.close()
-        except Exception as exc:
-            logger.debug("Could not close stale LLM session cleanly: %s", exc)
-
-
-@dataclass(frozen=True)
-class LocalLLMClient:
-    base_url: str = "http://127.0.0.1:11434/v1/completions"
-    model: str = "qwen3:8b"
-    timeout_s: float = 60.0
-
-    def complete(
-        self,
-        prompt: str,
-        *,
-        temperature: float = 0.0,
-        max_tokens: int | None = None,
-    ) -> str:
-        payload: dict[str, object] = {
-            "model": self.model,
-            "prompt": prompt,
-            "temperature": temperature,
-        }
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
-        try:
-            with _llm_sessions_lock:
-                _prune_dead_thread_sessions_locked()
-                key = _session_key(self.base_url)
-                session = _llm_sessions.get(key)
-                if session is None:
-                    session = requests.Session()
-                    session.trust_env = False
-                    _llm_sessions[key] = session
-
-            resp = session.post(
-                self.base_url,
-                json=payload,
-                timeout=self.timeout_s,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if not isinstance(data, dict):
-                logger.warning("LLM response is not a dict: %s", type(data).__name__)
-                return ""
-            choices = data.get("choices")
-            if not isinstance(choices, list) or len(choices) == 0:
-                logger.warning(
-                    "LLM response missing or empty 'choices' (status=%s)",
-                    getattr(resp, "status_code", None),
-                )
-                return ""
-            first_choice = choices[0]
-            if not isinstance(first_choice, dict):
-                logger.warning(
-                    "LLM response 'choices[0]' is not a dict: %s",
-                    type(first_choice).__name__,
-                )
-                return ""
-            text = first_choice.get("text", "")
-            return str(text).strip() if text is not None else ""
-        except (IndexError, AttributeError, TypeError, KeyError) as exc:
-            logger.warning("LLM response structure unexpected: %s", exc)
-            return ""
-        except requests.HTTPError as exc:
-            logger.warning(
-                "LLM HTTP error: %s (status=%s, body=%s)",
-                exc,
-                getattr(exc.response, "status_code", None),
-                (getattr(exc.response, "text", None) or "")[:500],
-            )
-            return ""
-        except requests.RequestException as exc:
-            logger.error(
-                "LLM unreachable (%s). Category/summary will use heuristic or 'na' for this document.",
-                exc,
-            )
-            return ""
-        except json.JSONDecodeError as exc:
-            logger.error(
-                "LLM response not valid JSON: %s. Using fallback for this document.",
-                exc,
-            )
-            return ""
-
-
-def _ollama_chat_url_from_completions_url(completions_url: str) -> str:
-    """Derive Ollama /api/chat URL from /v1/completions URL."""
-    base = (completions_url or "").strip().rstrip("/")
-    if "/v1/completions" in base:
-        return base.replace("/v1/completions", "") + "/api/chat"
-    if base.endswith("/api/chat"):
-        return base
-    return base + "/api/chat" if base else "http://127.0.0.1:11434/api/chat"
-
-
-def complete_vision(
-    base_url: str,
-    model: str,
-    image_b64: str,
-    prompt: str,
-    *,
-    timeout_s: float = 120.0,
-) -> str:
-    """
-    Send image + prompt to Ollama chat API (vision). Returns assistant message text.
-    Used when text extraction is empty/short and use_vision_fallback is True.
-    """
-    chat_url = _ollama_chat_url_from_completions_url(base_url)
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "user", "content": prompt, "images": [image_b64]},
-        ],
-        "stream": False,
-    }
-    try:
-        with _llm_sessions_lock:
-            _prune_dead_thread_sessions_locked()
-            key = _session_key(base_url)
-            session = _llm_sessions.get(key)
-            if session is None:
-                session = requests.Session()
-                session.trust_env = False
-                _llm_sessions[key] = session
-        resp = session.post(chat_url, json=payload, timeout=timeout_s)
-        resp.raise_for_status()
-        data = resp.json()
-        if not isinstance(data, dict):
-            return ""
-        msg = data.get("message")
-        if not isinstance(msg, dict):
-            return ""
-        content = msg.get("content")
-        return str(content).strip() if content is not None else ""
-    except Exception as exc:
-        logger.warning("Vision API failed: %s", exc)
-        return ""
-
 
 def complete_json_with_retry(
-    client: LocalLLMClient,
+    client: LLMClient,
     prompt: str,
     *,
     temperature: float = 0.0,
@@ -240,7 +65,7 @@ def complete_json_with_retry(
 
 
 def _try_prompts_for_key(
-    client: LocalLLMClient,
+    client: LLMClient,
     prompts: list[str],
     *,
     key: str,
@@ -262,7 +87,7 @@ def _try_prompts_for_key(
 
 
 def get_document_summary(
-    client: LocalLLMClient,
+    client: LLMClient,
     pdf_content: str,
     *,
     language: str = "de",
@@ -335,7 +160,7 @@ def get_document_summary(
 
 
 def get_document_keywords(
-    client: LocalLLMClient,
+    client: LLMClient,
     summary: str,
     *,
     language: str = "de",
@@ -388,7 +213,7 @@ def get_document_keywords(
 
 
 def get_document_category(
-    client: LocalLLMClient,
+    client: LLMClient,
     *,
     summary: str,
     keywords: list[str],
@@ -439,7 +264,7 @@ def get_document_category(
 
 
 def get_final_summary_tokens(
-    client: LocalLLMClient,
+    client: LLMClient,
     *,
     summary: str,
     keywords: list[str],
@@ -491,7 +316,6 @@ def get_final_summary_tokens(
 # Max chars of content to send for simple filename (one-shot prompt).
 SIMPLE_FILENAME_MAX_CONTENT_CHARS = 12_000
 
-# Placeholders for simple-naming prompt (Montscan-style: single template, one example, strict closing).
 _PLACEHOLDER_INTRO_LINE = "%INTRO_LINE%"
 _PLACEHOLDER_DATE_HINT = "%DATE_HINT%"
 _PLACEHOLDER_EXAMPLE = "%EXAMPLE%"
@@ -513,7 +337,7 @@ _SIMPLE_FILENAME_TEMPLATE = (
 
 
 def get_document_filename_simple(
-    client: LocalLLMClient,
+    client: LLMClient,
     content: str,
     *,
     language: str = "de",

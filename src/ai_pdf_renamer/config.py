@@ -46,10 +46,16 @@ class RenamerConfig:
     heuristic_long_doc_chars_threshold: int = 40_000
     heuristic_long_doc_leading_chars: int = 12_000
     max_pages_for_extraction: int = 0  # If > 0, only extract text from first N pages
-    # LLM (env: AI_PDF_RENAMER_LLM_URL, AI_PDF_RENAMER_LLM_MODEL, AI_PDF_RENAMER_LLM_TIMEOUT)
+    # LLM backend (env: AI_PDF_RENAMER_LLM_BACKEND; choices: "http", "in-process", "auto")
+    llm_backend: str = "http"
+    # LLM HTTP endpoint (env: AI_PDF_RENAMER_LLM_URL; default: llama.cpp port 8080)
     llm_base_url: str | None = None
+    # LLM model name for HTTP backend (env: AI_PDF_RENAMER_LLM_MODEL)
     llm_model: str | None = None
+    # LLM request timeout in seconds (env: AI_PDF_RENAMER_LLM_TIMEOUT)
     llm_timeout_s: float | None = None
+    # Path to GGUF model file for in-process backend (env: AI_PDF_RENAMER_LLM_MODEL_PATH)
+    llm_model_path: str | None = None
     # PDF extraction token cap (env: AI_PDF_RENAMER_MAX_TOKENS)
     max_tokens_for_extraction: int | None = None
     # UX: skip PDFs whose name already matches YYYYMMDD-*.pdf
@@ -99,7 +105,7 @@ class RenamerConfig:
     # When True and extracted text length < vision_fallback_min_text_len, try Ollama vision on first page.
     use_vision_fallback: bool = False
     vision_fallback_min_text_len: int = 50
-    # Model for vision (default: same as llm_model; e.g. llava for Ollama).
+    # Model for vision (default: same as llm_model; e.g. llava for vision-capable models).
     vision_model: str | None = None
     # When True, try vision on first page first; only if that fails, extract text (scan-only workflow).
     vision_first: bool = False

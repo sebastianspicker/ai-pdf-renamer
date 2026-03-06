@@ -2,9 +2,11 @@
 
 ## Local LLM traffic
 
-The built-in LLM client sends requests only to the URL you configure (default `http://127.0.0.1:11434`). To avoid routing this traffic through a proxy (e.g. `HTTP_PROXY`), the client uses `trust_env=False` so that PDF-derived prompt content stays on your machine.
+The built-in LLM client sends requests only to the URL you configure (default `http://127.0.0.1:8080/v1/completions` for llama.cpp). To avoid routing this traffic through a proxy (e.g. `HTTP_PROXY`), the client uses `trust_env=False` so that PDF-derived prompt content stays on your machine.
 
-**If you use a custom HTTP client or run scripts that might inherit proxy settings:** set `NO_PROXY=127.0.0.1,localhost` (or `no_proxy` on some systems) so that requests to the local LLM endpoint are never sent via a proxy. Otherwise prompt content could leave your machine. See BUGS_AND_FIXES.md §16.
+**If you use a custom HTTP client or run scripts that might inherit proxy settings:** set `NO_PROXY=127.0.0.1,localhost` (or `no_proxy` on some systems) so that requests to the local LLM endpoint are never sent via a proxy. Otherwise prompt content could leave your machine.
+
+The in-process backend (`--llm-backend in-process`) loads a GGUF model directly into the process using `llama-cpp-python` and makes no network requests at all.
 
 ## Post-rename hook
 
