@@ -41,5 +41,3 @@ def test_write_pdf_metadata_fallback():
         assert kwargs["incremental"] is False
         # PDF_ENCRYPT_KEEP is usually 0
         assert "encryption" in kwargs
-
-
