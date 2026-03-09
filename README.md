@@ -12,9 +12,12 @@ YYYYMMDD-category-keywords-summary.pdf
 
 - Renames PDFs from extracted document content.
 - Uses heuristics first and optional LLM for enrichment.
+- Single-call LLM mode: summary, keywords, and category in one request.
+- Vision fallback and vision-first modes for scanned/low-text PDFs.
+- LLM hardware presets for Apple Silicon and dedicated GPU setups.
 - Supports dry-run, plan export, metadata export, and undo.
 - Supports OCR and optional vision fallback for scanned/low-text PDFs.
-- Runs as CLI and Tkinter GUI.
+- Runs as CLI and TUI (Textual).
 
 ## Installation
 
@@ -28,15 +31,34 @@ python -m pip install -e '.[dev,pdf]'
 Optional extras:
 
 ```bash
+# TUI (terminal UI)
+python -m pip install -e '.[tui]'
+
+# In-process LLM via llama-cpp-python
+python -m pip install -e '.[llama-cpp]'
+
+# Tokenization, OCR, embeddings
 python -m pip install -e '.[tokens,ocr,embeddings]'
 ```
 
 ## Quick start
 
-Run once against a directory:
+Run once against a directory (uses `apple-silicon` preset by default — Qwen 2.5 3B via Ollama):
 
 ```bash
 ai-pdf-renamer --dir ./input_files --dry-run
+```
+
+If you have a dedicated GPU (e.g. RTX 4080 Super 16 GB), use the `gpu` preset for the larger model:
+
+```bash
+ai-pdf-renamer --dir ./input_files --llm-preset gpu --dry-run
+```
+
+For scanned PDFs with vision-first extraction:
+
+```bash
+ai-pdf-renamer --dir ./input_files --preset scanned --dry-run
 ```
 
 Apply changes:
@@ -51,10 +73,10 @@ Preflight diagnostics:
 ai-pdf-renamer --doctor
 ```
 
-GUI:
+TUI:
 
 ```bash
-ai-pdf-renamer-gui
+ai-pdf-renamer-tui
 ```
 
 Undo preview from rename log:
@@ -62,6 +84,15 @@ Undo preview from rename log:
 ```bash
 ai-pdf-renamer-undo --rename-log rename.log --dry-run
 ```
+
+### LLM hardware presets
+
+| Preset | Model | Size (Q4) | Context | Target hardware |
+|--------|-------|-----------|---------|-----------------|
+| `apple-silicon` (default) | `qwen2.5:3b` | ~2 GB | 32K | Apple Silicon M4 16 GB |
+| `gpu` | `qwen2.5:7b-instruct` | ~4.5 GB | 128K | RTX 4080 Super 16 GB |
+
+Both presets use Ollama (`http://127.0.0.1:11434`). Explicit `--llm-model`, `--llm-url`, or `--max-content-chars` override preset values.
 
 ## How it works
 
@@ -131,8 +162,8 @@ Precedence is:
 
 Important defaults:
 
-- LLM URL: `http://127.0.0.1:11434/v1/completions`
-- LLM model: `qwen3:8b`
+- LLM URL: `http://127.0.0.1:11434/v1/completions` (Ollama, via preset; code default without preset is `http://127.0.0.1:8080/v1/completions`)
+- LLM model: `qwen2.5:3b` (apple-silicon preset) / `qwen2.5:7b-instruct` (gpu preset)
 - Extraction token default: `28000` (`DEFAULT_MAX_CONTENT_TOKENS`)
 - Log file: `error.log`
 
@@ -144,6 +175,30 @@ High-impact operational flags:
 - `--rules-file FILE`
 - `--max-tokens N`, `--max-content-chars N`, `--max-content-tokens N`
 - `--workers N`
+- `--preset` (`high-confidence-heuristic`, `scanned`)
+- `--llm-preset` (`apple-silicon`, `gpu`)
+- `--no-single-llm-call`, `--no-chat-api`, `--no-json-mode`
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `AI_PDF_RENAMER_LLM_BACKEND` | LLM backend: `http`, `in-process`, or `auto` |
+| `AI_PDF_RENAMER_LLM_URL` | HTTP endpoint URL |
+| `AI_PDF_RENAMER_LLM_MODEL` | Model name for HTTP backend |
+| `AI_PDF_RENAMER_LLM_MODEL_PATH` | Path to GGUF model file (in-process backend) |
+| `AI_PDF_RENAMER_LLM_TIMEOUT` | LLM request timeout in seconds |
+| `AI_PDF_RENAMER_MAX_TOKENS` | PDF extraction token cap |
+| `AI_PDF_RENAMER_MAX_CONTENT_CHARS` | Cap chars of text sent to LLM |
+| `AI_PDF_RENAMER_MAX_CONTENT_TOKENS` | Cap tokens for LLM (requires tiktoken) |
+| `AI_PDF_RENAMER_DATA_DIR` | Override path for bundled JSON data files |
+| `AI_PDF_RENAMER_OCR_LANG` | OCR language override |
+| `AI_PDF_RENAMER_POST_RENAME_HOOK` | Command run after each successful rename |
+| `AI_PDF_RENAMER_LOG_FILE` | Log file path (default: `error.log`) |
+| `AI_PDF_RENAMER_LOG_LEVEL` | Log level (default: `INFO`) |
+| `AI_PDF_RENAMER_STRUCTURED_LOGS` | Enable structured JSON logging (`1` or `true`) |
+| `AI_PDF_RENAMER_USE_VISION_FALLBACK` | Enable vision fallback for low-text PDFs |
+| `AI_PDF_RENAMER_VISION_FIRST` | Use vision extraction before text extraction |
 
 ## Public API compatibility
 
@@ -168,19 +223,15 @@ See [SECURITY.md](SECURITY.md) for security policy and reporting.
 
 - Run `ai-pdf-renamer --doctor` for dependency/data/LLM diagnostics.
 - If LLM endpoint is unavailable, retry with `--no-llm`.
-- For scanned PDFs, install OCR deps and use `--ocr`.
+- For scanned PDFs, install OCR deps and use `--ocr` or `--preset scanned`.
 - For strict local validation, run `make release-check`.
 
-Detailed operations and troubleshooting: [docs/RUNBOOK.md](docs/RUNBOOK.md)
+## Documentation
 
-## Documentation map (canonical)
-
-- [AGENTS.md](AGENTS.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- [docs/RUNBOOK.md](docs/RUNBOOK.md)
-- [docs/product-specs/PRD.md](docs/product-specs/PRD.md)
-- [BUGS_AND_FIXES.md](BUGS_AND_FIXES.md)
 - [SECURITY.md](SECURITY.md)
-- [docs/RELEASE.md](docs/RELEASE.md)
 - [CHANGELOG.md](CHANGELOG.md)
+
+## License
+
+MIT — see [LICENSE](LICENSE).

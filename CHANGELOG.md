@@ -9,21 +9,33 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
-- `make release-check` target combining repository hygiene, lint, and tests.
-- CI repository hygiene step to fail on committed generated/temp artifacts.
-- `docs/RELEASE.md` with manual GitHub release procedure and checklist.
-- README runtime flowchart and lifecycle state diagram (Mermaid).
+- LLM backend abstraction: HTTP (llama.cpp / Ollama) and in-process (llama-cpp-python).
+- Single-call LLM mode for combined summary/keywords/category extraction.
+- Chat API mode with JSON response format support.
+- LLM hardware presets: `apple-silicon` (default) and `gpu`.
+- Terminal UI (`ai-pdf-renamer-tui`) replacing Tkinter GUI.
+- Vision fallback and vision-first modes for scanned PDFs.
+- `--preset` flag (`high-confidence-heuristic`, `scanned`).
+- `make release-check` target combining hygiene, lint, and tests.
+- CI repository hygiene check and security workflow (CodeQL, pip-audit, TruffleHog).
+- README flowchart and lifecycle state diagram (Mermaid).
+- Environment variables table in README.
 
 ### Changed
 
-- README reorganized for release-readiness onboarding (`what it does`, quick start, flow, lifecycle, config precedence, troubleshooting).
-- RUNBOOK updated with release-gate usage and release-readiness checklist.
-- CONTRIBUTING now recommends `make release-check` as pre-PR validation.
-- SECURITY documentation updated to match hook execution behavior (`shell=False` process creation).
+- Default LLM endpoint uses Ollama (`http://127.0.0.1:11434`) via presets.
+- README reorganized for clarity and quick start.
+- CONTRIBUTING updated with architecture table.
+
+### Removed
+
+- Tkinter GUI (`gui.py`) — replaced by TUI.
+- Ollama-specific code and global thread-local session management.
+- Internal documentation (AGENTS.md, BUGS_AND_FIXES.md, docs/, scripts/).
+- `requirements.txt` — use `pyproject.toml` optional dependency groups.
 
 ## [0.1.0] - 2026-03-01
 
 ### Added
 
 - Initial public release baseline for local-first PDF renaming with CLI and GUI.
-
