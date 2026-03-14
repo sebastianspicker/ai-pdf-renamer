@@ -11,13 +11,9 @@ from .rules import ProcessingRules, should_skip_file_by_rules
 
 def matches_patterns(name: str, include: list[str] | None, exclude: list[str] | None) -> bool:
     """True if basename matches include (if set) and does not match any exclude."""
-    if include is not None and include:
-        if not any(fnmatch.fnmatch(name, p) for p in include):
-            return False
-    if exclude is not None and exclude:
-        if any(fnmatch.fnmatch(name, p) for p in exclude):
-            return False
-    return True
+    if include is not None and include and not any(fnmatch.fnmatch(name, p) for p in include):
+        return False
+    return not (exclude is not None and exclude and any(fnmatch.fnmatch(name, p) for p in exclude))
 
 
 def collect_pdf_files(

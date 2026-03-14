@@ -184,9 +184,7 @@ def tokens_similar(token_a: str, token_b: str) -> bool:
     b = token_b.lower()
     if a == b:
         return True
-    if (a.startswith(b) or b.startswith(a)) and abs(len(a) - len(b)) <= 2:
-        return True
-    return False
+    return bool((a.startswith(b) or b.startswith(a)) and abs(len(a) - len(b)) <= 2)
 
 
 def subtract_tokens(main_tokens: Iterable[str], remove_tokens: Iterable[str]) -> list[str]:
@@ -204,10 +202,7 @@ def subtract_tokens(main_tokens: Iterable[str], remove_tokens: Iterable[str]) ->
 def normalize_keywords(raw: str | list[str] | None) -> list[str]:
     if raw is None:
         return []
-    if isinstance(raw, list):
-        tokens = [str(x).strip() for x in raw]
-    else:
-        tokens = [t.strip() for t in str(raw).split(",")]
+    tokens = [str(x).strip() for x in raw] if isinstance(raw, list) else [t.strip() for t in str(raw).split(",")]
 
     filtered: list[str] = []
     for token in tokens:

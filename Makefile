@@ -3,7 +3,7 @@ PIP ?= $(PYTHON) -m pip
 RUFF ?= $(PYTHON) -m ruff
 PYTEST ?= $(PYTHON) -m pytest
 
-.PHONY: install-dev lint format test clean hygiene-check release-check ci
+.PHONY: install-dev lint format test cov clean hygiene-check release-check ci
 
 install-dev:
 	$(PIP) install -U pip
@@ -18,6 +18,9 @@ format:
 
 test:
 	$(PYTEST) -q
+
+cov:
+	$(PYTEST) --cov --cov-report=term-missing -q
 
 clean:
 	rm -rf .pytest_cache .ruff_cache .mypy_cache .cache

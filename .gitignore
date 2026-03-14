@@ -70,6 +70,18 @@ temp/
 # Local folders (may contain private PDFs)
 input_files/
 
+# Secrets and credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+credentials.json
+service-account*.json
+secrets.yaml
+secrets.yml
+.secrets/
+
 # Editors/OS
 .vscode/
 .idea/

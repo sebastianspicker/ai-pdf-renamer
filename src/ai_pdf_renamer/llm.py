@@ -21,8 +21,9 @@ from .llm_prompts import (
     _summary_prompt_chunk,
     _summary_prompt_combine,
     _summary_prompts_short,
+    build_analysis_prompt,
 )
-from .llm_schema import validate_llm_document_result
+from .llm_schema import DocumentAnalysisResult, validate_llm_document_result
 from .rename_ops import sanitize_filename_from_llm
 from .text_utils import chunk_text
 
@@ -36,11 +37,14 @@ def complete_json_with_retry(
     temperature: float = 0.0,
     max_retries: int = 3,
     max_tokens: int | None = 1024,
+    json_mode: bool = False,
 ) -> str:
+    response_format = {"type": "json_object"} if json_mode else None
+    effective_retries = 1 if json_mode else max_retries
     temp = temperature
     last = ""
-    for i in range(max_retries):
-        last = client.complete(prompt, temperature=temp, max_tokens=max_tokens)
+    for i in range(effective_retries):
+        last = client.complete(prompt, temperature=temp, max_tokens=max_tokens, response_format=response_format)
         candidate = last.strip()
         if candidate.startswith("{"):
             try:
@@ -59,7 +63,7 @@ def complete_json_with_retry(
         logger.info("Retry %s: New temperature=%s", i + 1, temp)
     logger.error(
         "LLM returned no valid JSON after %s retries. Using heuristic or 'na' for this document.",
-        max_retries,
+        effective_retries,
     )
     return last
 
@@ -84,6 +88,66 @@ def _try_prompts_for_key(
         if v is not None:
             return v
     return None
+
+
+def get_document_analysis(
+    client: LLMClient,
+    pdf_content: str,
+    *,
+    language: str = "de",
+    temperature: float = 0.0,
+    max_content_chars: int | None = None,
+    max_content_tokens: int | None = None,
+    suggested_doc_type: str | None = None,
+    allowed_categories: list[str] | None = None,
+    suggested_categories: list[str] | None = None,
+    lenient_json: bool = False,
+    json_mode: bool = False,
+) -> DocumentAnalysisResult:
+    """Single LLM call that returns summary, keywords, and category together."""
+    if pdf_content is None or not isinstance(pdf_content, str) or len(pdf_content.strip()) < 50:
+        return DocumentAnalysisResult()
+
+    text = pdf_content.strip()
+    effective_max = CONTEXT_128K_MAX_CHARS_SINGLE
+    if max_content_chars is not None:
+        effective_max = min(CONTEXT_128K_MAX_CHARS_SINGLE, max_content_chars)
+    text = truncate_for_llm(text, effective_max, max_tokens=max_content_tokens)
+
+    prompt = build_analysis_prompt(
+        language,
+        text,
+        suggested_doc_type=suggested_doc_type,
+        allowed_categories=allowed_categories,
+        suggested_categories=suggested_categories,
+    )
+    raw = complete_json_with_retry(
+        client,
+        prompt,
+        temperature=temperature,
+        max_retries=2,
+        max_tokens=1024,
+        json_mode=json_mode,
+    )
+    parsed = _extract_json_from_response(raw) if raw else ""
+    try:
+        data = json.loads(parsed) if parsed.strip().startswith("{") else {}
+    except json.JSONDecodeError:
+        data = {}
+
+    if not data and lenient_json and raw:
+        # Try lenient extraction for individual fields
+        from .llm_parsing import _lenient_extract_key_value
+
+        summary_val = _lenient_extract_key_value(raw, "summary")
+        category_val = _lenient_extract_key_value(raw, "category")
+        data = {}
+        if summary_val:
+            data["summary"] = summary_val
+        if category_val:
+            data["category"] = category_val
+
+    return validate_llm_document_result(data)
 
 
 def get_document_summary(
@@ -171,10 +235,7 @@ def get_document_keywords(
     cat_hint = ""
     if suggested_category and suggested_category.strip():
         c = suggested_category.strip()
-        if language == "de":
-            cat_hint = f"Das Dokument ist voraussichtlich: {c}. "
-        else:
-            cat_hint = f"The document is likely: {c}. "
+        cat_hint = f"Das Dokument ist voraussichtlich: {c}. " if language == "de" else f"The document is likely: {c}. "
 
     if language == "de":
         prompts = [

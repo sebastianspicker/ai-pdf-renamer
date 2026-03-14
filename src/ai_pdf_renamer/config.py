@@ -119,6 +119,16 @@ class RenamerConfig:
     post_rename_hook: str | None = None
     # Manual mode: single file, print suggestion and metadata, then prompt with suggestion as default for edit.
     manual_mode: bool = False
+    # When True, use a single LLM call for summary+keywords+category instead of 4 separate calls.
+    use_single_llm_call: bool = True
+    # When True, use /v1/chat/completions instead of /v1/completions for text LLM calls.
+    llm_use_chat_api: bool = True
+    # When True, request JSON mode from the LLM server (response_format: json_object).
+    llm_json_mode: bool = True
+    # Hardware preset: "apple-silicon" (default, Qwen 2.5 3B) or "gpu" (Qwen 2.5 7B).
+    llm_preset: str | None = None
+    # Max chars of document text to send to LLM (set by llm_preset or explicit override).
+    max_context_chars: int | None = None
     # Optional cooperative stop signal (used by GUI cancel button).
     stop_event: object | None = None
 

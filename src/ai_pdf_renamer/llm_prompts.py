@@ -121,6 +121,47 @@ def build_vision_filename_prompt(language: str) -> str:
     )
 
 
+def build_analysis_prompt(
+    language: str,
+    text: str,
+    *,
+    suggested_doc_type: str | None = None,
+    allowed_categories: list[str] | None = None,
+    suggested_categories: list[str] | None = None,
+) -> str:
+    """Build a single prompt that asks for summary, keywords, and category in one JSON response."""
+    doc_type_hint = _summary_doc_type_hint(language, suggested_doc_type)
+    safe_text = _escape_doc_content(text)
+    category_instruction = _build_allowed_categories_instruction(
+        allowed_categories=allowed_categories,
+        suggested_categories=suggested_categories,
+        language=language,
+    )
+    if language == "de":
+        return (
+            doc_type_hint + "Analysiere das folgende Dokument und gib das Ergebnis als reines JSON zurück.\n"
+            "Antworte NUR mit einem JSON-Objekt in genau dieser Struktur:\n"
+            '{"summary":"1-2 präzise Sätze","keywords":["KW1","KW2","KW3","KW4","KW5"],"category":"Kategorie"}\n\n'
+            "Regeln:\n"
+            "- summary: 1-2 präzise Sätze, die den Dokumentinhalt und -typ beschreiben\n"
+            "- keywords: 5-7 relevante Schlüsselwörter\n"
+            f"- category: {category_instruction}\n"
+            "- Keine weiteren Erklärungen, nur JSON\n\n"
+            f"<document_content>\n{safe_text}\n</document_content>"
+        )
+    return (
+        doc_type_hint + "Analyze the following document and return the result as pure JSON.\n"
+        "Respond ONLY with a JSON object in exactly this structure:\n"
+        '{"summary":"1-2 precise sentences","keywords":["KW1","KW2","KW3","KW4","KW5"],"category":"Category"}\n\n'
+        "Rules:\n"
+        "- summary: 1-2 precise sentences describing the document content and type\n"
+        "- keywords: 5-7 relevant keywords\n"
+        f"- category: {category_instruction}\n"
+        "- No additional explanations, only JSON\n\n"
+        f"<document_content>\n{safe_text}\n</document_content>"
+    )
+
+
 def _build_allowed_categories_instruction(
     *,
     allowed_categories: list[str] | None = None,

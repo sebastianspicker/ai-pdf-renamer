@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 
 from ai_pdf_renamer.logging_utils import setup_logging
@@ -12,10 +13,8 @@ def test_setup_logging_adds_console_when_only_file_handler_exists(tmp_path) -> N
     try:
         for h in list(root.handlers):
             root.removeHandler(h)
-            try:
+            with contextlib.suppress(Exception):
                 h.close()
-            except Exception:
-                pass
 
         pre_file = logging.FileHandler(str(tmp_path / "pre.log"), encoding="utf-8")
         root.addHandler(pre_file)
@@ -31,10 +30,8 @@ def test_setup_logging_adds_console_when_only_file_handler_exists(tmp_path) -> N
     finally:
         for h in list(root.handlers):
             root.removeHandler(h)
-            try:
+            with contextlib.suppress(Exception):
                 h.close()
-            except Exception:
-                pass
         for h in old_handlers:
             root.addHandler(h)
         root.setLevel(old_level)

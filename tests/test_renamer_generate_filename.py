@@ -39,7 +39,7 @@ def test_generate_filename_stopwords_and_dedup(monkeypatch) -> None:
 
     name, _ = generate_filename(
         "Invoice dated 2024-01-09",
-        config=RenamerConfig(language="de", desired_case="kebabCase"),
+        config=RenamerConfig(language="de", desired_case="kebabCase", use_single_llm_call=False),
         llm_client=object(),  # unused due to monkeypatching
         heuristic_scorer=scorer,
         stopwords=stopwords,
@@ -59,7 +59,7 @@ def test_generate_filename_camel_case(monkeypatch) -> None:
 
     name, _ = generate_filename(
         "2024-02-01",
-        config=RenamerConfig(language="de", desired_case="camelCase"),
+        config=RenamerConfig(language="de", desired_case="camelCase", use_single_llm_call=False),
         llm_client=object(),
         heuristic_scorer=HeuristicScorer(rules=[]),
         stopwords=Stopwords(words=set()),

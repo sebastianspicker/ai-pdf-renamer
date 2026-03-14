@@ -87,10 +87,7 @@ def validate_llm_document_result(parsed: dict) -> DocumentAnalysisResult:
         summary = DEFAULT_LLM_SUMMARY
 
     keywords = parsed.get("keywords")
-    if isinstance(keywords, list):
-        keywords = [str(x).strip() for x in keywords if x and str(x).strip()]
-    else:
-        keywords = []
+    keywords = [str(x).strip() for x in keywords if x and str(x).strip()] if isinstance(keywords, list) else []
 
     category = parsed.get("category")
     if isinstance(category, str) and category.strip():

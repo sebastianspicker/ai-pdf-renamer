@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "ai-pdf-renamer"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Rename PDFs based on extracted text, heuristic scoring, and an optional local LLM."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0.0",
+  "pytest-cov>=6.0.0",
   "ruff>=0.6.0",
   "mypy>=1.11.0",
 ]
@@ -46,28 +47,54 @@ ai-pdf-renamer-tui = "ai_pdf_renamer.tui:main"
 ai-pdf-renamer-gui = "ai_pdf_renamer.tui:main"
 ai-pdf-renamer-undo = "ai_pdf_renamer.undo_cli:main"
 
-[tool.setuptools]
-package-dir = { "" = "src" }
+[tool.hatch.version]
+path = "src/ai_pdf_renamer/__init__.py"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-ai_pdf_renamer = ["data/*.json"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/ai_pdf_renamer"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.coverage.run]
+source = ["ai_pdf_renamer"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 50
+show_missing = true
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.",
+]
 
 [tool.ruff]
 line-length = 120
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
+select = ["E", "F", "I", "B", "UP", "S", "PT", "SIM", "RUF"]
 ignore = [
   # Allow explicit exception chaining omissions in a small codebase.
   "B904",
+  # subprocess/exec — flagged in CLI tool code that needs it.
+  "S603", "S607",
+  # assert in tests is fine.
+  "S101",
+  # Hardcoded password/token bindings — false positives on config field names.
+  "S105", "S106",
+  # Ambiguous unicode characters — intentional German text (umlauts etc.).
+  "RUF001", "RUF002",
+  # Composite assertions in tests — not worth splitting.
+  "PT018",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+  # Tests legitimately use subprocess, hardcoded paths, non-random, etc.
+  "S", "PT011",
 ]
 
 [tool.mypy]

@@ -154,56 +154,6 @@ def _prompt_choice(
         print(f"Invalid choice: {value}. Valid choices: {', '.join(choices)}")
 
 
-def _float_opt(args: argparse.Namespace, attr: str, default: float = 0.0) -> float:
-    """Get float from args; default if missing or invalid."""
-    try:
-        v = getattr(args, attr, None)
-        if v is None:
-            return default
-        return float(v)
-    except (TypeError, ValueError):
-        return default
-
-
-def _int_opt(args: argparse.Namespace, attr: str, default: int = 0) -> int:
-    """Get int from args; default if missing or invalid."""
-    try:
-        v = getattr(args, attr, None)
-        if v is None:
-            return default
-        return int(v)
-    except (TypeError, ValueError):
-        return default
-
-
-def _bool_opt(args: argparse.Namespace, attr: str, default: bool = False) -> bool:
-    """Get bool from args."""
-    v = getattr(args, attr, None)
-    if v is None:
-        return default
-    return bool(v)
-
-
-def _optional_float(args: argparse.Namespace, attr: str) -> float | None:
-    """Get optional float from args; None if missing or invalid."""
-    v = getattr(args, attr, None)
-    if v is None:
-        return None
-    try:
-        f = float(v)
-        return f
-    except (TypeError, ValueError):
-        return None
-
-
-def _str_opt(args: argparse.Namespace, attr: str, default: str = "") -> str:
-    """Get string from args; default if missing or empty."""
-    v = getattr(args, attr, None)
-    if v is None or (isinstance(v, str) and not v.strip()):
-        return default
-    return str(v).strip()
-
-
 def _resolve_log_config(args: argparse.Namespace) -> tuple[str, int]:
     """Resolve log file path and log level from args and env. Returns (log_file_path, log_level)."""
     log_file = getattr(args, "log_file", None) or os.environ.get("AI_PDF_RENAMER_LOG_FILE") or "error.log"
@@ -275,7 +225,7 @@ def run_doctor_checks(args: argparse.Namespace) -> int:
     else:
         print("[INFO] optional dep missing: llama-cpp-python (only needed for --llm-backend in-process)")
 
-    use_llm = _bool_opt(args, "use_llm", True)
+    use_llm = getattr(args, "use_llm", True)
     if use_llm:
         from .llm_backend import create_llm_client_from_config
 
@@ -411,81 +361,17 @@ def _build_config_from_args(
         free_prompt="Version (optional): ",
     )
 
-    raw: dict = {
-        "language": language,
-        "desired_case": desired_case,
-        "project": project,
-        "version": version,
-        "prefer_llm_category": _bool_opt(args, "prefer_llm_category", True),
-        "prefer_heuristic": _bool_opt(args, "prefer_heuristic", False),
-        "date_locale": _str_opt(args, "date_locale", "dmy"),
-        "date_prefer_leading_chars": _int_opt(args, "date_prefer_leading_chars", 8000),
-        "use_pdf_metadata_for_date": _bool_opt(args, "use_pdf_metadata_for_date", True),
-        "dry_run": _bool_opt(args, "dry_run", False),
-        "min_heuristic_score_gap": _float_opt(args, "min_heuristic_score_gap", 0.0),
-        "min_heuristic_score": _float_opt(args, "min_heuristic_score", 0.0),
-        "title_weight_region": _int_opt(args, "title_weight_region", 2000),
-        "title_weight_factor": _float_opt(args, "title_weight_factor", 1.5),
-        "max_score_per_category": _optional_float(args, "max_score_per_category"),
-        "use_keyword_overlap_for_category": _bool_opt(args, "use_keyword_overlap_for_category", True),
-        "use_embeddings_for_conflict": _bool_opt(args, "use_embeddings_for_conflict", False),
-        "category_display": _str_opt(args, "category_display", "specific"),
-        "skip_llm_category_if_heuristic_score_ge": _optional_float(args, "skip_llm_category_if_heuristic_score_ge"),
-        "skip_llm_category_if_heuristic_gap_ge": _optional_float(args, "skip_llm_category_if_heuristic_gap_ge"),
-        "heuristic_suggestions_top_n": _int_opt(args, "heuristic_suggestions_top_n", 5),
-        "heuristic_score_weight": _float_opt(args, "heuristic_score_weight", 0.15),
-        "heuristic_override_min_score": _optional_float(args, "heuristic_override_min_score"),
-        "heuristic_override_min_gap": _optional_float(args, "heuristic_override_min_gap"),
-        "no_heuristic_override": _bool_opt(args, "no_heuristic_override", False),
-        "use_constrained_llm_category": _bool_opt(args, "use_constrained_llm_category", True),
-        "heuristic_leading_chars": _int_opt(args, "heuristic_leading_chars", 0),
-        "heuristic_long_doc_chars_threshold": _int_opt(args, "heuristic_long_doc_chars_threshold", 40000),
-        "heuristic_long_doc_leading_chars": _int_opt(args, "heuristic_long_doc_leading_chars", 12000),
-        "max_pages_for_extraction": _int_opt(args, "max_pages_for_extraction", 0),
-        "llm_base_url": getattr(args, "llm_base_url", None) or None,
-        "llm_model": getattr(args, "llm_model", None) or None,
-        "llm_timeout_s": getattr(args, "llm_timeout_s", None),
-        "max_tokens_for_extraction": getattr(args, "max_tokens_for_extraction", None),
-        "max_content_chars": getattr(args, "max_content_chars", None),
-        "max_content_tokens": getattr(args, "max_content_tokens", None),
-        "use_ocr": _bool_opt(args, "use_ocr", False),
-        "skip_if_already_named": _bool_opt(args, "skip_if_already_named", False),
-        "backup_dir": getattr(args, "backup_dir", None) or None,
-        "rename_log_path": getattr(args, "rename_log_path", None) or None,
-        "export_metadata_path": getattr(args, "export_metadata_path", None) or None,
-        "summary_json_path": getattr(args, "summary_json_path", None) or None,
-        "max_filename_chars": getattr(args, "max_filename_chars", None),
-        "override_category_map": (
-            _load_override_category_map(args.override_category_file)
-            if getattr(args, "override_category_file", None)
-            else None
-        ),
-        "rules_file": getattr(args, "rules_file", None) or None,
-        "post_rename_hook": getattr(args, "post_rename_hook", None) or None,
-        "workers": _int_opt(args, "workers", 1),
-        "recursive": _bool_opt(args, "recursive", False),
-        "max_depth": _int_opt(args, "max_depth", 0),
-        "include_patterns": getattr(args, "include_patterns", None),
-        "exclude_patterns": getattr(args, "exclude_patterns", None),
-        "filename_template": getattr(args, "filename_template", None) or file_defaults.get("filename_template"),
-        "use_structured_fields": _bool_opt(args, "use_structured_fields", True),
-        "plan_file_path": getattr(args, "plan_file_path", None) or None,
-        "interactive": _bool_opt(args, "interactive", False) or bool(getattr(args, "manual_file", None)),
-        "manual_mode": bool(getattr(args, "manual_file", None)),
-        "write_pdf_metadata": _bool_opt(args, "write_pdf_metadata", False),
-        "use_llm": _bool_opt(args, "use_llm", True),
-        "lenient_llm_json": _bool_opt(args, "lenient_llm_json", False),
-        "use_timestamp_fallback": _bool_opt(args, "use_timestamp_fallback", True),
-        "timestamp_fallback_segment": _str_opt(args, "timestamp_fallback_segment", "document"),
-        "simple_naming_mode": _bool_opt(args, "simple_naming_mode", False),
-        "use_vision_fallback": _bool_opt(args, "use_vision_fallback", False),
-        "vision_fallback_min_text_len": _int_opt(args, "vision_fallback_min_text_len", 50),
-        "vision_model": getattr(args, "vision_model", None) or None,
-        "vision_first": _bool_opt(args, "vision_first", False),
-        "preset": getattr(args, "preset", None) or "",
-        "llm_backend": getattr(args, "llm_backend", None) or None,
-        "llm_model_path": getattr(args, "llm_model_path", None) or None,
-    }
+    # Pass all argparse values through to build_config(), which handles type coercion.
+    raw = vars(args).copy()
+    raw.update(language=language, desired_case=desired_case, project=project, version=version)
+    raw["manual_mode"] = bool(getattr(args, "manual_file", None))
+    if raw["manual_mode"]:
+        raw["interactive"] = True
+    if getattr(args, "override_category_file", None):
+        raw["override_category_map"] = _load_override_category_map(args.override_category_file)
+    # Merge filename_template from file defaults if not set via CLI
+    if not raw.get("filename_template"):
+        raw["filename_template"] = file_defaults.get("filename_template")
     try:
         return build_config(raw, file_defaults=file_defaults)
     except ValueError as exc:
@@ -542,7 +428,7 @@ def main(argv: list[str] | None = None) -> None:
     log_file, log_level = _resolve_log_config(args)
     setup_logging(log_file=log_file, level=log_level)
 
-    if _bool_opt(args, "doctor", False):
+    if getattr(args, "doctor", False):
         raise SystemExit(run_doctor_checks(args))
 
     dirs, single_file = _resolve_dirs(args)

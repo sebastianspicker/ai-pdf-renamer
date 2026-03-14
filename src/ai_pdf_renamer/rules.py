@@ -43,10 +43,7 @@ def load_processing_rules(path: str | Path | None) -> ProcessingRules | None:
         return None
 
     skip_llm = data.get("skip_llm_if_heuristic_category")
-    if isinstance(skip_llm, list):
-        skip_llm = [str(x).strip() for x in skip_llm if x and str(x).strip()]
-    else:
-        skip_llm = []
+    skip_llm = [str(x).strip() for x in skip_llm if x and str(x).strip()] if isinstance(skip_llm, list) else []
 
     force_cat = data.get("force_category_by_pattern")
     if isinstance(force_cat, list):
@@ -59,10 +56,7 @@ def load_processing_rules(path: str | Path | None) -> ProcessingRules | None:
         force_cat = []
 
     skip_files = data.get("skip_files_by_pattern")
-    if isinstance(skip_files, list):
-        skip_files = [str(x).strip() for x in skip_files if x and str(x).strip()]
-    else:
-        skip_files = []
+    skip_files = [str(x).strip() for x in skip_files if x and str(x).strip()] if isinstance(skip_files, list) else []
 
     allowed_cats = data.get("allowed_categories")
     if isinstance(allowed_cats, list):

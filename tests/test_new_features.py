@@ -32,7 +32,7 @@ def test_doctor_mode_invokes_preflight(monkeypatch, tmp_path: Path, capsys: pyte
 
     called: dict[str, bool] = {"ran": False}
 
-    def fake_doctor(args) -> int:  # noqa: ANN001
+    def fake_doctor(args) -> int:
         called["ran"] = True
         print("doctor-ok")
         return 0
@@ -94,7 +94,7 @@ def test_rules_allowed_categories_are_passed_to_llm(monkeypatch) -> None:
     monkeypatch.setattr(filename_mod, "get_document_summary", lambda *a, **k: "summary")
     monkeypatch.setattr(filename_mod, "get_document_keywords", lambda *a, **k: ["kw"])
 
-    def fake_get_document_category(*args, **kwargs):  # noqa: ANN002, ANN003
+    def fake_get_document_category(*args, **kwargs):
         captured["allowed_categories"] = kwargs.get("allowed_categories")
         return "invoice"
 
@@ -110,7 +110,7 @@ def test_rules_allowed_categories_are_passed_to_llm(monkeypatch) -> None:
 
     name, _meta = filename_mod.generate_filename(
         "Invoice 2024-01-09",
-        config=RenamerConfig(use_llm=True),
+        config=RenamerConfig(use_llm=True, use_single_llm_call=False),
         llm_client=object(),
         heuristic_scorer=scorer,
         stopwords=Stopwords(words=set()),
@@ -178,7 +178,7 @@ def test_parallel_processing_respects_stop_before_submitting(monkeypatch, tmp_pa
 
     calls: dict[str, int] = {"count": 0}
 
-    def fake_process(*args, **kwargs):  # noqa: ANN002, ANN003
+    def fake_process(*args, **kwargs):
         calls["count"] += 1
         return (args[0], None, None, None)
 
@@ -204,7 +204,7 @@ def test_post_rename_hook_runs_without_shell(monkeypatch, tmp_path: Path) -> Non
 
     called: dict[str, object] = {}
 
-    def fake_run(*args, **kwargs):  # noqa: ANN002, ANN003
+    def fake_run(*args, **kwargs):
         called["args"] = args
         called["kwargs"] = kwargs
         return None
@@ -226,7 +226,7 @@ def test_post_rename_hook_shell_features_use_shell_wrapper(monkeypatch, tmp_path
 
     called: dict[str, object] = {}
 
-    def fake_run(*args, **kwargs):  # noqa: ANN002, ANN003
+    def fake_run(*args, **kwargs):
         called["args"] = args
         called["kwargs"] = kwargs
         return None
@@ -266,10 +266,10 @@ def test_post_rename_hook_supports_http_endpoint(monkeypatch, tmp_path: Path) ->
             calls["trust_env_before_post"] = self.trust_env
             return self
 
-        def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001, ANN002, ANN003
+        def __exit__(self, exc_type, exc, tb) -> None:
             return None
 
-        def post(self, url, json, timeout):  # noqa: ANN001, ANN201
+        def post(self, url, json, timeout):
             calls["url"] = url
             calls["payload"] = json
             calls["timeout"] = timeout
@@ -314,10 +314,10 @@ def test_doctor_checks_fail_on_invalid_llm_probe_response(monkeypatch, tmp_path:
         def __enter__(self) -> FakeSession:
             return self
 
-        def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001, ANN002, ANN003
+        def __exit__(self, exc_type, exc, tb) -> None:
             return None
 
-        def post(self, url, json, timeout):  # noqa: ANN001, ANN201
+        def post(self, url, json, timeout):
             return FakeResponse()
 
     monkeypatch.setattr(cli.requests, "Session", FakeSession)
@@ -360,11 +360,11 @@ def test_llm_backend_concurrent_calls(monkeypatch) -> None:
             return None
 
         def json(self) -> dict[str, object]:
-            return {"choices": [{"text": "ok"}]}
+            return {"choices": [{"message": {"content": "ok"}}]}
 
     results: dict[str, str] = {}
 
-    backend = HttpLLMBackend(base_url="http://example.invalid/v1/completions", model="x", timeout_s=1.0)
+    backend = HttpLLMBackend(base_url="http://example.invalid/v1/completions", model="x", timeout_s=1.0, use_chat=True)
     monkeypatch.setattr(backend._session, "post", lambda *a, **kw: FakeResponse())
 
     assert backend.complete("ping") == "ok"

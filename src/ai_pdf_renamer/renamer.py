@@ -23,45 +23,13 @@ from .rename_ops import (
     apply_single_rename,
     sanitize_filename_base,
 )
-from .renamer_extract import effective_max_tokens as _effective_max_tokens_impl
-from .renamer_extract import extract_pdf_content_with as _extract_pdf_content_impl
-from .renamer_files import collect_pdf_files as _collect_pdf_files_impl
-from .renamer_files import matches_patterns as _matches_patterns_impl
+from .renamer_extract import extract_pdf_content_with as _extract_pdf_content_with
+from .renamer_files import collect_pdf_files as _collect_pdf_files
 from .rules import (
     ProcessingRules,
     force_category_for_basename,
     load_processing_rules,
 )
-
-
-def _matches_patterns(name: str, include: list[str] | None, exclude: list[str] | None) -> bool:
-    """Compatibility wrapper for file-pattern matching helper."""
-    return _matches_patterns_impl(name, include, exclude)
-
-
-def _collect_pdf_files(
-    directory: Path,
-    *,
-    recursive: bool = False,
-    max_depth: int = 0,
-    include_patterns: list[str] | None = None,
-    exclude_patterns: list[str] | None = None,
-    skip_if_already_named: bool = False,
-    files_override: list[Path] | None = None,
-    rules: ProcessingRules | None = None,
-) -> list[Path]:
-    """Compatibility wrapper for PDF file collection helper."""
-    return _collect_pdf_files_impl(
-        directory,
-        recursive=recursive,
-        max_depth=max_depth,
-        include_patterns=include_patterns,
-        exclude_patterns=exclude_patterns,
-        skip_if_already_named=skip_if_already_named,
-        files_override=files_override,
-        rules=rules,
-    )
-
 
 logger = logging.getLogger(__name__)
 
@@ -227,14 +195,9 @@ def _apply_post_rename_actions(
         _run_post_rename_hook(hook_cmd, file_path, target, meta)
 
 
-def _effective_max_tokens(config: RenamerConfig) -> int:
-    """Compatibility wrapper for shared extraction-token resolver."""
-    return _effective_max_tokens_impl(config)
-
-
 def _extract_pdf_content(path: Path, config: RenamerConfig) -> tuple[str, bool]:
-    """Compatibility wrapper for shared extraction helper."""
-    return _extract_pdf_content_impl(
+    """Extract PDF content using text/OCR/vision strategies."""
+    return _extract_pdf_content_with(
         path,
         config,
         pdf_first_page_to_image_base64_fn=pdf_first_page_to_image_base64,

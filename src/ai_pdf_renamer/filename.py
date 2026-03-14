@@ -16,6 +16,7 @@ from .heuristics import (
     normalize_llm_category,
 )
 from .llm import (
+    get_document_analysis,
     get_document_category,
     get_document_filename_simple,
     get_document_keywords,
@@ -124,6 +125,7 @@ def _resolve_category_with_llm(
     summary: str,
     keywords: list[str],
     rules: ProcessingRules | None = None,
+    precomputed_llm_category: str | None = None,
 ) -> tuple[str, str, str]:
     """Resolve final category (heuristic + optional LLM, combine_categories).
     Returns (category, category_for_filename, category_source)."""
@@ -145,6 +147,22 @@ def _resolve_category_with_llm(
         skip_llm = True
     if skip_llm:
         cat_llm = cat_heur
+    elif precomputed_llm_category is not None:
+        # Use category from single-call analysis (no separate LLM call needed)
+        cat_llm = precomputed_llm_category
+        # Still validate against allowed set
+        if rules is not None and rules.allowed_categories:
+            allowed = [c for c in rules.allowed_categories if c and c.strip()]
+        elif config.use_constrained_llm_category:
+            allowed = list(heuristic_scorer.all_categories())
+        else:
+            allowed = None
+        if allowed:
+            norm = normalize_llm_category(cat_llm).strip().lower().replace(" ", "_")
+            allowed_set = frozenset(c.strip().lower().replace(" ", "_") for c in allowed)
+            if norm and norm not in allowed_set and norm not in {"unknown", "na", "document"}:
+                logger.info("LLM category %r not in allowed set; using heuristic.", cat_llm)
+                cat_llm = "unknown"
     else:
         top_n = heuristic_scorer.top_n_categories(
             heuristic_text,
@@ -241,6 +259,111 @@ def _build_metadata_tokens(
     return (category_clean, keyword_clean, summary_clean, metadata)
 
 
+def _get_llm_summary_and_keywords(
+    pdf_content: str,
+    config: RenamerConfig,
+    llm_client: LLMClient,
+    heuristic_scorer: HeuristicScorer,
+    heuristic_text: str,
+    cat_heur: str,
+    suggested_doc_type: str | None,
+    override_category: str | None,
+    rules: ProcessingRules | None,
+) -> tuple[str, list[str], str | None, list[str] | None]:
+    """Run LLM to get summary, keywords, and optionally a precomputed category.
+
+    Returns (summary, raw_keywords, precomputed_category, precomputed_summary_tokens).
+    precomputed_category/summary_tokens are non-None only for the single-call path.
+    """
+    _effective_max_content_chars = config.max_content_chars or config.max_context_chars
+
+    if config.use_single_llm_call:
+        _allowed: list[str] | None = None
+        _suggested: list[str] | None = None
+        if override_category is None:
+            if rules is not None and rules.allowed_categories:
+                _allowed = [c for c in rules.allowed_categories if c and c.strip()]
+            elif config.use_constrained_llm_category:
+                _allowed = list(heuristic_scorer.all_categories())
+            else:
+                top_n = heuristic_scorer.top_n_categories(
+                    heuristic_text,
+                    n=config.heuristic_suggestions_top_n,
+                    language=config.language,
+                    max_score_per_category=config.max_score_per_category,
+                    title_weight_region=config.title_weight_region,
+                    title_weight_factor=config.title_weight_factor,
+                )
+                _suggested = [c for c in top_n if c and c != "unknown"]
+        analysis = get_document_analysis(
+            llm_client,
+            pdf_content,
+            language=config.language,
+            suggested_doc_type=suggested_doc_type,
+            max_content_chars=_effective_max_content_chars,
+            max_content_tokens=config.max_content_tokens,
+            allowed_categories=_allowed,
+            suggested_categories=_suggested if not _allowed else None,
+            lenient_json=config.lenient_llm_json,
+            json_mode=config.llm_json_mode,
+        )
+        return (analysis.summary, analysis.keywords or [], analysis.category, analysis.final_summary_tokens)
+
+    # Multi-call path
+    summary = get_document_summary(
+        llm_client,
+        pdf_content,
+        language=config.language,
+        suggested_doc_type=suggested_doc_type,
+        lenient_json=config.lenient_llm_json,
+        max_content_chars=_effective_max_content_chars,
+        max_content_tokens=config.max_content_tokens,
+    )
+    raw_keywords = (
+        get_document_keywords(
+            llm_client,
+            summary,
+            language=config.language,
+            suggested_category=cat_heur if cat_heur != "unknown" else None,
+            lenient_json=config.lenient_llm_json,
+        )
+        or []
+    )
+    return (summary, raw_keywords, None, None)
+
+
+def _resolve_final_summary_tokens(
+    config: RenamerConfig,
+    llm_client: LLMClient,
+    summary: str,
+    keywords: list[str],
+    category: str,
+    precomputed_summary_tokens: list[str] | None,
+) -> list[str]:
+    """Resolve final summary tokens from LLM analysis or a separate LLM call.
+
+    When single-call was used, uses precomputed tokens (falling back to splitting summary);
+    otherwise makes a separate LLM call.
+    """
+    if config.use_single_llm_call:
+        if precomputed_summary_tokens:
+            return precomputed_summary_tokens
+        if summary and summary != "na":
+            return split_to_tokens(summary)[:5]
+        return []
+    return (
+        get_final_summary_tokens(
+            llm_client,
+            summary=summary,
+            keywords=keywords,
+            category=category,
+            language=config.language,
+            lenient_json=config.lenient_llm_json,
+        )
+        or []
+    )
+
+
 def _get_category_summary_keywords_metadata(
     pdf_content: str,
     config: RenamerConfig,
@@ -257,10 +380,7 @@ def _get_category_summary_keywords_metadata(
         cat_heur = override_category
         category_for_filename = heuristic_scorer.get_display_category(override_category, config.category_display)
         category_source = "override"
-        logger.info(
-            "CategorySource source=override category=%s",
-            category,
-        )
+        logger.info("CategorySource source=override category=%s", category)
         suggested_doc_type_for_summary = override_category
         heuristic_text = ""
         heuristic_score = 0.0
@@ -271,45 +391,41 @@ def _get_category_summary_keywords_metadata(
         (
             cat_heur,
             heuristic_score,
-            runner_up_cat,
-            runner_up_score,
+            _runner_up_cat,
+            _runner_up_score,
             heuristic_gap,
             suggested_doc_type_for_summary,
         ) = _resolve_heuristic_category(heuristic_text, config, heuristic_scorer)
         skip_llm_by_rule = config.use_llm and rules is not None and cat_heur in rules.skip_llm_if_heuristic_category
 
+    # --- Get summary + keywords ---
+    precomputed_category: str | None = None
+    precomputed_summary_tokens: list[str] | None = None
     if skip_llm_by_rule:
         summary = ""
-        raw_keywords = []
+        raw_keywords: list[str] = []
         category = cat_heur
         category_for_filename = heuristic_scorer.get_display_category(cat_heur, config.category_display)
         category_source = "heuristic"
         logger.info("CategorySource source=heuristic (rules skip_llm) category=%s", category)
     elif config.use_llm:
-        summary = get_document_summary(
-            llm_client,
+        summary, raw_keywords, precomputed_category, precomputed_summary_tokens = _get_llm_summary_and_keywords(
             pdf_content,
-            language=config.language,
-            suggested_doc_type=suggested_doc_type_for_summary,
-            lenient_json=config.lenient_llm_json,
-            max_content_chars=config.max_content_chars,
-            max_content_tokens=config.max_content_tokens,
-        )
-        raw_keywords = (
-            get_document_keywords(
-                llm_client,
-                summary,
-                language=config.language,
-                suggested_category=cat_heur if cat_heur != "unknown" else None,
-                lenient_json=config.lenient_llm_json,
-            )
-            or []
+            config,
+            llm_client,
+            heuristic_scorer,
+            heuristic_text,
+            cat_heur,
+            suggested_doc_type_for_summary,
+            override_category,
+            rules,
         )
     else:
         summary = ""
         raw_keywords = []
     keywords = normalize_keywords(raw_keywords)
 
+    # --- Resolve category ---
     if not skip_llm_by_rule and override_category is None:
         category, category_for_filename, category_source = _resolve_category_with_llm(
             heuristic_text,
@@ -322,6 +438,7 @@ def _get_category_summary_keywords_metadata(
             summary,
             keywords,
             rules=rules,
+            precomputed_llm_category=precomputed_category,
         )
 
     category_unknown = (category or "").strip().lower() in ("unknown", "na", "document", "")
@@ -329,17 +446,15 @@ def _get_category_summary_keywords_metadata(
         logger.warning("LLM was used but category is unknown; using heuristic or timestamp fallback.")
     llm_failed = bool(config.use_llm and not skip_llm_by_rule and category_unknown)
 
+    # --- Resolve final summary tokens ---
     if config.use_llm and not skip_llm_by_rule:
-        final_summary_tokens = (
-            get_final_summary_tokens(
-                llm_client,
-                summary=summary,
-                keywords=keywords,
-                category=category,
-                language=config.language,
-                lenient_json=config.lenient_llm_json,
-            )
-            or []
+        final_summary_tokens = _resolve_final_summary_tokens(
+            config,
+            llm_client,
+            summary,
+            keywords,
+            category,
+            precomputed_summary_tokens,
         )
     else:
         final_summary_tokens = []
@@ -541,12 +656,13 @@ def generate_filename(
     heuristic_scorer = heuristic_scorer or default_heuristic_scorer(config.language)
 
     date_str = _get_date_str(pdf_content, config, today, pdf_metadata)
+    _eff_max_content_chars = config.max_content_chars or config.max_context_chars
     if config.simple_naming_mode:
         simple_part = get_document_filename_simple(
             llm_client,
             pdf_content,
             language=config.language,
-            max_content_chars=config.max_content_chars,
+            max_content_chars=_eff_max_content_chars,
             max_content_tokens=config.max_content_tokens,
         )
         sep = _filename_sep(config)

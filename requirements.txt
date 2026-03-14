@@ -1,4 +1,0 @@
-requests>=2.32.0
-pymupdf>=1.23.0
-# Optional: better token counting for truncation
-# tiktoken>=0.5.0

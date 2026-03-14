@@ -11,6 +11,7 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -51,6 +52,7 @@ class LLMClient(Protocol):
         *,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None,
     ) -> str: ...
 
     def complete_vision(
@@ -105,18 +107,21 @@ class HttpLLMBackend:
     base_url: str = _DEFAULT_LLM_URL
     model: str = _DEFAULT_LLM_MODEL
     timeout_s: float = _DEFAULT_LLM_TIMEOUT_S
+    use_chat: bool = True
     _session: requests.Session = field(default_factory=requests.Session, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self._session.trust_env = False  # Never route LLM traffic through proxy
 
-    def complete(
+    def _complete_text(
         self,
         prompt: str,
         *,
-        temperature: float = 0.0,
-        max_tokens: int | None = None,
+        temperature: float,
+        max_tokens: int | None,
+        response_format: dict[str, str] | None,
     ) -> str:
+        """Legacy /v1/completions text completion path."""
         payload: dict[str, object] = {
             "model": self.model,
             "prompt": prompt,
@@ -124,29 +129,83 @@ class HttpLLMBackend:
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        if response_format is not None:
+            payload["response_format"] = response_format
+        resp = self._session.post(self.base_url, json=payload, timeout=self.timeout_s)
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            logger.warning("LLM response is not a dict: %s", type(data).__name__)
+            return ""
+        choices = data.get("choices")
+        if not isinstance(choices, list) or len(choices) == 0:
+            logger.warning(
+                "LLM response missing or empty 'choices' (status=%s)",
+                getattr(resp, "status_code", None),
+            )
+            return ""
+        first_choice = choices[0]
+        if not isinstance(first_choice, dict):
+            logger.warning(
+                "LLM response 'choices[0]' is not a dict: %s",
+                type(first_choice).__name__,
+            )
+            return ""
+        text = first_choice.get("text", "")
+        return str(text).strip() if text is not None else ""
+
+    def _complete_chat(
+        self,
+        prompt: str,
+        *,
+        temperature: float,
+        max_tokens: int | None,
+        response_format: dict[str, str] | None,
+    ) -> str:
+        """Chat /v1/chat/completions path for instruct-tuned models."""
+        chat_url = _chat_url_from_completions_url(self.base_url)
+        payload: dict[str, object] = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": "You are a document analysis assistant. Respond only with valid JSON."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if response_format is not None:
+            payload["response_format"] = response_format
+        resp = self._session.post(chat_url, json=payload, timeout=self.timeout_s)
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            return ""
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return ""
+        msg = choices[0].get("message", {})
+        if not isinstance(msg, dict):
+            return ""
+        content = msg.get("content")
+        return str(content).strip() if content is not None else ""
+
+    def complete(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None,
+    ) -> str:
         try:
-            resp = self._session.post(self.base_url, json=payload, timeout=self.timeout_s)
-            resp.raise_for_status()
-            data = resp.json()
-            if not isinstance(data, dict):
-                logger.warning("LLM response is not a dict: %s", type(data).__name__)
-                return ""
-            choices = data.get("choices")
-            if not isinstance(choices, list) or len(choices) == 0:
-                logger.warning(
-                    "LLM response missing or empty 'choices' (status=%s)",
-                    getattr(resp, "status_code", None),
+            if self.use_chat:
+                return self._complete_chat(
+                    prompt, temperature=temperature, max_tokens=max_tokens, response_format=response_format
                 )
-                return ""
-            first_choice = choices[0]
-            if not isinstance(first_choice, dict):
-                logger.warning(
-                    "LLM response 'choices[0]' is not a dict: %s",
-                    type(first_choice).__name__,
-                )
-                return ""
-            text = first_choice.get("text", "")
-            return str(text).strip() if text is not None else ""
+            return self._complete_text(
+                prompt, temperature=temperature, max_tokens=max_tokens, response_format=response_format
+            )
         except (IndexError, AttributeError, TypeError, KeyError) as exc:
             logger.warning("LLM response structure unexpected: %s", exc)
             return ""
@@ -240,7 +299,13 @@ class InProcessLLMBackend:
     No server needed. Loads a GGUF model directly into the process.
     """
 
-    def __init__(self, model_path: str, *, timeout_s: float = _DEFAULT_LLM_TIMEOUT_S) -> None:
+    def __init__(
+        self,
+        model_path: str,
+        *,
+        timeout_s: float = _DEFAULT_LLM_TIMEOUT_S,
+        use_chat: bool = True,
+    ) -> None:
         try:
             import llama_cpp  # type: ignore[import-untyped]
         except ImportError as exc:
@@ -249,6 +314,7 @@ class InProcessLLMBackend:
             ) from exc
         self._model_path = model_path
         self._timeout_s = timeout_s
+        self._use_chat = use_chat
         logger.info("Loading GGUF model from %s ...", model_path)
         self._llama = llama_cpp.Llama(model_path=model_path, verbose=False)
         logger.info("Model loaded.")
@@ -267,12 +333,33 @@ class InProcessLLMBackend:
         *,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None,
     ) -> str:
         try:
+            kwargs: dict[str, object] = {
+                "temperature": temperature,
+                "max_tokens": max_tokens or 1024,
+            }
+            if response_format is not None:
+                kwargs["response_format"] = response_format
+            if self._use_chat:
+                sys_msg = "You are a document analysis assistant. Respond only with valid JSON."
+                result = self._llama.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": sys_msg},
+                        {"role": "user", "content": prompt},
+                    ],
+                    **kwargs,
+                )
+                choices = result.get("choices", [])
+                if not choices:
+                    return ""
+                msg = choices[0].get("message", {})
+                content = msg.get("content", "")
+                return str(content).strip() if content else ""
             result = self._llama.create_completion(
                 prompt=prompt,
-                temperature=temperature,
-                max_tokens=max_tokens or 1024,
+                **kwargs,
             )
             choices = result.get("choices", [])
             if not choices:
@@ -318,10 +405,8 @@ class InProcessLLMBackend:
             return ""
 
     def close(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             del self._llama
-        except Exception:
-            pass
 
 
 # ---------------------------------------------------------------------------
@@ -366,11 +451,13 @@ def create_llm_client_from_config(config: RenamerConfig) -> LLMClient:
         if timeout_s <= 0:
             timeout_s = _DEFAULT_LLM_TIMEOUT_S
 
+    use_chat = getattr(config, "llm_use_chat_api", True)
+
     # In-process backend
     use_in_process = backend_str == "in-process" or (backend_str == "auto" and bool(model_path))
     if use_in_process and model_path:
         try:
-            return InProcessLLMBackend(model_path, timeout_s=timeout_s)
+            return InProcessLLMBackend(model_path, timeout_s=timeout_s, use_chat=use_chat)
         except ImportError as exc:
             if backend_str == "in-process":
                 raise
@@ -387,4 +474,4 @@ def create_llm_client_from_config(config: RenamerConfig) -> LLMClient:
         "AI_PDF_RENAMER_LLM_MODEL",
         _DEFAULT_LLM_MODEL,
     )
-    return HttpLLMBackend(base_url=base_url, model=model, timeout_s=timeout_s)
+    return HttpLLMBackend(base_url=base_url, model=model, timeout_s=timeout_s, use_chat=use_chat)

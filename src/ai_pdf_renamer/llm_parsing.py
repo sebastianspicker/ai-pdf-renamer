@@ -10,7 +10,7 @@ import re
 
 logger = logging.getLogger(__name__)
 
-# Qwen3 8B 128K context: single-shot up to ~120K tokens (~480K chars).
+# Fallback context limits (128K model); overridden by llm_preset.
 CONTEXT_128K_MAX_CHARS_SINGLE = 480_000  # ~120K tokens at ~4 chars/token
 CONTEXT_128K_CHUNK_SIZE = 100_000
 CONTEXT_128K_CHUNK_OVERLAP = 5_000

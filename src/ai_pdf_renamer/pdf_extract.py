@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import logging
 import os
 import re
@@ -247,10 +248,8 @@ def pdf_to_text_with_ocr(
         logger.warning("OCR failed for %s: %s. Using original extraction.", path, exc)
     finally:
         if tmp is not None and tmp.exists():
-            try:
+            with contextlib.suppress(OSError):
                 tmp.unlink()
-            except OSError:
-                pass
     return text
 
 

@@ -67,16 +67,37 @@ def _make_completions_response(text: str) -> MagicMock:
     return resp
 
 
-def test_http_backend_complete_ok():
-    backend = HttpLLMBackend()
+def test_http_backend_complete_text_mode_ok():
+    """Legacy text completions mode (use_chat=False)."""
+    backend = HttpLLMBackend(use_chat=False)
     with patch.object(backend._session, "post", return_value=_make_completions_response("hello")) as mock_post:
         result = backend.complete("test prompt")
     assert result == "hello"
     mock_post.assert_called_once()
 
 
+def test_http_backend_complete_chat_mode_ok():
+    """Default chat completions mode (use_chat=True)."""
+    backend = HttpLLMBackend(use_chat=True)
+    with patch.object(backend._session, "post", return_value=_make_chat_response("hello chat")) as mock_post:
+        result = backend.complete("test prompt")
+    assert result == "hello chat"
+    url_called = mock_post.call_args[0][0]
+    assert "chat/completions" in url_called
+
+
+def test_http_backend_complete_chat_mode_with_response_format():
+    """Chat mode with response_format parameter."""
+    backend = HttpLLMBackend(use_chat=True)
+    with patch.object(backend._session, "post", return_value=_make_chat_response('{"summary":"test"}')) as mock_post:
+        result = backend.complete("test prompt", response_format={"type": "json_object"})
+    assert '"summary"' in result
+    payload = mock_post.call_args[1]["json"]
+    assert payload["response_format"] == {"type": "json_object"}
+
+
 def test_http_backend_complete_empty_choices():
-    backend = HttpLLMBackend()
+    backend = HttpLLMBackend(use_chat=False)
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
     resp.json.return_value = {"choices": []}
@@ -232,9 +253,8 @@ def test_factory_in_process_missing_llama_cpp_raises(tmp_path):
     model_file = tmp_path / "model.gguf"
     model_file.write_bytes(b"fake")
     config = RenamerConfig(use_llm=True, llm_backend="in-process", llm_model_path=str(model_file))
-    with patch.dict("sys.modules", {"llama_cpp": None}):
-        with pytest.raises(ImportError):
-            create_llm_client_from_config(config)
+    with patch.dict("sys.modules", {"llama_cpp": None}), pytest.raises(ImportError):
+        create_llm_client_from_config(config)
 
 
 def test_factory_auto_missing_llama_cpp_falls_back_to_http(tmp_path):

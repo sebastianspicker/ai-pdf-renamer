@@ -6,6 +6,7 @@ Extracted from renamer to keep collision/sanitize logic in one place.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import logging
 import os
@@ -186,18 +187,14 @@ def apply_single_rename(
                     shutil.copy2(file_path, target)
                 except OSError as copy_err:
                     if target.exists():
-                        try:
+                        with contextlib.suppress(OSError):
                             target.unlink()
-                        except OSError:
-                            pass
                     raise copy_err
                 try:
                     file_path.unlink()
                 except OSError as unlink_err:
-                    try:
+                    with contextlib.suppress(OSError):
                         target.unlink()
-                    except OSError:
-                        pass
                     raise OSError(
                         f"Cross-filesystem rename: copied to {target}, "
                         f"could not remove source {file_path}: {unlink_err}"

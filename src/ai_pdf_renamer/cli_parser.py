@@ -465,11 +465,36 @@ def _add_llm_args(p: argparse.ArgumentParser) -> None:
         help="Vision on first page first; else extract text (scan-only; needs vision-capable model).",
     )
     p.add_argument(
+        "--no-single-llm-call",
+        dest="use_single_llm_call",
+        action="store_false",
+        help="Use separate LLM calls for summary, keywords, category instead of one combined call.",
+    )
+    p.add_argument(
+        "--no-chat-api",
+        dest="llm_use_chat_api",
+        action="store_false",
+        help="Use /v1/completions instead of /v1/chat/completions for LLM text calls.",
+    )
+    p.add_argument(
+        "--no-json-mode",
+        dest="llm_json_mode",
+        action="store_false",
+        help="Do not request JSON mode (response_format) from the LLM server.",
+    )
+    p.add_argument(
         "--preset",
         dest="preset",
         default=None,
         choices=["high-confidence-heuristic", "scanned"],
         help="Preset: high-confidence-heuristic or scanned (vision fallback + simple naming).",
+    )
+    p.add_argument(
+        "--llm-preset",
+        dest="llm_preset",
+        default=None,
+        choices=["apple-silicon", "gpu"],
+        help="Hardware profile: apple-silicon (default, Qwen 2.5 3B) or gpu (Qwen 2.5 7B). Sets model, context limits.",
     )
 
 

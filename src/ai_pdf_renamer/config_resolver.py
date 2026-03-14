@@ -131,6 +131,33 @@ def build_config(
         data.get("max_content_tokens") or env_map.get("AI_PDF_RENAMER_MAX_CONTENT_TOKENS")
     )
 
+    # --- LLM hardware preset ---
+    llm_preset = _normalize_str_or_none(data.get("llm_preset"))
+    _PRESET_DEFAULTS: dict[str, dict[str, Any]] = {
+        "apple-silicon": {
+            "llm_model": "qwen2.5:3b",
+            "llm_base_url": "http://127.0.0.1:11434/v1/completions",
+            "max_context_chars": 120_000,
+        },
+        "gpu": {
+            "llm_model": "qwen2.5:7b-instruct",
+            "llm_base_url": "http://127.0.0.1:11434/v1/completions",
+            "max_context_chars": 480_000,
+        },
+    }
+    # Resolve effective preset: explicit llm_preset, or apple-silicon as default
+    _effective_preset = llm_preset if llm_preset in _PRESET_DEFAULTS else "apple-silicon"
+    _preset_vals = _PRESET_DEFAULTS[_effective_preset]
+
+    # Apply preset defaults only where user/env didn't set a value
+    _user_llm_model = _str(data.get("llm_model"), "") or None
+    _user_llm_base_url = _normalize_str_or_none(data.get("llm_base_url"))
+    _user_max_context_chars = _positive_int_or_none(data.get("max_context_chars"))
+
+    _resolved_llm_model = _user_llm_model or _preset_vals["llm_model"]
+    _resolved_llm_base_url = _user_llm_base_url or _preset_vals["llm_base_url"]
+    _resolved_max_context_chars = _user_max_context_chars or _preset_vals["max_context_chars"]
+
     kwargs: dict[str, Any] = {
         "language": _str(data.get("language"), "de"),
         "desired_case": _str(data.get("desired_case"), "kebabCase"),
@@ -160,8 +187,8 @@ def build_config(
         "heuristic_long_doc_chars_threshold": int(data.get("heuristic_long_doc_chars_threshold", 40000) or 40000),
         "heuristic_long_doc_leading_chars": int(data.get("heuristic_long_doc_leading_chars", 12000) or 12000),
         "max_pages_for_extraction": int(data.get("max_pages_for_extraction", 0) or 0),
-        "llm_base_url": _normalize_str_or_none(data.get("llm_base_url")),
-        "llm_model": _str(data.get("llm_model"), "") or None,
+        "llm_base_url": _resolved_llm_base_url,
+        "llm_model": _resolved_llm_model,
         "llm_timeout_s": _optional_float(data.get("llm_timeout_s")),
         "max_tokens_for_extraction": _positive_int_or_none(data.get("max_tokens_for_extraction")),
         "max_content_chars": max_content_chars,
@@ -201,6 +228,11 @@ def build_config(
         "vision_first": vision_first,
         "llm_backend": _str(data.get("llm_backend"), "http"),
         "llm_model_path": _normalize_str_or_none(data.get("llm_model_path")),
+        "use_single_llm_call": _bool(data.get("use_single_llm_call"), True),
+        "llm_use_chat_api": _bool(data.get("llm_use_chat_api"), True),
+        "llm_json_mode": _bool(data.get("llm_json_mode"), True),
+        "llm_preset": llm_preset,
+        "max_context_chars": _resolved_max_context_chars,
     }
 
     # Manual mode implies interactive behavior.
