@@ -13,10 +13,9 @@ YYYYMMDD-category-keywords-summary.pdf
 - Renames PDFs from extracted document content.
 - Uses heuristics first and optional LLM for enrichment.
 - Single-call LLM mode: summary, keywords, and category in one request.
-- Vision fallback and vision-first modes for scanned/low-text PDFs.
+- OCR and vision fallback/vision-first modes for scanned or low-text PDFs.
 - LLM hardware presets for Apple Silicon and dedicated GPU setups.
-- Supports dry-run, plan export, metadata export, and undo.
-- Supports OCR and optional vision fallback for scanned/low-text PDFs.
+- Dry-run, plan export, metadata export, and undo.
 - Runs as CLI and TUI (Textual).
 
 ## Installation
@@ -117,7 +116,7 @@ M --> N
 N --> O["End"]
 ```
 
-Interpretation: the pipeline always validates preconditions first, then processes each file through extraction and metadata generation. LLM is optional and never required for heuristic-only runs. The final branch is operational (`--dry-run` preview vs actual rename), but both paths produce summary output.
+LLM is optional at every stage; the heuristic path alone produces a valid filename. Both `--dry-run` and apply mode produce summary output.
 
 ## File lifecycle
 
@@ -149,7 +148,7 @@ Failed --> Scanning : continue with next file
 Scanning --> [*] : no files remaining
 ```
 
-Interpretation: failures are contained per file (they are recorded and processing continues), while completion states feed back into scanning until no files remain. Hook failures are non-fatal and counted in summary/log output.
+Per-file failures are recorded and processing continues to the next file. Hook failures are non-fatal.
 
 ## Configuration model
 
@@ -208,14 +207,14 @@ Stable interfaces from `ai_pdf_renamer.renamer`:
 - `generate_filename(pdf_content, *, config, llm_client=None, heuristic_scorer=None, stopwords=None, ...)`
 - `RenamerConfig`
 
-No intentional signature-breaking changes are made within the current major version.
+No signature-breaking changes within the current major version.
 
 ## Safety and limitations
 
-- Designed for local-first operation and local LLM endpoints.
-- Built-in LLM HTTP calls use `trust_env=False` to avoid proxy leakage by default.
+- Runs locally and talks only to local LLM endpoints by default.
+- Built-in LLM HTTP calls use `trust_env=False` to avoid proxy leakage.
 - Post-rename hooks are operator-controlled and run with current user privileges.
-- Best safety is single-process operation per target directory.
+- Run only one instance at a time per target directory.
 
 See [SECURITY.md](SECURITY.md) for security policy and reporting.
 

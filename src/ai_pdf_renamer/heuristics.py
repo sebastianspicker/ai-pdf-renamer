@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,15 @@ def _score_text(
 @dataclass(frozen=True)
 class HeuristicScorer:
     rules: list[HeuristicRule]
+    _parent_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # Pre-compute parent map once at construction (frozen dataclass: use object.__setattr__).
+        cache: dict[str, str] = {}
+        for rule in self.rules:
+            if rule.parent is not None and rule.parent.strip():
+                cache[rule.category] = rule.parent.strip()
+        object.__setattr__(self, "_parent_map", cache)
 
     def best_category(
         self,
@@ -254,12 +264,8 @@ class HeuristicScorer:
         return frozenset(rule.category for rule in self.rules)
 
     def _category_to_parent(self) -> dict[str, str]:
-        """Category -> parent from rules (last occurrence wins)."""
-        out: dict[str, str] = {}
-        for rule in self.rules:
-            if rule.parent is not None and rule.parent.strip():
-                out[rule.category] = rule.parent.strip()
-        return out
+        """Category -> parent from rules (last occurrence wins). Pre-computed at construction."""
+        return self._parent_map
 
     def get_display_category(
         self,
@@ -317,10 +323,8 @@ def normalize_llm_category(cat_llm: str | None, *, _aliases: dict[str, str] | No
     """Map LLM category to heuristic vocabulary to reduce false conflicts."""
     if not cat_llm or not isinstance(cat_llm, str):
         return ""
-    # Basic cleaning for filename safety and normalization consistency
     key = re.sub(r"[^\w\s-]", "", cat_llm).strip().lower().replace(" ", "_")
     if not key or key in {"document", "unknown", "na"}:
-        # In the fallback case, return a cleaned version of the input if possible
         return key if key else "unknown"
     aliases = _aliases if _aliases is not None else _load_category_aliases()
     return aliases.get(key, key)
@@ -342,7 +346,7 @@ def _overlap_count(category_tokens: set[str], context_tokens: set[str]) -> int:
 # Global cache for embedding model (loaded lazily when embeddings feature is used).
 # Thread-safe for read-only access after initialization. For multi-threaded init,
 # consider adding a threading.Lock similar to llm.py's _llm_sessions_lock.
-_embedding_model: object = None
+_embedding_model: Any = None
 
 
 def _embedding_conflict_pick(
@@ -371,13 +375,13 @@ def _embedding_conflict_pick(
         ctx_emb, heur_emb, llm_emb = embs[0], embs[1], embs[2]
 
         # Cosine similarity (emb can be numpy or list)
-        def _cos(a, b):
+        def _cos(a: Any, b: Any) -> float:
             dot = sum(float(x) * float(y) for x, y in zip(a, b, strict=True))
-            na = sum(float(x) * x for x in a) ** 0.5
-            nb = sum(float(y) * y for y in b) ** 0.5
+            na = sum(float(x) * float(x) for x in a) ** 0.5
+            nb = sum(float(y) * float(y) for y in b) ** 0.5
             if na * nb <= 0:
                 return 0.0
-            return dot / (na * nb)
+            return float(dot / (na * nb))
 
         sim_heur = _cos(ctx_emb, heur_emb)
         sim_llm = _cos(ctx_emb, llm_emb)

@@ -88,6 +88,18 @@ def _chat_url_from_completions_url(completions_url: str) -> str:
     return base + "/v1/chat/completions" if base else "http://127.0.0.1:8080/v1/chat/completions"
 
 
+def _extract_chat_message_content(data: dict[str, object]) -> str:
+    """Extract text content from an OpenAI-compatible chat completion response dict."""
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    msg = choices[0].get("message", {})
+    if not isinstance(msg, dict):
+        return ""
+    content = msg.get("content")
+    return str(content).strip() if content is not None else ""
+
+
 # ---------------------------------------------------------------------------
 # HTTP backend
 # ---------------------------------------------------------------------------
@@ -181,14 +193,7 @@ class HttpLLMBackend:
         data = resp.json()
         if not isinstance(data, dict):
             return ""
-        choices = data.get("choices")
-        if not isinstance(choices, list) or not choices:
-            return ""
-        msg = choices[0].get("message", {})
-        if not isinstance(msg, dict):
-            return ""
-        content = msg.get("content")
-        return str(content).strip() if content is not None else ""
+        return _extract_chat_message_content(data)
 
     def complete(
         self,
@@ -263,14 +268,7 @@ class HttpLLMBackend:
             data = resp.json()
             if not isinstance(data, dict):
                 return ""
-            choices = data.get("choices")
-            if not isinstance(choices, list) or not choices:
-                return ""
-            msg = choices[0].get("message", {})
-            if not isinstance(msg, dict):
-                return ""
-            content = msg.get("content")
-            return str(content).strip() if content is not None else ""
+            return _extract_chat_message_content(data)
         except Exception as exc:
             logger.warning("Vision API failed: %s", exc)
             return ""
@@ -307,7 +305,7 @@ class InProcessLLMBackend:
         use_chat: bool = True,
     ) -> None:
         try:
-            import llama_cpp  # type: ignore[import-untyped]
+            import llama_cpp
         except ImportError as exc:
             raise ImportError(
                 "llama-cpp-python is required for the in-process backend. Install it with: pip install llama-cpp-python"
@@ -351,12 +349,7 @@ class InProcessLLMBackend:
                     ],
                     **kwargs,
                 )
-                choices = result.get("choices", [])
-                if not choices:
-                    return ""
-                msg = choices[0].get("message", {})
-                content = msg.get("content", "")
-                return str(content).strip() if content else ""
+                return _extract_chat_message_content(result)
             result = self._llama.create_completion(
                 prompt=prompt,
                 **kwargs,
@@ -379,9 +372,6 @@ class InProcessLLMBackend:
         timeout_s: float = 120.0,
     ) -> str:
         try:
-            import base64
-
-            image_bytes = base64.b64decode(image_b64)
             result = self._llama.create_chat_completion(
                 messages=[
                     {
@@ -393,13 +383,7 @@ class InProcessLLMBackend:
                     }
                 ]
             )
-            _ = image_bytes  # referenced to avoid F841
-            choices = result.get("choices", [])
-            if not choices:
-                return ""
-            msg = choices[0].get("message", {})
-            content = msg.get("content", "")
-            return str(content).strip() if content else ""
+            return _extract_chat_message_content(result)
         except Exception as exc:
             logger.warning("In-process vision failed: %s", exc)
             return ""
@@ -412,6 +396,24 @@ class InProcessLLMBackend:
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _warn_if_plaintext_remote(url: str) -> None:
+    """Warn when PDF content will be sent to a non-loopback host over plain HTTP."""
+    stripped = (url or "").strip().lower()
+    if not stripped.startswith("http://"):
+        return
+    # Extract host from http://host[:port]/...
+    without_scheme = stripped[len("http://") :]
+    host = without_scheme.split("/")[0].split(":")[0]
+    if host not in _LOOPBACK_HOSTS:
+        logger.warning(
+            "LLM endpoint uses plain HTTP with a non-loopback host (%s). "
+            "PDF content will be transmitted unencrypted. Use HTTPS for remote endpoints.",
+            host,
+        )
 
 
 def create_llm_client_from_config(config: RenamerConfig) -> LLMClient:
@@ -430,13 +432,13 @@ def create_llm_client_from_config(config: RenamerConfig) -> LLMClient:
       AI_PDF_RENAMER_LLM_TIMEOUT   - timeout in seconds
     """
     backend_str = _config_or_env(
-        getattr(config, "llm_backend", None),
+        config.llm_backend,
         "AI_PDF_RENAMER_LLM_BACKEND",
         "http",
     ).lower()
 
     model_path = _config_or_env(
-        getattr(config, "llm_model_path", None),
+        config.llm_model_path,
         "AI_PDF_RENAMER_LLM_MODEL_PATH",
         "",
     )
@@ -451,7 +453,7 @@ def create_llm_client_from_config(config: RenamerConfig) -> LLMClient:
         if timeout_s <= 0:
             timeout_s = _DEFAULT_LLM_TIMEOUT_S
 
-    use_chat = getattr(config, "llm_use_chat_api", True)
+    use_chat = config.llm_use_chat_api
 
     # In-process backend
     use_in_process = backend_str == "in-process" or (backend_str == "auto" and bool(model_path))
@@ -474,4 +476,5 @@ def create_llm_client_from_config(config: RenamerConfig) -> LLMClient:
         "AI_PDF_RENAMER_LLM_MODEL",
         _DEFAULT_LLM_MODEL,
     )
+    _warn_if_plaintext_remote(base_url)
     return HttpLLMBackend(base_url=base_url, model=model, timeout_s=timeout_s, use_chat=use_chat)

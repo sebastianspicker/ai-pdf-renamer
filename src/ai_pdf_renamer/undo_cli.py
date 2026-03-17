@@ -1,7 +1,8 @@
 """CLI for reverting renames from a rename log (--rename-log). Entry point: ai-pdf-renamer-undo.
 
-Log format: one line per rename, 'old_path\\tnew_path'. Filenames containing tab characters
-are not supported; the renamer sanitizes generated names so they do not contain tabs.
+Log format: one line per rename, 'old_path\\tnew_path'. Filenames containing tab or newline
+characters in the original path are not supported; those entries are skipped at write time
+with a WARNING. The renamer sanitizes generated names so they never contain these characters.
 """
 
 from __future__ import annotations

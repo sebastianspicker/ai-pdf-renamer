@@ -27,8 +27,8 @@ Clean ignored local artifacts (optional but recommended before reviews):
 make clean
 ```
 
-`make release-check` runs hygiene guard + lint + tests and matches release gate expectations.
-CI runs the same lint/test/hygiene checks. Fix any reported issues locally first.
+`make release-check` runs hygiene guard + lint + type check + tests and matches the CI gate exactly.
+Run `make typecheck` alone to run `mypy` in isolation. Fix any reported issues locally first.
 
 ## Architecture overview
 
@@ -63,7 +63,7 @@ Data flow: `cli.py` builds a `RenamerConfig` → `renamer.py` iterates PDFs → 
 - Python 3.13+.
 - Format with Ruff: `ruff format .`
 - Lint with Ruff: `ruff check .`
-- Type hints and docstrings are encouraged for public APIs.
+- Type-checked with mypy strict: `mypy src/ai_pdf_renamer/` (required, enforced in CI).
 
 ## Security
 

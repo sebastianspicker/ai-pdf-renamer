@@ -105,7 +105,7 @@ def get_document_analysis(
     json_mode: bool = False,
 ) -> DocumentAnalysisResult:
     """Single LLM call that returns summary, keywords, and category together."""
-    if pdf_content is None or not isinstance(pdf_content, str) or len(pdf_content.strip()) < 50:
+    if not isinstance(pdf_content, str) or len(pdf_content.strip()) < 50:
         return DocumentAnalysisResult()
 
     text = pdf_content.strip()
@@ -162,7 +162,7 @@ def get_document_summary(
     suggested_doc_type: str | None = None,
     lenient_json: bool = False,
 ) -> str:
-    if pdf_content is None or not isinstance(pdf_content, str):
+    if not isinstance(pdf_content, str):
         return "na"
     text = pdf_content.strip()
     if len(text) < 50:

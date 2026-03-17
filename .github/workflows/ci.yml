@@ -59,6 +59,11 @@ jobs:
           ruff format --check .
           ruff check .
 
+      - name: Type check
+        run: |
+          set -euo pipefail
+          mypy src/ai_pdf_renamer/
+
       - name: Test
         run: |
           set -euo pipefail

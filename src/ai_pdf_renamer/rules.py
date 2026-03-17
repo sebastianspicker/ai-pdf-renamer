@@ -16,7 +16,7 @@ class ProcessingRules:
     """Loaded processing rules. All lists may be empty."""
 
     skip_llm_if_heuristic_category: list[str]
-    force_category_by_pattern: list[dict]
+    force_category_by_pattern: list[dict[str, str]]
     skip_files_by_pattern: list[str]
     allowed_categories: list[str]
 

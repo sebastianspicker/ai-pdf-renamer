@@ -51,7 +51,7 @@ def _get_date_str(
     pdf_content: str,
     config: RenamerConfig,
     today: date | None = None,
-    pdf_metadata: dict | None = None,
+    pdf_metadata: dict[str, object] | None = None,
 ) -> str:
     """Extract date from content (and optionally PDF metadata fallback) and return YYYYMMDD string."""
     content_date = extract_date_from_content(
@@ -238,7 +238,7 @@ def _build_metadata_tokens(
     keywords: list[str],
     final_summary_tokens: list[str],
     stopwords: Stopwords,
-) -> tuple[list[str], list[str], list[str], dict]:
+) -> tuple[list[str], list[str], list[str], dict[str, object]]:
     """Filter, clean, subtract tokens; return (category_clean, keyword_clean, summary_clean, metadata)."""
     category_tokens = stopwords.filter_tokens(split_to_tokens(category_for_filename))
     keyword_tokens = stopwords.filter_tokens(keywords)[:3]
@@ -251,7 +251,7 @@ def _build_metadata_tokens(
     keyword_clean = subtract_tokens(keyword_clean, category_clean)
     summary_clean = subtract_tokens(summary_clean, category_clean + keyword_clean)
 
-    metadata = {
+    metadata: dict[str, object] = {
         "category": " ".join(category_clean) or (category_for_filename or ""),
         "summary": " ".join(summary_clean),
         "keywords": " ".join(keyword_clean),
@@ -372,7 +372,7 @@ def _get_category_summary_keywords_metadata(
     stopwords: Stopwords,
     override_category: str | None,
     rules: ProcessingRules | None = None,
-) -> tuple[str, list[str], list[str], list[str], dict]:
+) -> tuple[str, list[str], list[str], list[str], dict[str, object]]:
     """Resolve category (override/heuristic/LLM), run LLM summary/keywords, clean tokens, build metadata.
     Returns (category_for_filename, category_clean, keyword_clean, summary_clean, metadata)."""
     if override_category is not None:
@@ -381,7 +381,7 @@ def _get_category_summary_keywords_metadata(
         category_for_filename = heuristic_scorer.get_display_category(override_category, config.category_display)
         category_source = "override"
         logger.info("CategorySource source=override category=%s", category)
-        suggested_doc_type_for_summary = override_category
+        suggested_doc_type_for_summary: str | None = override_category
         heuristic_text = ""
         heuristic_score = 0.0
         heuristic_gap = 0.0
@@ -637,9 +637,9 @@ def generate_filename(
     stopwords: Stopwords | None = None,
     override_category: str | None = None,
     today: date | None = None,
-    pdf_metadata: dict | None = None,
+    pdf_metadata: dict[str, object] | None = None,
     rules: ProcessingRules | None = None,
-) -> tuple[str, dict]:
+) -> tuple[str, dict[str, object]]:
     """
     Constructs the final filename and metadata:
     - date (YYYYMMDD), optionally from PDF metadata when content has no date
@@ -680,7 +680,7 @@ def generate_filename(
             structured_fields=None,
         )
         filename = _truncate_filename_to_max_chars(filename, config)
-        metadata = {"category": simple_part, "summary": "", "keywords": ""}
+        metadata: dict[str, object] = {"category": simple_part, "summary": "", "keywords": ""}
         if config.use_structured_fields:
             structured_fields = extract_structured_fields(pdf_content)
             metadata["invoice_id"] = structured_fields.get("invoice_id", "")
@@ -698,8 +698,8 @@ def generate_filename(
             rules=rules,
         )
     )
-    structured_fields: dict[str, str] = {}
-    if getattr(config, "use_structured_fields", True):
+    structured_fields: dict[str, str] = {}  # type: ignore[no-redef]
+    if config.use_structured_fields:
         structured_fields = extract_structured_fields(pdf_content)
         metadata["invoice_id"] = structured_fields.get("invoice_id", "")
         metadata["amount"] = structured_fields.get("amount", "")

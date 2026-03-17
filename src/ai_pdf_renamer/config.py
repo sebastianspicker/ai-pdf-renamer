@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 _VALID_DESIRED_CASES = frozenset({"camelCase", "kebabCase", "snakeCase"})
 _VALID_DATE_LOCALES = frozenset({"dmy", "mdy"})
@@ -145,7 +146,7 @@ class RenamerConfig:
             )
 
 
-def build_config_from_flat_dict(data: dict) -> RenamerConfig:
+def build_config_from_flat_dict(data: dict[str, Any]) -> RenamerConfig:
     """Build RenamerConfig from a flat dict of option names -> values. Used by CLI and GUI to avoid duplication."""
     allowed = set(RenamerConfig.__dataclass_fields__)
     kwargs = {k: v for k, v in data.items() if k in allowed}

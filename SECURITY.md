@@ -8,6 +8,10 @@ The built-in LLM client sends requests only to the URL you configure (default `h
 
 The in-process backend (`--llm-backend in-process`) loads a GGUF model directly into the process using `llama-cpp-python` and makes no network requests at all.
 
+**If you configure a non-loopback LLM endpoint** (anything other than `127.0.0.1`, `::1`, or `localhost`), use HTTPS (`https://`) to protect PDF content in transit. Plain HTTP to a remote host will transmit document text unencrypted; the tool logs a WARNING in this case but does not block the request.
+
+**If you configure a non-loopback post-rename hook URL**, the same applies: use HTTPS to protect the metadata payload (old path, new path, category, summary) in transit.
+
 ## Post-rename hook
 
 The optional post-rename hook (`AI_PDF_RENAMER_POST_RENAME_HOOK` or config) runs in a subprocess with **shell=False**. The hook string is **operator-defined** and runs with your privileges. Old path, new path, and metadata are passed via environment variables:

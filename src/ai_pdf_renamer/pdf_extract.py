@@ -82,7 +82,7 @@ def pdf_to_text(
     if filepath is None:
         return ""
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
     except Exception as exc:  # pragma: no cover
         raise RuntimeError("PyMuPDF is required for PDF extraction. Install with: pip install -e '.[pdf]'") from exc
 
@@ -142,7 +142,7 @@ def pdf_first_page_to_image_base64(
     if filepath is None:
         return None
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
     except Exception:
         return None
     path = Path(filepath)
@@ -164,13 +164,13 @@ def pdf_first_page_to_image_base64(
         image_bytes: bytes
         if hasattr(pix, "tobytes"):
             try:
-                image_bytes = pix.tobytes(output="jpeg", jpg_quality=85)  # type: ignore[attr-defined]
+                image_bytes = pix.tobytes(output="jpeg", jpg_quality=85)
             except (TypeError, ValueError):
-                image_bytes = pix.tobytes(output="png")  # type: ignore[attr-defined]
+                image_bytes = pix.tobytes(output="png")
         elif hasattr(pix, "getImageData"):
-            image_bytes = pix.getImageData("jpeg")  # type: ignore[attr-defined]
+            image_bytes = pix.getImageData("jpeg")
         elif hasattr(pix, "getPNGData"):
-            image_bytes = pix.getPNGData()  # type: ignore[attr-defined]
+            image_bytes = pix.getPNGData()
         else:
             return None
         if not image_bytes:
@@ -240,6 +240,11 @@ def pdf_to_text_with_ocr(
             str(tmp),
             language=_ocr_language_code(language),
         )
+        # ocrmypdf typically renames its own temp output into `tmp`, creating a new inode
+        # with umask-based permissions. Restore 0600 so the OCR output isn't world-readable
+        # on multi-user systems. Swallow OSError for cross-platform compatibility.
+        with contextlib.suppress(OSError):
+            tmp.chmod(0o600)
         text_ocr = pdf_to_text(tmp, max_tokens=max_tokens, max_pages=max_pages)
         if text_ocr.strip():
             logger.info("OCR produced %s chars for %s", len(text_ocr.strip()), path.name)
@@ -284,7 +289,7 @@ def get_pdf_metadata(filepath: str | Path | None) -> dict[str, Any]:
     if not filepath:
         return result
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
     except Exception:
         return result
     path = Path(filepath)

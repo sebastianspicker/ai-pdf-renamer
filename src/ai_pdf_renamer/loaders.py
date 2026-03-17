@@ -16,17 +16,17 @@ from .text_utils import Stopwords
 def load_meta_stopwords(path: str | Path) -> Stopwords:
     path_obj = Path(path)
     try:
-        raw = path_obj.read_text(encoding="utf-8")
+        text = path_obj.read_text(encoding="utf-8")
     except OSError as exc:
         raise ValueError(f"Could not read data file at {path_obj.absolute()}: {exc!s}") from exc
     try:
-        data = json.loads(raw)
+        data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON in data file at {path_obj.absolute()}. {exc!s}") from exc
-    raw = data.get("stopwords", [])
-    if not isinstance(raw, list):
-        raw = []
-    words = {str(w).lower() for w in raw if str(w).strip()}
+    stopword_list = data.get("stopwords", [])
+    if not isinstance(stopword_list, list):
+        stopword_list = []
+    words = {str(w).lower() for w in stopword_list if str(w).strip()}
     return Stopwords(words=words)
 
 

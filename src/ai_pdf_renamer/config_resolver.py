@@ -15,6 +15,19 @@ from .config import RenamerConfig
 
 _TRUE_VALUES = {"1", "true", "yes"}
 
+_LLM_PRESET_DEFAULTS: dict[str, dict[str, object]] = {
+    "apple-silicon": {
+        "llm_model": "qwen2.5:3b",
+        "llm_base_url": "http://127.0.0.1:11434/v1/completions",
+        "max_context_chars": 120_000,
+    },
+    "gpu": {
+        "llm_model": "qwen2.5:7b-instruct",
+        "llm_base_url": "http://127.0.0.1:11434/v1/completions",
+        "max_context_chars": 480_000,
+    },
+}
+
 
 def _optional_float(value: Any) -> float | None:
     if value in (None, ""):
@@ -133,21 +146,9 @@ def build_config(
 
     # --- LLM hardware preset ---
     llm_preset = _normalize_str_or_none(data.get("llm_preset"))
-    _PRESET_DEFAULTS: dict[str, dict[str, Any]] = {
-        "apple-silicon": {
-            "llm_model": "qwen2.5:3b",
-            "llm_base_url": "http://127.0.0.1:11434/v1/completions",
-            "max_context_chars": 120_000,
-        },
-        "gpu": {
-            "llm_model": "qwen2.5:7b-instruct",
-            "llm_base_url": "http://127.0.0.1:11434/v1/completions",
-            "max_context_chars": 480_000,
-        },
-    }
     # Resolve effective preset: explicit llm_preset, or apple-silicon as default
-    _effective_preset = llm_preset if llm_preset in _PRESET_DEFAULTS else "apple-silicon"
-    _preset_vals = _PRESET_DEFAULTS[_effective_preset]
+    _effective_preset = llm_preset if llm_preset in _LLM_PRESET_DEFAULTS else "apple-silicon"
+    _preset_vals = _LLM_PRESET_DEFAULTS[_effective_preset]
 
     # Apply preset defaults only where user/env didn't set a value
     _user_llm_model = _str(data.get("llm_model"), "") or None

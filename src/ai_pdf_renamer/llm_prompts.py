@@ -64,16 +64,17 @@ def _summary_prompts_short(language: str, doc_type_hint: str, text: str) -> list
 
 def _summary_prompt_chunk(language: str, doc_type_hint: str, chunk: str) -> str:
     """Build prompt for one chunk in long-document summary."""
+    safe_chunk = _escape_doc_content(chunk)
     if language == "de":
         return (
             doc_type_hint + "Fasse den folgenden Text in 1–2 kurzen Sätzen zusammen. "
             'NUR reines JSON {"summary":"..."}, keine Erklärungen.\n\n'
-            f"<document_content>\n{chunk}\n</document_content>"
+            f"<document_content>\n{safe_chunk}\n</document_content>"
         )
     return (
         doc_type_hint + "Summarize the following text in 1–2 short sentences. "
         'Return ONLY {"summary":"..."} in JSON, no explanations.\n\n'
-        f"<document_content>\n{chunk}\n</document_content>"
+        f"<document_content>\n{safe_chunk}\n</document_content>"
     )
 
 

@@ -10,7 +10,7 @@ from .pdf_extract import DEFAULT_MAX_CONTENT_TOKENS
 from .text_utils import VALID_CASE_CHOICES
 
 
-def _add_dirs_and_file_args(p: argparse.ArgumentParser) -> None:
+def _add_dirs_and_file_args(p: argparse._ActionsContainer) -> None:
     p.add_argument(
         "--doctor",
         dest="doctor",
@@ -80,7 +80,7 @@ def _add_dirs_and_file_args(p: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_template_and_plan_args(p: argparse.ArgumentParser) -> None:
+def _add_template_and_plan_args(p: argparse._ActionsContainer) -> None:
     p.add_argument(
         "--template",
         dest="filename_template",
@@ -131,7 +131,7 @@ def _add_template_and_plan_args(p: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_language_case_project_args(p: argparse.ArgumentParser) -> None:
+def _add_language_case_project_args(p: argparse._ActionsContainer) -> None:
     p.add_argument("--language", default=None, choices=["de", "en"], help="Prompt language")
     p.add_argument(
         "--case",
@@ -144,7 +144,7 @@ def _add_language_case_project_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--version", default=None, help="Optional version")
 
 
-def _add_heuristic_args(p: argparse.ArgumentParser) -> None:
+def _add_heuristic_args(p: argparse._ActionsContainer) -> None:
     p.add_argument(
         "--no-llm",
         dest="use_llm",
@@ -368,7 +368,7 @@ def _add_heuristic_args(p: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_llm_args(p: argparse.ArgumentParser) -> None:
+def _add_llm_args(p: argparse._ActionsContainer) -> None:
     p.add_argument(
         "--llm-backend",
         dest="llm_backend",
@@ -498,7 +498,7 @@ def _add_llm_args(p: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_output_and_ux_args(p: argparse.ArgumentParser) -> None:
+def _add_output_and_ux_args(p: argparse._ActionsContainer) -> None:
     p.add_argument(
         "--quiet",
         dest="quiet",

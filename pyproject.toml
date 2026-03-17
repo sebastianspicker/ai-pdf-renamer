@@ -11,7 +11,7 @@ requires-python = ">=3.13"
 license = { file = "LICENSE" }
 authors = [{ name = "sebastian" }]
 dependencies = [
-  "requests>=2.32.0",
+  "requests>=2.32.4",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +20,7 @@ dev = [
   "pytest-cov>=6.0.0",
   "ruff>=0.6.0",
   "mypy>=1.11.0",
+  "types-requests>=2.32.0",
 ]
 pdf = [
   "pymupdf>=1.23.0",
@@ -102,7 +103,8 @@ python_version = "3.13"
 strict = true
 warn_return_any = true
 warn_unused_ignores = true
-# Optional deps (fitz, tiktoken, ocrmypdf, sentence_transformers) not always installed.
+exclude = ["src/ai_pdf_renamer/tui\\.py"]
+# Optional deps not always installed in CI or dev environments.
 [[tool.mypy.overrides]]
-module = ["fitz", "tiktoken", "ocrmypdf", "sentence_transformers"]
+module = ["fitz", "tiktoken", "ocrmypdf", "sentence_transformers", "llama_cpp", "textual", "textual.*", "rich", "rich.*", "jsonschema"]
 ignore_missing_imports = true

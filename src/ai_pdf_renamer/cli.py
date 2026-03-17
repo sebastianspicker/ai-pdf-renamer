@@ -26,7 +26,7 @@ from .text_utils import VALID_CASE_CHOICES
 logger = logging.getLogger(__name__)
 
 
-def _load_config_file(path: str | Path) -> dict:
+def _load_config_file(path: str | Path) -> dict[str, object]:
     """Load JSON or YAML config file. Returns a dict (empty on error or unknown format)."""
     p = Path(path)
     if not p.exists():
@@ -79,7 +79,7 @@ def _is_interactive() -> bool:
 def _resolve_option(
     args: argparse.Namespace,
     attr: str,
-    file_defaults: dict,
+    file_defaults: dict[str, object],
     file_key: str,
     default: str,
     *,
@@ -117,7 +117,7 @@ def _resolve_option(
                 value = default
         else:
             value = default
-    return value if value is not None else default
+    return str(value) if value is not None else default
 
 
 def _prompt_choice(
@@ -321,7 +321,7 @@ def _resolve_dirs(args: argparse.Namespace) -> tuple[list[str], str | None]:
 
 def _build_config_from_args(
     args: argparse.Namespace,
-    file_defaults: dict,
+    file_defaults: dict[str, object],
 ) -> RenamerConfig:
     """Build RenamerConfig from args and file defaults (with interactive prompts where applicable)."""
     language = _resolve_option(

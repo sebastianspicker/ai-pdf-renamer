@@ -6,6 +6,7 @@ Requires: pip install -e '.[tui]'
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import queue
@@ -13,6 +14,8 @@ import re
 import threading
 from pathlib import Path
 from typing import ClassVar
+
+from rich.markup import escape as _escape_markup
 
 try:
     from textual import on
@@ -77,7 +80,8 @@ class _QueueHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            self._queue.put(self.format(record) + "\n")
+            # Escape Rich markup so filenames/paths in log messages are not interpreted as tags.
+            self._queue.put(_escape_markup(self.format(record)) + "\n")
         except Exception:
             self.handleError(record)
 
@@ -103,7 +107,11 @@ def _load_settings() -> dict[str, object]:
 def _save_settings(data: dict[str, object]) -> None:
     try:
         SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # Write with restricted permissions (owner read/write only) since the file may contain
+        # LLM endpoint URLs, hook commands, and directory paths.
         SETTINGS_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        with contextlib.suppress(OSError):  # Best-effort; not supported on all platforms (e.g. Windows)
+            SETTINGS_PATH.chmod(0o600)
     except OSError:
         logger.debug("Could not save TUI settings", exc_info=True)
 
@@ -608,7 +616,7 @@ class AIRenamerTUI(App[None]):
             return
         fp = Path(file_path)
         if not fp.exists() or fp.suffix.lower() != ".pdf":
-            self.query_one("#run-log", RichLog).write(f"[red]Not an existing PDF: {file_path}[/red]")
+            self.query_one("#run-log", RichLog).write(f"[red]Not an existing PDF: {_escape_markup(file_path)}[/red]")
             return
         try:
             config = self._build_config(dry_run=False, manual_mode=True)
@@ -616,16 +624,16 @@ class AIRenamerTUI(App[None]):
             self.query_one("#run-log", RichLog).write(f"[red]Invalid config: {exc}[/red]")
             return
         log = self.query_one("#run-log", RichLog)
-        log.write(f"Processing: {fp.name} …")
+        log.write(f"Processing: {_escape_markup(fp.name)} …")
         new_base, meta, err = suggest_rename_for_file(fp, config)
         if err is not None:
-            log.write(f"[red]Error: {err}[/red]")
+            log.write(f"[red]Error: {_escape_markup(str(err))}[/red]")
             return
         if new_base is None:
             log.write("[yellow]Skipped: no extractable content.[/yellow]")
             return
         suggested = new_base + fp.suffix
-        log.write(f"Suggested: [bold]{suggested}[/bold]")
+        log.write(f"Suggested: [bold]{_escape_markup(suggested)}[/bold]")
         success, target = apply_single_rename(
             fp,
             sanitize_filename_base(new_base),
@@ -637,9 +645,9 @@ class AIRenamerTUI(App[None]):
             max_filename_chars=config.max_filename_chars,
         )
         if success:
-            log.write(f"[green]Renamed: {fp.name} -> {target.name}[/green]")
+            log.write(f"[green]Renamed: {_escape_markup(fp.name)} -> {_escape_markup(target.name)}[/green]")
             if meta:
-                log.write(f"Meta: {meta}")
+                log.write(f"Meta: {_escape_markup(str(meta))}")
         else:
             log.write("[red]Could not rename file.[/red]")
 

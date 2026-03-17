@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from .data_paths import data_dir, package_data_path
 
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Declarative schema for LLM document-analysis response (summary, keywords, category, final_summary_tokens).
 # Overridable via AI_PDF_RENAMER_DATA_DIR/llm_response_schema.json.
-LLM_RESPONSE_SCHEMA_DEFAULT: dict = {
+LLM_RESPONSE_SCHEMA_DEFAULT: dict[str, object] = {
     "type": "object",
     "properties": {
         "summary": {"type": "string"},
@@ -31,7 +32,8 @@ LLM_RESPONSE_SCHEMA_DEFAULT: dict = {
 }
 
 
-def _load_llm_response_schema() -> dict:
+@lru_cache(maxsize=1)
+def _load_llm_response_schema() -> dict[str, object]:
     """Load LLM response schema from data dir or package data. Returns default if missing or invalid."""
     for path in [
         data_dir() / "llm_response_schema.json",
@@ -39,7 +41,8 @@ def _load_llm_response_schema() -> dict:
     ]:
         if path.exists():
             try:
-                return json.loads(path.read_text(encoding="utf-8"))
+                result: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
+                return result
             except (OSError, json.JSONDecodeError) as e:
                 logger.debug("Could not load LLM response schema from %s: %s", path, e)
     return LLM_RESPONSE_SCHEMA_DEFAULT
@@ -61,7 +64,7 @@ class DocumentAnalysisResult:
     final_summary_tokens: list[str] | None = None
 
 
-def validate_llm_document_result(parsed: dict) -> DocumentAnalysisResult:
+def validate_llm_document_result(parsed: dict[str, object]) -> DocumentAnalysisResult:
     """
     Validate and fill defaults for a parsed LLM document analysis dict.
     Accepts optional keys: summary, keywords, category, final_summary_tokens.

@@ -11,10 +11,12 @@ import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import requests
 
-from .config import RenamerConfig, build_config_from_flat_dict  # noqa: F401 re-export
+from .config import RenamerConfig as RenamerConfig
+from .config import build_config_from_flat_dict as build_config_from_flat_dict
 from .filename import generate_filename
 from .loaders import _heuristic_scorer_cached, _stopwords_cached  # noqa: F401 re-export for tests
 from .pdf_extract import get_pdf_metadata, pdf_first_page_to_image_base64, pdf_to_text, pdf_to_text_with_ocr
@@ -35,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 def _stop_requested(config: RenamerConfig) -> bool:
-    stop_event = getattr(config, "stop_event", None)
+    stop_event = config.stop_event
     return bool(stop_event is not None and hasattr(stop_event, "is_set") and stop_event.is_set())
 
 
@@ -58,9 +60,19 @@ def _write_pdf_title_metadata(pdf_path: Path, title: str) -> None:
         logger.warning("Could not write PDF metadata for %s: %s", pdf_path, exc)
 
 
+_CSV_FORMULA_CHARS = frozenset("=+-@\t\r\n|")
+
+
+def _sanitize_csv_cell(value: object) -> object:
+    """Prefix formula-injection chars to prevent CSV formula injection in spreadsheet apps."""
+    if isinstance(value, str) and value and value[0] in _CSV_FORMULA_CHARS:
+        return "'" + value
+    return value
+
+
 def _write_json_or_csv(
     path: Path,
-    rows: list[dict],
+    rows: list[Any],
     csv_fieldnames: list[str] | None,
 ) -> None:
     """Write rows to path as CSV (if csv_fieldnames and .csv suffix) or JSON. Creates parent dirs."""
@@ -70,7 +82,7 @@ def _write_json_or_csv(
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=csv_fieldnames)
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows({k: _sanitize_csv_cell(v) for k, v in row.items()} for row in rows)
     else:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(rows, f, ensure_ascii=False, indent=2)
@@ -107,7 +119,7 @@ def _write_summary_json(
         logger.warning("Could not write summary JSON %s: %s", target, exc)
 
 
-def _run_post_rename_hook(hook_cmd: str, old_path: Path, new_path: Path, meta: dict) -> None:
+def _run_post_rename_hook(hook_cmd: str, old_path: Path, new_path: Path, meta: dict[str, object]) -> None:
     """Run post-rename hook command or HTTP endpoint. On failure log and continue."""
     env = {**os.environ, "AI_PDF_RENAMER_OLD_PATH": str(old_path), "AI_PDF_RENAMER_NEW_PATH": str(new_path)}
     try:
@@ -121,6 +133,14 @@ def _run_post_rename_hook(hook_cmd: str, old_path: Path, new_path: Path, meta: d
     try:
         cmd_lower = cmd.lower()
         if cmd_lower.startswith("http://") or cmd_lower.startswith("https://"):
+            if cmd_lower.startswith("http://"):
+                _host = cmd_lower[len("http://") :].split("/")[0].split(":")[0]
+                if _host not in {"127.0.0.1", "::1", "localhost"}:
+                    logger.warning(
+                        "Post-rename hook uses plain HTTP with a non-loopback host (%s). "
+                        "Document metadata will be transmitted unencrypted. Use HTTPS for remote endpoints.",
+                        _host,
+                    )
             payload = {
                 "old_path": str(old_path),
                 "new_path": str(new_path),
@@ -162,14 +182,23 @@ def _apply_post_rename_actions(
     file_path: Path,
     target: Path,
     current_base: str,
-    meta: dict,
-    export_rows: list[dict],
+    meta: dict[str, object],
+    export_rows: list[dict[str, object]],
 ) -> None:
     """Write rename log, PDF metadata, and export row after a successful rename. Mutates export_rows."""
     if config.rename_log_path:
-        Path(config.rename_log_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(config.rename_log_path, "a", encoding="utf-8") as f:
-            f.write(f"{file_path}\t{target}\n")
+        file_path_str = str(file_path)
+        if "\t" in file_path_str or "\n" in file_path_str or "\r" in file_path_str:
+            logger.warning(
+                "Cannot write rename log entry for %s: original path contains tab or newline "
+                "characters (unsupported by the tab-delimited log format). Undo will not be "
+                "available for this file.",
+                file_path,
+            )
+        else:
+            Path(config.rename_log_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(config.rename_log_path, "a", encoding="utf-8") as f:
+                f.write(f"{file_path_str}\t{target}\n")
     if config.write_pdf_metadata:
         _write_pdf_title_metadata(target, current_base)
     if config.export_metadata_path:
@@ -212,7 +241,7 @@ def _process_content_to_result(
     config: RenamerConfig,
     rules: ProcessingRules | None = None,
     used_vision: bool = False,
-) -> tuple[Path, str | None, dict | None, BaseException | None]:
+) -> tuple[Path, str | None, dict[str, object] | None, BaseException | None]:
     """
     Generate filename from already-extracted content. Returns (path, new_base, meta, error).
     Caller must ensure content is non-empty if expecting a non-skip result.
@@ -221,7 +250,7 @@ def _process_content_to_result(
         override_cat = (config.override_category_map or {}).get(file_path.name) or force_category_for_basename(
             rules, file_path.name
         )
-        pdf_meta = get_pdf_metadata(file_path) if getattr(config, "use_pdf_metadata_for_date", True) else None
+        pdf_meta = get_pdf_metadata(file_path) if config.use_pdf_metadata_for_date else None
         filename_str, meta = generate_filename(
             content,
             config=config,
@@ -288,7 +317,7 @@ def _process_one_file(
     file_path: Path,
     config: RenamerConfig,
     rules: ProcessingRules | None = None,
-) -> tuple[Path, str | None, dict | None, BaseException | None]:
+) -> tuple[Path, str | None, dict[str, object] | None, BaseException | None]:
     """
     Extract text and generate filename for one file. Returns (path, new_base, meta, error).
     If error is not None or new_base is None, the file should be counted as failed/skipped.
@@ -311,7 +340,7 @@ def _process_one_file(
 def suggest_rename_for_file(
     file_path: Path,
     config: RenamerConfig,
-) -> tuple[str | None, dict | None, BaseException | None]:
+) -> tuple[str | None, dict[str, object] | None, BaseException | None]:
     """
     Run the pipeline for one file and return the suggested new basename and metadata.
     Does not rename or prompt. Returns (new_base, meta, error).
@@ -325,11 +354,11 @@ def suggest_rename_for_file(
     if not content.strip():
         return (None, None, None)
     try:
-        _path, new_base, meta, exc = _process_content_to_result(
+        _path, new_base, meta, process_err = _process_content_to_result(
             file_path, content, config, rules=rules, used_vision=used_vision
         )
-        if exc is not None:
-            return (None, None, exc)
+        if process_err is not None:
+            return (None, None, process_err)
         return (new_base, meta, None)
     except Exception as exc:
         return (None, None, exc)
@@ -339,15 +368,15 @@ def _produce_rename_results(
     files: list[Path],
     config: RenamerConfig,
     rules: ProcessingRules | None = None,
-) -> list[tuple[Path, str | None, dict | None, BaseException | None]]:
+) -> list[tuple[Path, str | None, dict[str, object] | None, BaseException | None]]:
     """Produce (file_path, new_base, meta, exc) per file; parallel or single-worker with prefetch."""
-    workers = max(1, getattr(config, "workers", 1) or 1)
+    workers = max(1, config.workers or 1)
     if config.interactive:
         workers = 1
     if workers > 1:
         executor = ThreadPoolExecutor(max_workers=workers)
-        futures: list[tuple[Future[tuple[Path, str | None, dict | None, BaseException | None]], Path]] = []
-        results: list[tuple[Path, str | None, dict | None, BaseException | None]] = []
+        futures: list[tuple[Future[tuple[Path, str | None, dict[str, object] | None, BaseException | None]], Path]] = []
+        results: list[tuple[Path, str | None, dict[str, object] | None, BaseException | None]] = []
         stop_early = False
         try:
             for p in files:
@@ -459,7 +488,7 @@ def rename_pdfs_in_directory(
     skipped_count = 0
     failed_count = 0
     failure_details: list[dict[str, str]] = []
-    export_rows: list[dict] = []
+    export_rows: list[dict[str, object]] = []
     plan_entries: list[dict[str, str]] = []
 
     results = _produce_rename_results(files, config, rules=rules)
@@ -491,7 +520,7 @@ def rename_pdfs_in_directory(
         base = new_base
         target = file_path.with_name(new_base + file_path.suffix)
         if config.interactive:
-            if getattr(config, "manual_mode", False):
+            if config.manual_mode:
                 print(f"Suggested: {new_base}{file_path.suffix}")
                 for k, v in (meta or {}).items():
                     if k in ("category", "summary", "keywords", "category_source") and v:
@@ -500,7 +529,7 @@ def rename_pdfs_in_directory(
                 file_path,
                 target,
                 new_base,
-                edit_default_base=new_base if getattr(config, "manual_mode", False) else None,
+                edit_default_base=new_base if config.manual_mode else None,
             )
             if reply == "n":
                 skipped_count += 1
@@ -508,7 +537,11 @@ def rename_pdfs_in_directory(
         try:
 
             def _on_rename_success(
-                _fp: Path, _target: Path, _current_base: str, _meta: dict = meta, _rows: list = export_rows
+                _fp: Path,
+                _target: Path,
+                _current_base: str,
+                _meta: dict[str, object] = meta or {},
+                _rows: list[dict[str, object]] = export_rows,
             ) -> None:
                 _apply_post_rename_actions(config, _fp, _target, _current_base, _meta, _rows)
 
@@ -611,7 +644,7 @@ def run_watch_loop(
 
     stop_event = False
 
-    def handle_stop(sig, frame):
+    def handle_stop(sig: int, frame: object) -> None:
         nonlocal stop_event
         logger.info("Watch mode: received signal %s, stopping...", sig)
         stop_event = True

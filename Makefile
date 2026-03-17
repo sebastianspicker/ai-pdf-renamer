@@ -1,9 +1,10 @@
 PYTHON ?= python
 PIP ?= $(PYTHON) -m pip
 RUFF ?= $(PYTHON) -m ruff
+MYPY ?= $(PYTHON) -m mypy
 PYTEST ?= $(PYTHON) -m pytest
 
-.PHONY: install-dev lint format test cov clean hygiene-check release-check ci
+.PHONY: install-dev lint format typecheck test cov clean hygiene-check release-check ci
 
 install-dev:
 	$(PIP) install -U pip
@@ -15,6 +16,9 @@ lint:
 
 format:
 	$(RUFF) format .
+
+typecheck:
+	$(MYPY) src/ai_pdf_renamer/
 
 test:
 	$(PYTEST) -q
@@ -38,6 +42,6 @@ hygiene-check:
 		exit 1; \
 	fi
 
-release-check: hygiene-check lint test
+release-check: hygiene-check lint typecheck test
 
 ci: release-check
