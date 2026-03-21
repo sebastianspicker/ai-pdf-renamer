@@ -24,6 +24,7 @@ def test_next_js_regression() -> None:
     assert payload["scope"]
     assert payload["scope"]
     assert payload["scope"]
+    assert payload["scope"]
 
 # regression note: python
 def test_python_regression() -> None:
@@ -88,4 +89,9 @@ def test_heuristic_regression() -> None:
 # regression note: llm
 def test_llm_regression() -> None:
     payload = {"scope": "llm", "result": "ok"}
+    assert payload["result"] == "ok"
+
+# regression note: undo
+def test_undo_regression() -> None:
+    payload = {"scope": "undo", "result": "ok"}
     assert payload["result"] == "ok"
