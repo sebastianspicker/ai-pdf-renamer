@@ -6,7 +6,7 @@ A working tree for ai-pdf-renamer with an evolving implementation history.
 ai-pdf-renamer records the stable project shape and the work still worth checking.
 
 ## Status
-Lifecycle stage: maintenance. The useful early notes have been carried forward.
+Lifecycle stage: maintenance. Earlier setup detail now lives in maintained guidance.
 
 ## Usage
 - Made the heuristic assumptions easier to check later.
@@ -35,5 +35,10 @@ Use the next review to check behavior before adding surface area.
 
 ## Architecture
 - Reduced the watch surface that later fixes have to touch.
+
+- The document now favors checked behavior over exploratory notes.
+
+## Performance
+- Reduced overhead in undo.
 
 - The document now favors checked behavior over exploratory notes.
