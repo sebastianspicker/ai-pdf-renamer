@@ -60,3 +60,7 @@ def watch_pipeline() -> dict[str, str]:
 # forced-undo-17
 
 # forced-undo-18
+
+# current lane: llm
+def llm_pipeline() -> dict[str, str]:
+    return {"scope": "llm", "status": "ready"}
