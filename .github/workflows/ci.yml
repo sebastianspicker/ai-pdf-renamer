@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python (lint + tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13"]
+
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          set -euo pipefail
+          python -m pip install -U pip
+          python -m pip install -e '.[dev,pdf]'
+
+      - name: Repository hygiene
+        run: |
+          set -euo pipefail
+          BAD="$(git ls-files | grep -E '(^|/)\.DS_Store$|(^|/)(__pycache__|\.pytest_cache|\.ruff_cache|\.mypy_cache)(/|$)|(^|/).*\.egg-info(/|$)|(^|/)(build|dist)(/|$)' || true)"
+          if [ -n "$BAD" ]; then
+            echo "Forbidden generated artifacts are tracked:"
+            echo "$BAD"
+            exit 1
+          fi
+
+      - name: Lint
+        run: |
+          set -euo pipefail
+          ruff format --check .
+          ruff check .
+
+      - name: Type check
+        run: |
+          set -euo pipefail
+          mypy src/ai_pdf_renamer/
+
+      - name: Test
+        run: |
+          set -euo pipefail
+          pytest --cov=ai_pdf_renamer --cov-report=term-missing --cov-fail-under=88 -q

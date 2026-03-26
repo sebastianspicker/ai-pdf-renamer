@@ -1,0 +1,476 @@
+{
+  "patterns": [
+    {
+      "regex": "(?i)\\b(schulzeugnis|abschlusszeugnis|jahreszeugnis|halbjahreszeugnis|school\\s*certificate|report\\s*card)\\b",
+      "category": "school_certificate",
+      "score": 4.5
+    },
+    {
+      "regex": "(?i)\\b(immatrikulations\\s*bescheinigung|studien\\s*bescheinigung|enrollment\\s*certificate|student\\s*registration)\\b",
+      "category": "enrollment_certificate",
+      "score": 4.5
+    },
+    {
+      "regex": "(?i)\\bbafoeg\\b.*\\bbescheid\\b",
+      "category": "bafoeg_decision",
+      "score": 4.5
+    },
+    {
+      "regex": "(?i)\\b(transcript\\s*of\\s*records|transkript\\s*of\\s*records|leistungsübersicht|leistungsuebersicht|academic\\s*transcript)\\b",
+      "category": "transcript",
+      "score": 4.5
+    },
+    {
+      "regex": "(?i)\\b(bachelor\\s*urkunde|master\\s*urkunde|diplom\\s*urkunde|hochschul\\s*abschluss|degree\\s*certificate|graduation\\s*certificate)\\b",
+      "category": "degree_certificate",
+      "score": 4.5
+    },
+    {
+      "regex": "(?i)\\b(praktikum\\s*bescheinigung|internship\\s*certificate|praktikumszeugnis)\\b",
+      "category": "internship_certificate",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(prüfungsanmeldung|pruefungsbescheid|pruefungsanmeldung|exam\\s*registration|examination\\s*notice)\\b",
+      "category": "exam_document",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(miet\\s*vertrag|rental\\s*agreement|lease\\s*contract|mietvertrag)\\b",
+      "category": "rental_agreement",
+      "score": 4.5
+    },
+    {
+      "regex": "(?i)\\b(nebenkosten\\s*abrechnung|utility\\s*bill|operating\\s*cost\\s*statement)\\b",
+      "category": "utility_statement",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(wohnungs\\s*übergabe\\s*protokoll|wohnungs\\s*uebergabe\\s*protokoll|handover\\s*protocol|inventory\\s*check)\\b",
+      "category": "handover_protocol",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(miet\\s*bescheinigung|wohnungs\\s*geber\\s*bestätigung|rent\\s*certificate|landlord\\s*confirmation)\\b",
+      "category": "rent_certificate",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(mängelanzeige|maengelanzeige|defect\\s*notice|deficiency\\s*report)\\b",
+      "category": "defect_notice",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(mieterhöhung|mieterhoehung|rent\\s*increase|rent\\s*raise)\\b",
+      "category": "rent_increase",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(miet\\s*kündigung|miet\\s*kuendigung|lease\\s*termination|rental\\s*termination)\\b",
+      "category": "lease_termination",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\bhausordnung\\b",
+      "category": "house_rules",
+      "score": 2.5
+    },
+    {
+      "regex": "(?i)\\b(arbeitsvertrag|employment\\s*contract|contract\\s*of\\s*employment|work\\s*contract)\\b",
+      "category": "employment_contract",
+      "score": 4.5
+    },
+    {
+      "regex": "(?i)\\b(arbeitszeugnis|employment\\s*reference|work\\s*reference|job\\s*reference)\\b",
+      "category": "employment_reference",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(lohn\\s*abrechnung|gehalts\\s*abrechnung|entgelt\\s*abrechnung|payslip|salary\\s*statement|pay\\s*stub)\\b",
+      "category": "payslip",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(bewerbung\\s*schreiben|bewerbungs\\s*anschreiben|lebenslauf|application\\s*letter|cover\\s*letter|curriculum\\s*vitae|cv|resume)\\b",
+      "category": "job_application",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\bkündigung\\b.*\\barbeitsverhältnis\\b|\\btermination\\s*of\\s*employment\\b|\\bresignation\\s*letter\\b",
+      "category": "employment_termination",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\babmahnung\\b.*(arbeit|arbeitsplatz|arbeitnehmer)|\\b(warning\\s*letter|written\\s*warning)\\b.*(employment|work)\\b",
+      "category": "employment_warning",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\bbescheinigung\\s*(über|ueber)\\s*(das|ein)\\s*beschäftigungsverhältnis\\b|\\bemployment\\s*certificate\\b|\\bproof\\s*of\\s*employment\\b",
+      "category": "employment_certificate",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(krankmeldung|arbeitsunfähigkeit|arbeitsunfaehigkeit|sick\\s*note|medical\\s*certificate|incapacity\\s*certificate)\\b",
+      "category": "sick_leave_certificate",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(urlaubsantrag|vacation\\s*request|leave\\s*request|holiday\\s*request)\\b",
+      "category": "leave_request",
+      "score": 2.5
+    },
+    {
+      "regex": "(?i)\\bsteuer\\s*bescheinigung\\b|\\b(tax\\s*certificate|wage\\s*tax\\s*certificate)\\b",
+      "category": "tax_certificate_employment",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\bantrag\\b.*\\b(personal\\s*ausweis|reisepass)\\b|\\b(id\\s*application|passport\\s*application)\\b",
+      "category": "id_application",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(führerschein|fuehrerschein)\\s*antrag\\b|\\bfuehrerschein\\s*erwerb\\b|\\b(driving\\s*licence|driver\\s*license)\\s*application\\b",
+      "category": "driving_licence_application",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(melde\\s*bescheinigung|registration\\s*certificate|residence\\s*confirmation)\\b",
+      "category": "registration_certificate",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(polizeiliches\\s*führungszeugnis|fuehrungszeugnis|certificate\\s*of\\s*good\\s*conduct|police\\s*clearance)\\b",
+      "category": "certificate_of_conduct",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(steuer\\s*erklärung|steuer\\s*erklaerung|tax\\s*return|income\\s*tax\\s*return)\\b",
+      "category": "tax_return",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(steuer\\s*bescheid|tax\\s*assessment|tax\\s*notice)\\b",
+      "category": "tax_assessment",
+      "score": 4.5
+    },
+    {
+      "regex": "(?i)\\b(antrag\\s*auf\\s*kindergeld|antrag\\s*auf\\s*elterngeld|antrag\\s*auf\\s*wohngeld|antrag\\s*alg)\\b|\\b(child\\s*benefit|housing\\s*benefit|unemployment\\s*benefit)\\s*application\\b",
+      "category": "social_benefit_application",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(konto\\s*eröffnung|konto\\s*eroeffnung|account\\s*opening|bank\\s*account\\s*application)\\b",
+      "category": "account_opening",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(konto\\s*auszug|bank\\s*statement|account\\s*statement)\\b",
+      "category": "bank_statement",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(überweisungsformular|ueberweisungsformular|transfer\\s*form|wire\\s*transfer)\\b",
+      "category": "transfer_form",
+      "score": 2.5
+    },
+    {
+      "regex": "(?i)\\b(kredit\\s*antrag|kredit\\s*vertrag|loan\\s*application|credit\\s*agreement)\\b",
+      "category": "loan_agreement",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(schufa\\s*auskunft|credit\\s*report|credit\\s*rating)\\b",
+      "category": "credit_report",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(lastschriftmandat|direct\\s*debit\\s*mandate|sepa\\s*mandate)\\b",
+      "category": "direct_debit_mandate",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(freistellungsauftrag|capital\\s*gains\\s*exemption|tax\\s*exemption\\s*order)\\b",
+      "category": "tax_exemption_order",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(versicherung\\s*police|versicherung\\s*schein|versicherungs\\s*vertrag|insurance\\s*policy|insurance\\s*certificate|insurance\\s*contract)\\b",
+      "category": "insurance_policy",
+      "score": 4.5
+    },
+    {
+      "regex": "(?i)\\b(versicherung\\s*antrag|insurance\\s*application)\\b",
+      "category": "insurance_application",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(schadensmeldung|claim\\s*report|loss\\s*report|damage\\s*report)\\b",
+      "category": "insurance_claim",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\bkündigung\\b.*versicherung|\\binsurance\\s*cancellation\\b|\\bpolicy\\s*termination\\b",
+      "category": "insurance_termination",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(beitrags\\s*rechnung|premium\\s*invoice)\\b.*versicherung|\\binsurance\\s*premium\\b",
+      "category": "insurance_premium",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(kranken\\s*versicherung|health\\s*insurance|krankenversicherung)\\b",
+      "category": "health_insurance",
+      "score": 4.5,
+      "parent": "insurance"
+    },
+    {
+      "regex": "(?i)\\bk[.\\s-]*f[.\\s-]*z[.\\s-]*(versicherung|versichg)\\b|\\b(motor\\s*insurance|car\\s*insurance|auto\\s*insurance)\\b",
+      "category": "motor_insurance",
+      "score": 4.5,
+      "parent": "insurance"
+    },
+    {
+      "regex": "(?i)\\b(haftpflichtversicherung|liability\\s*insurance|third\\s*party\\s*insurance)\\b",
+      "category": "liability_insurance",
+      "score": 4,
+      "parent": "insurance"
+    },
+    {
+      "regex": "(?i)\\b(hausratversicherung|household\\s*insurance|contents\\s*insurance)\\b",
+      "category": "household_insurance",
+      "score": 3.5,
+      "parent": "insurance"
+    },
+    {
+      "regex": "(?i)\\b(lebensversicherung|life\\s*insurance)\\b",
+      "category": "life_insurance",
+      "score": 4.5,
+      "parent": "insurance"
+    },
+    {
+      "regex": "(?i)\\b(berufsunfähigkeit(s|)\\s*versicherung|berufsunfaehigkeitsversicherung|disability\\s*insurance)\\b",
+      "category": "disability_insurance",
+      "score": 4.5,
+      "parent": "insurance"
+    },
+    {
+      "regex": "(?i)\\b(unfall\\s*versicherung|accident\\s*insurance|unfallversicherung)\\b",
+      "category": "accident_insurance",
+      "score": 4,
+      "parent": "insurance"
+    },
+    {
+      "regex": "(?i)\\b(kauf\\s*vertrag|purchase\\s*contract|sales\\s*contract|kaufvertrag)\\b",
+      "category": "purchase_contract",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(rechnung|rechung|rechnug|invoice|bill)\\b|\\b(gesamtsumme|bruttobetrag|nettobetrag|total\\s*amount|gross|net)\\b",
+      "category": "invoice",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(quittung|receipt)\\b",
+      "category": "receipt",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(mahnung|zahlungserinnerung|payment\\s*reminder|dunning\\s*letter)\\b",
+      "category": "payment_reminder",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(widerruf\\s*erklärung|widerrufserklaerung|withdrawal\\s*statement|revocation)\\b",
+      "category": "withdrawal_statement",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(garantie|garantie\\s*urkunde|warranty|warranty\\s*certificate)\\b",
+      "category": "warranty",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(gewährleistung|gewaehrleistung|guarantee\\s*of\\s*quality)\\b",
+      "category": "warranty_legal",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(fahrzeugbrief|zulassungsbescheinigung\\s*teil\\s*ii|vehicle\\s*registration\\s*part\\s*ii)\\b",
+      "category": "vehicle_registration_part2",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(fahrzeugschein|zulassungsbescheinigung\\s*teil\\s*i|vehicle\\s*registration\\s*part\\s*i)\\b",
+      "category": "vehicle_registration_part1",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(hauptuntersuchungs\\s*bericht|hu-bericht|tuev|mot\\s*test|inspection\\s*report)\\b",
+      "category": "vehicle_inspection",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(auto\\s*kaufvertrag|auto\\s*vertrag|car\\s*purchase\\s*contract|vehicle\\s*sale)\\b",
+      "category": "vehicle_purchase",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\bschadensmeldung\\b.*\\b(unfall|accident)\\b|\\baccident\\s*report\\b",
+      "category": "accident_report",
+      "score": 4.5
+    },
+    {
+      "regex": "(?i)\\b(geburts\\s*urkunde|birth\\s*certificate|geburtsurkunde)\\b",
+      "category": "birth_certificate",
+      "score": 4.5
+    },
+    {
+      "regex": "(?i)\\b(heirats\\s*urkunde|marriage\\s*certificate|heiratsurkunde)\\b",
+      "category": "marriage_certificate",
+      "score": 4.5
+    },
+    {
+      "regex": "(?i)\\b(scheidungs\\s*urteil|divorce\\s*decree|divorce\\s*certificate)\\b",
+      "category": "divorce_decree",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(sterbe\\s*urkunde|death\\s*certificate|sterbeurkunde)\\b",
+      "category": "death_certificate",
+      "score": 4.5
+    },
+    {
+      "regex": "(?i)\\b(patienten\\s*verfügung|patientenverfuegung|living\\s*will|advance\\s*directive)\\b",
+      "category": "living_will",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(vorsorge\\s*vollmacht|power\\s*of\\s*attorney|durable\\s*power)\\b",
+      "category": "power_of_attorney",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(betreuungs\\s*verfügung|betreuungs\\s*verfuegung|care\\s*directive)\\b",
+      "category": "care_directive",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(zeugnis|zuegnis|zeignis)\\b",
+      "category": "certificate_generic",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(urkunde|urlunde|ur-kunde)\\b",
+      "category": "certificate_official",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(testament|will|last\\s*will)\\b",
+      "category": "last_will",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\babmahnung\\b(?!.*arbeit)|\\b(cease\\s*and\\s*desist|formal\\s*warning)\\b",
+      "category": "legal_warning",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(vollmacht|bankvollmacht|prozessvollmacht|power\\s*of\\s*attorney|authorization)\\b",
+      "category": "power_of_attorney_generic",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(mahnbescheid|court\\s*order\\s*for\\s*payment|enforcement\\s*notice)\\b",
+      "category": "enforcement_notice",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(inkasso\\s*schreiben|inkasso|debt\\s*collection|collection\\s*letter)\\b",
+      "category": "debt_collection",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(klage\\s*schrift|klageerhebung|urteil|beschluss|complaint|court\\s*ruling|judgment|verdict)\\b",
+      "category": "court_document",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\b(lieferschein|delivery\\s*note|packing\\s*slip)\\b",
+      "category": "delivery_note",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(frachtbrief|waybill|consignment\\s*note)\\b",
+      "category": "waybill",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(zoll\\s*papier|customs\\s*document|zollpapiere)\\b",
+      "category": "customs_document",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\bpackliste\\b",
+      "category": "packing_list",
+      "score": 2.5
+    },
+    {
+      "regex": "(?i)\\b(arztbrief|befund|medizinischer\\s*bericht|doctor\\s*letter|medical\\s*report|medical\\s*finding)\\b",
+      "category": "medical_report",
+      "score": 4
+    },
+    {
+      "regex": "(?i)\\brezept\\b.*\\barzneimittel\\b|\\b(prescription|prescription\\s*form)\\b",
+      "category": "prescription",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(impfpass|impfausweis|vaccination\\s*record|vaccination\\s*card)\\b",
+      "category": "vaccination_record",
+      "score": 3.5
+    },
+    {
+      "regex": "(?i)\\b(ueberweisung|überweisung)\\s*(an\\s*)?facharzt|\\breferral\\s*letter\\b|\\b(doctor|specialist)\\s*referral\\b",
+      "category": "medical_referral",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(patientenquittung|patient\\s*receipt|medical\\s*receipt)\\b",
+      "category": "patient_receipt",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(mitglieds\\s*antrag|verein\\s*eintritt|membership\\s*application|club\\s*application)\\b",
+      "category": "membership_application",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(mitgliedschafts\\s*bescheinigung|membership\\s*certificate|membership\\s*confirmation)\\b",
+      "category": "membership_certificate",
+      "score": 2.5
+    },
+    {
+      "regex": "(?i)\\bkündigung\\b.*(mitgliedschaft|verein)|\\b(membership\\s*cancellation|club\\s*resignation)\\b",
+      "category": "membership_termination",
+      "score": 3
+    },
+    {
+      "regex": "(?i)\\b(einladung\\s*schreiben|invitation)\\b.*(mitgliederversammlung|vereinsaktivitaeten|vereinsaktivitäten|general\\s*meeting)\\b",
+      "category": "association_invitation",
+      "score": 2.5
+    },
+    {
+      "regex": "(?i)\\b(beispiel\\s*rechnung|sample\\s*invoice|example\\s*invoice|muster\\s*rechnung)\\b",
+      "category": "invoice",
+      "score": -2.0
+    },
+    {
+      "regex": "(?i)\\b(beispiel\\s*quittung|sample\\s*receipt|example\\s*receipt|muster\\s*quittung)\\b",
+      "category": "receipt",
+      "score": -2.0
+    }
+  ]
+}
