@@ -76,7 +76,7 @@ jobs:
           set -euo pipefail
           python -m pip install -U pip pip-audit
           python -m pip install -e '.[pdf]'
-          pip-audit
+          pip-audit --ignore-vuln CVE-2026-4539  # pygments: no fix available yet
 
   trufflehog:
     name: TruffleHog (Secret Scan)

@@ -18,10 +18,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0.0",
+  "pytest-asyncio>=0.23.0",
   "pytest-cov>=6.0.0",
   "ruff>=0.6.0",
   "mypy>=1.11.0",
   "types-requests>=2.32.0",
+  "types-PyYAML>=6.0.0",
 ]
 pdf = [
   "pymupdf>=1.23.0",
@@ -108,3 +110,8 @@ exclude = []
 [[tool.mypy.overrides]]
 module = ["fitz", "tiktoken", "ocrmypdf", "sentence_transformers", "llama_cpp", "textual", "textual.*", "rich", "rich.*", "jsonschema"]
 ignore_missing_imports = true
+# TUI module depends on optional, untyped textual — relax checks that fire on Any base classes/decorators.
+[[tool.mypy.overrides]]
+module = ["ai_pdf_renamer.tui"]
+disallow_subclassing_any = false
+disallow_untyped_decorators = false
