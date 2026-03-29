@@ -142,8 +142,7 @@ class RenamerConfig:
     def __post_init__(self) -> None:
         if self.desired_case not in _VALID_DESIRED_CASES:
             raise ValueError(
-                f"Invalid --case value: {self.desired_case!r}. "
-                f"Choose from: {', '.join(sorted(_VALID_DESIRED_CASES))}"
+                f"Invalid --case value: {self.desired_case!r}. Choose from: {', '.join(sorted(_VALID_DESIRED_CASES))}"
             )
         loc = (self.date_locale or "dmy").strip().lower()
         if loc not in _VALID_DATE_LOCALES:
