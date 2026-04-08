@@ -95,6 +95,8 @@ def _sanitize_json_string_value(response: str, *, key: str) -> str:
         return prefix + fixed_value + suffix
 
     sanitized = re.sub(pattern, replacer, response, flags=re.DOTALL)
+    if sanitized != response:
+        logger.debug("JSON sanitization modified value for key %r (possible truncation from embedded quotes)", key)
 
     # If the string is still malformed because unescaped quotes prematurely closed the
     # value, try a best-effort salvage assuming a single-key JSON object.

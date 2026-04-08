@@ -12,16 +12,7 @@ import shutil
 import sys
 from pathlib import Path
 
-
-def _validate_path_within_parent(path: Path, parent: Path) -> bool:
-    """Return True if resolved path is within parent directory."""
-    try:
-        resolved = path.resolve()
-        parent_resolved = parent.resolve()
-        parent_str = str(parent_resolved) + "/"
-        return resolved == parent_resolved or str(resolved).startswith(parent_str)
-    except (OSError, ValueError):
-        return False
+from .rename_ops import is_path_within
 
 
 def run_undo(log_path: Path, dry_run: bool) -> None:
@@ -49,11 +40,10 @@ def run_undo(log_path: Path, dry_run: bool) -> None:
     pairs.reverse()
     for old_path, new_path in pairs:
         old_p, new_p = Path(old_path), Path(new_path)
-        # P1: Validate paths are within the same parent directory (prevent traversal)
-        if not _validate_path_within_parent(old_p, old_p.parent):
+        if not is_path_within(old_p, old_p.parent):
             print(f"Skip (path traversal detected): {old_p}", file=sys.stderr)
             continue
-        if not _validate_path_within_parent(new_p, new_p.parent):
+        if not is_path_within(new_p, new_p.parent):
             print(f"Skip (path traversal detected): {new_p}", file=sys.stderr)
             continue
         if not new_p.exists():

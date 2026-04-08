@@ -7,12 +7,15 @@ produce consistent RenamerConfig values.
 from __future__ import annotations
 
 import copy
+import logging
 import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from .config import RenamerConfig
+from .config import RenamerConfig, build_config_from_flat_dict
+
+logger = logging.getLogger(__name__)
 
 _TRUE_VALUES = {"1", "true", "yes"}
 
@@ -307,15 +310,19 @@ def build_config(
     llm = _build_llm_options(data, defaults, preset_defaults)
     output = _build_output_options(data, defaults, env_map)
 
-    # --- Merge into one dict ---
+    # --- Merge into one dict (detect accidental key overlaps) ---
     kwargs: dict[str, Any] = {}
-    kwargs.update(core)
-    kwargs.update(llm)
-    kwargs.update(extraction)
-    kwargs.update(output)
+    _parts = [("core", core), ("llm", llm), ("extraction", extraction), ("output", output)]
+    _seen_keys: dict[str, str] = {}
+    for part_name, part_dict in _parts:
+        for k in part_dict:
+            if k in _seen_keys:
+                logger.warning("Config key %r defined in both %s and %s (latter wins)", k, _seen_keys[k], part_name)
+            _seen_keys[k] = part_name
+        kwargs.update(part_dict)
 
     # Manual mode implies interactive behavior.
     if kwargs["manual_mode"]:
         kwargs["interactive"] = True
 
-    return RenamerConfig(**kwargs)
+    return build_config_from_flat_dict(kwargs)

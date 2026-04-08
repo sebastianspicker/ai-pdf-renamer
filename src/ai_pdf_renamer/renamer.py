@@ -156,7 +156,10 @@ def _write_summary_json(
 
 def _run_post_rename_hook(hook_cmd: str, old_path: Path, new_path: Path, meta: dict[str, object]) -> None:
     """Run post-rename hook command or HTTP endpoint. On failure log and continue."""
-    env = {**os.environ, "AI_PDF_RENAMER_OLD_PATH": str(old_path), "AI_PDF_RENAMER_NEW_PATH": str(new_path)}
+    # Sanitize path strings: strip NUL bytes (could truncate C strings) and control chars
+    _old = str(old_path).replace("\x00", "")
+    _new = str(new_path).replace("\x00", "")
+    env = {**os.environ, "AI_PDF_RENAMER_OLD_PATH": _old, "AI_PDF_RENAMER_NEW_PATH": _new}
     try:
         meta_json = json.dumps(meta, default=str)
     except (TypeError, ValueError):
@@ -448,7 +451,8 @@ def _produce_rename_results(
             if stop_early:
                 for pending, _ in futures:
                     pending.cancel()
-                executor.shutdown(wait=False, cancel_futures=True)
+                # Wait for already-running futures so they release file handles before returning.
+                executor.shutdown(wait=True, cancel_futures=True)
             else:
                 executor.shutdown(wait=True, cancel_futures=False)
         return results

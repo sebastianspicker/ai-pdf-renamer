@@ -54,7 +54,7 @@ DEFAULT_LLM_CATEGORY = "unknown"
 DEFAULT_LLM_KEYWORDS: list[str] = []
 
 
-@dataclass(frozen=False)
+@dataclass(frozen=True)
 class DocumentAnalysisResult:
     """Structured result of LLM document analysis; used for validation and defaults."""
 

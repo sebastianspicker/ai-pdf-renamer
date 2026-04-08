@@ -33,12 +33,21 @@ MAX_RENAME_RETRIES = 20
 MAX_LLM_FILENAME_LEN = 120
 
 
+def is_path_within(path: Path, root: Path) -> bool:
+    """Return True if resolved path is equal to or a descendant of root. Safe against symlink traversal."""
+    try:
+        resolved = path.resolve()
+        root_resolved = root.resolve()
+        return resolved == root_resolved or resolved.is_relative_to(root_resolved)
+    except (OSError, ValueError):
+        return False
+
+
 def _validate_path_within_parent(path: Path, parent: Path) -> Path:
     """Ensure resolved path is within parent directory. Raises ValueError on traversal."""
     resolved = path.resolve()
     parent_resolved = parent.resolve()
-    parent_str = str(parent_resolved) + os.sep
-    if resolved != parent_resolved and not str(resolved).startswith(parent_str):
+    if not is_path_within(path, parent):
         raise ValueError(f"Path traversal detected: {path} resolves to {resolved}, which is outside {parent_resolved}")
     return resolved
 
@@ -208,15 +217,22 @@ def apply_single_rename(
             if e.errno == errno.EXDEV:
                 if dry_run:
                     return (True, target)
-                if target.exists():
+                # Atomic existence check via O_CREAT|O_EXCL placeholder (closes TOCTOU window).
+                try:
+                    fd = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                    os.close(fd)
+                except FileExistsError:
                     raise FileExistsError(f"Target already exists: {target}")
-                # P1: Use shutil.copy2 to target directly, then unlink source
+                except OSError:
+                    # O_EXCL not supported on this FS; fall back to best-effort check
+                    if target.exists():
+                        raise FileExistsError(f"Target already exists: {target}")
+                # Copy over the placeholder, then remove source
                 try:
                     shutil.copy2(file_path, target)
                 except OSError as copy_err:
-                    if target.exists():
-                        with contextlib.suppress(OSError):
-                            target.unlink()
+                    with contextlib.suppress(OSError):
+                        target.unlink()
                     raise copy_err
                 try:
                     file_path.unlink()

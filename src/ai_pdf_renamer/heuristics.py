@@ -298,12 +298,12 @@ class HeuristicScorer:
 # Global cache for category aliases (loaded once from category_aliases.json).
 _CATEGORY_ALIASES: dict[str, str] | None = None
 _CATEGORY_ALIASES_LOCK = threading.Lock()
-_CATEGORY_ALIASES_MTIME: float = 0.0
+_CATEGORY_ALIASES_MTIME_NS: int = 0  # nanosecond mtime avoids float comparison issues on coarse-grained FSes
 
 
 def _load_category_aliases() -> dict[str, str]:
     """Load alias map: LLM output (lowercase, _) -> heuristic category. Cached with mtime invalidation."""
-    global _CATEGORY_ALIASES, _CATEGORY_ALIASES_MTIME
+    global _CATEGORY_ALIASES, _CATEGORY_ALIASES_MTIME_NS
     try:
         from .data_paths import category_aliases_path
 
@@ -313,16 +313,15 @@ def _load_category_aliases() -> dict[str, str]:
             _CATEGORY_ALIASES = {}
         return _CATEGORY_ALIASES
 
-    # P3: Invalidate cache if file has been modified
     try:
-        current_mtime = path.stat().st_mtime if path.exists() else 0.0
+        current_mtime_ns = path.stat().st_mtime_ns if path.exists() else 0
     except OSError:
-        current_mtime = 0.0
+        current_mtime_ns = 0
 
-    if _CATEGORY_ALIASES is not None and current_mtime == _CATEGORY_ALIASES_MTIME:
+    if _CATEGORY_ALIASES is not None and current_mtime_ns == _CATEGORY_ALIASES_MTIME_NS:
         return _CATEGORY_ALIASES
     with _CATEGORY_ALIASES_LOCK:
-        if _CATEGORY_ALIASES is not None and current_mtime == _CATEGORY_ALIASES_MTIME:
+        if _CATEGORY_ALIASES is not None and current_mtime_ns == _CATEGORY_ALIASES_MTIME_NS:
             return _CATEGORY_ALIASES
         try:
             if path.exists():
@@ -333,13 +332,13 @@ def _load_category_aliases() -> dict[str, str]:
                     aliases = {}
                 norm = {str(k).strip().lower().replace(" ", "_"): str(v) for k, v in aliases.items() if k and v}
                 _CATEGORY_ALIASES = norm
-                _CATEGORY_ALIASES_MTIME = current_mtime
+                _CATEGORY_ALIASES_MTIME_NS = current_mtime_ns
             else:
                 _CATEGORY_ALIASES = {}
-                _CATEGORY_ALIASES_MTIME = current_mtime
+                _CATEGORY_ALIASES_MTIME_NS = current_mtime_ns
         except (OSError, json.JSONDecodeError, ValueError):
             _CATEGORY_ALIASES = {}
-            _CATEGORY_ALIASES_MTIME = current_mtime
+            _CATEGORY_ALIASES_MTIME_NS = current_mtime_ns
     return _CATEGORY_ALIASES
 
 

@@ -35,13 +35,14 @@ _MIN_SHRINK_TEXT_LEN = 200  # Stop shrinking below this many characters
 _SHRINK_FACTOR = 0.95  # Remove ~5% of text per fine-tuning iteration
 
 # Cached tiktoken encoding (Any: tiktoken lacks type stubs, ignore_missing_imports applies).
+_TIKTOKEN_MISSING = object()  # sentinel: import failed, don't retry
 _tiktoken_encoding: Any = None
 _tiktoken_lock = threading.Lock()
 
 
 def _token_count(text: str) -> int:
     global _tiktoken_encoding
-    if _tiktoken_encoding is None and _tiktoken_encoding is not False:
+    if _tiktoken_encoding is None:
         with _tiktoken_lock:
             if _tiktoken_encoding is None:  # double-checked locking
                 try:
@@ -49,8 +50,8 @@ def _token_count(text: str) -> int:
 
                     _tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
                 except (ImportError, LookupError):
-                    _tiktoken_encoding = False  # sentinel: import failed, don't retry
-    if _tiktoken_encoding is not None and _tiktoken_encoding is not False:
+                    _tiktoken_encoding = _TIKTOKEN_MISSING
+    if _tiktoken_encoding is not None and _tiktoken_encoding is not _TIKTOKEN_MISSING:
         try:
             return len(_tiktoken_encoding.encode(text))
         except (AttributeError, RuntimeError, ValueError):
@@ -350,46 +351,13 @@ def _extract_pages(doc: _fitz_mod.Document, path: Path, *, max_pages: int = 0) -
             errors.append(msg)
             continue
 
-        # Prefer single strategy to avoid triple text (text + blocks + rawdict overlap)
         page_text = ""
         try:
             page_text = (page.get_text("text") or "").strip()
         except (RuntimeError, OSError, ValueError) as exc:
-            logger.warning(
-                "Page %s get_text('text') failed in %s: %s",
-                page_number,
-                path,
-                exc,
-            )
-        if not page_text:
-            try:
-                blocks = page.get_text("blocks") or []
-                page_text = " ".join(b[4] for b in blocks if len(b) > 4 and str(b[4]).strip()).strip()
-            except (RuntimeError, OSError, ValueError) as exc:
-                logger.warning(
-                    "Page %s get_text('blocks') failed in %s: %s",
-                    page_number,
-                    path,
-                    exc,
-                )
-        if not page_text:
-            try:
-                rawdict = page.get_text("rawdict") or {}
-                parts = []
-                for block in rawdict.get("blocks", []):
-                    for line in block.get("lines", []):
-                        for span in line.get("spans", []):
-                            t = span.get("text", "")
-                            if t and t.strip():
-                                parts.append(t.strip())
-                page_text = " ".join(parts)
-            except (RuntimeError, OSError, ValueError) as exc:
-                msg = (
-                    f"Page {page_number} get_text('rawdict') failed in {path.name}: {exc}. "
-                    f"Use --ocr to try OCR extraction. Skipping {path.name}."
-                )
-                logger.info(msg)
-                errors.append(msg)
+            msg = f"Page {page_number} text extraction failed in {path.name}: {exc}. Use --ocr to try OCR extraction."
+            logger.warning(msg)
+            errors.append(msg)
 
         combined = page_text
         if combined:

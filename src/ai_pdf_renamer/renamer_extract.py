@@ -23,8 +23,9 @@ logger = logging.getLogger(__name__)
 
 def effective_max_tokens(config: RenamerConfig) -> int:
     """Max tokens for PDF extraction from config or env (AI_PDF_RENAMER_MAX_TOKENS)."""
-    if config.max_tokens_for_extraction is not None and config.max_tokens_for_extraction > 0:
-        return config.max_tokens_for_extraction
+    max_tok: int | None = config.max_tokens_for_extraction
+    if max_tok is not None and max_tok > 0:
+        return max_tok
     try:
         v = int(os.environ.get("AI_PDF_RENAMER_MAX_TOKENS", "") or 0)
         if v > 0:

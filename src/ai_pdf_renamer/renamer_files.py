@@ -6,6 +6,7 @@ import fnmatch
 import re
 from pathlib import Path
 
+from .rename_ops import is_path_within
 from .rules import ProcessingRules, should_skip_file_by_rules
 
 
@@ -19,15 +20,10 @@ def matches_patterns(name: str, include: list[str] | None, exclude: list[str] | 
 
 
 def _is_safe_path(path: Path, root: Path) -> bool:
-    """P2: Check that path is not a symlink pointing outside the root directory."""
+    """Check that path is not a symlink pointing outside the root directory."""
     if not path.is_symlink():
         return True
-    try:
-        resolved = path.resolve()
-        root_resolved = root.resolve()
-        return str(resolved).startswith(str(root_resolved) + "/") or resolved == root_resolved
-    except (OSError, ValueError):
-        return False
+    return is_path_within(path, root)
 
 
 def collect_pdf_files(
