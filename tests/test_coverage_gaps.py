@@ -332,19 +332,21 @@ class TestBuildConfigPresets:
     def test_build_config_fast_preset(self) -> None:
         cfg = build_config({"preset": "fast"}, env={})
         assert cfg.use_llm is False
-        assert cfg.min_heuristic_score >= 0.5
-        assert cfg.min_heuristic_score_gap >= 0.2
+        assert cfg.min_heuristic_score == 0.6
+        assert cfg.min_heuristic_score_gap == 0.25
 
     def test_build_config_accurate_preset(self) -> None:
         cfg = build_config({"preset": "accurate"}, env={})
         assert cfg.use_llm is True
         assert cfg.use_single_llm_call is False
         assert cfg.use_embeddings_for_conflict is True
+        assert cfg.min_heuristic_score == 0.1
+        assert cfg.min_heuristic_score_gap == 0.0
 
     def test_build_config_batch_preset_enables_cache_and_workers(self) -> None:
         cfg = build_config({"preset": "batch"}, env={})
-        assert cfg.cache_dir is not None
-        assert cfg.workers >= 2
+        assert cfg.use_cache is True
+        assert cfg.workers == 4
 
     def test_build_config_cache_dir_from_env(self) -> None:
         cfg = build_config({}, env={"AI_PDF_RENAMER_CACHE_DIR": "/tmp/ai-pdf-cache"})

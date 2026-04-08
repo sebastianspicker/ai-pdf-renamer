@@ -188,21 +188,16 @@ def _validate_config_kwargs(kwargs: Mapping[str, Any]) -> list[str]:
 
     desired_case = _str(kwargs.get("desired_case"), "kebabCase")
     if desired_case not in _VALID_DESIRED_CASES:
-        errors.append(
-            f"desired_case={desired_case!r} must be one of: {', '.join(sorted(_VALID_DESIRED_CASES))}"
-        )
+        errors.append(f"desired_case={desired_case!r} must be one of: {', '.join(sorted(_VALID_DESIRED_CASES))}")
 
     date_locale = _str(kwargs.get("date_locale"), "dmy").lower()
     if date_locale not in _VALID_DATE_LOCALES:
-        errors.append(
-            f"date_locale={date_locale!r} must be one of: {', '.join(sorted(_VALID_DATE_LOCALES))}"
-        )
+        errors.append(f"date_locale={date_locale!r} must be one of: {', '.join(sorted(_VALID_DATE_LOCALES))}")
 
     category_display = _str(kwargs.get("category_display"), "specific").lower()
     if category_display not in _VALID_CATEGORY_DISPLAY:
         errors.append(
-            "category_display="
-            f"{category_display!r} must be one of: {', '.join(sorted(_VALID_CATEGORY_DISPLAY))}"
+            f"category_display={category_display!r} must be one of: {', '.join(sorted(_VALID_CATEGORY_DISPLAY))}"
         )
 
     return errors
@@ -313,14 +308,18 @@ def _build_extraction_options(
     )
     vision_first = _bool(data.get("vision_first"), False) or _env_true(env_map, "AI_PDF_RENAMER_VISION_FIRST")
 
-    max_content_chars = _positive_int_or_none(_resolve_precedence(
-        data.get("max_content_chars"),
-        env_map.get("AI_PDF_RENAMER_MAX_CONTENT_CHARS"),
-    ))
-    max_content_tokens = _positive_int_or_none(_resolve_precedence(
-        data.get("max_content_tokens"),
-        env_map.get("AI_PDF_RENAMER_MAX_CONTENT_TOKENS"),
-    ))
+    max_content_chars = _positive_int_or_none(
+        _resolve_precedence(
+            data.get("max_content_chars"),
+            env_map.get("AI_PDF_RENAMER_MAX_CONTENT_CHARS"),
+        )
+    )
+    max_content_tokens = _positive_int_or_none(
+        _resolve_precedence(
+            data.get("max_content_tokens"),
+            env_map.get("AI_PDF_RENAMER_MAX_CONTENT_TOKENS"),
+        )
+    )
 
     return {
         "use_ocr": _bool(data.get("use_ocr"), False),

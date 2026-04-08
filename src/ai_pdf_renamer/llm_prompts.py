@@ -176,7 +176,9 @@ PROMPT_STRINGS: dict[str, dict[str, Any]] = {
 
 def _language_code(language: str) -> str:
     """Normalize prompt language to a supported dictionary key."""
-    return "de" if language == "de" else "en"
+    normalized = language.strip().lower()
+    primary = normalized.replace("_", "-").split("-", 1)[0]
+    return "de" if primary == "de" else "en"
 
 
 def _prompt_strings(language: str) -> dict[str, Any]:

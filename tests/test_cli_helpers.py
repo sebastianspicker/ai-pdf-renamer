@@ -345,6 +345,7 @@ class TestRunDoctorChecks:
             return FakePath(filename)
 
         monkeypatch.setattr(cli_module, "data_path", mock_data_path)
+        monkeypatch.setattr(cli_module, "load_heuristic_rules", lambda _path: [])
         # Stub out all find_spec calls to return None (no optional deps)
         monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
 
@@ -390,6 +391,14 @@ class TestRunDoctorChecks:
             return FakePath(filename, stopwords_payload)
 
         monkeypatch.setattr(cli_module, "data_path", fake_data_path)
+        monkeypatch.setattr(
+            cli_module,
+            "load_heuristic_rules",
+            lambda _path: [
+                HeuristicRule(pattern=re.compile("invoice"), category="invoice", score=2.0),
+                HeuristicRule(pattern=re.compile("contract"), category="contract", score=2.0),
+            ],
+        )
         monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
 
         result = run_doctor_checks(self._make_args())
@@ -398,6 +407,43 @@ class TestRunDoctorChecks:
         assert result == 0
         assert "patterns=2" in captured.out
         assert "categories=2" in captured.out
+
+    def test_doctor_fails_on_invalid_heuristic_rules(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Malformed heuristic patterns must report FAIL instead of a green OK."""
+        import ai_pdf_renamer.cli as cli_module
+
+        class FakePath:
+            def __init__(self, name: str, payload: str) -> None:
+                self._name = name
+                self._payload = payload
+
+            def read_text(self, encoding: str = "utf-8") -> str:
+                return self._payload
+
+            def __str__(self) -> str:
+                return f"/fake/{self._name}"
+
+        heuristic_payload = json.dumps({"patterns": [{"regex": "(", "category": "broken", "score": 1}]})
+        stopwords_payload = json.dumps({"stopwords": []})
+
+        def fake_data_path(filename: str) -> Any:
+            if filename == "heuristic_scores.json":
+                return FakePath(filename, heuristic_payload)
+            return FakePath(filename, stopwords_payload)
+
+        monkeypatch.setattr(cli_module, "data_path", fake_data_path)
+        monkeypatch.setattr(cli_module, "load_heuristic_rules", lambda _path: (_ for _ in ()).throw(ValueError("Invalid regex")))
+        monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+
+        result = run_doctor_checks(self._make_args())
+        captured = capsys.readouterr()
+
+        assert result == 1
+        assert "FAIL" in captured.out
+        assert "heuristic_scores.json" in captured.out
+        assert "Invalid regex" in captured.out
 
     def test_doctor_data_files_missing(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -467,6 +513,7 @@ class TestRunDoctorChecks:
                 return f"/fake/{self._name}"
 
         monkeypatch.setattr(cli_module, "data_path", lambda filename: FakePath(filename))
+        monkeypatch.setattr(cli_module, "load_heuristic_rules", lambda _path: [])
 
         # Make find_spec return a truthy ModuleSpec-like for known optional deps
         sentinel = types.ModuleType("sentinel")
@@ -505,6 +552,7 @@ class TestRunDoctorChecks:
                 return f"/fake/{self._name}"
 
         monkeypatch.setattr(cli_module, "data_path", lambda filename: FakePath(filename))
+        monkeypatch.setattr(cli_module, "load_heuristic_rules", lambda _path: [])
         monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
 
         args = self._make_args()
@@ -535,6 +583,7 @@ class TestRunDoctorChecks:
                 return f"/fake/{self._name}"
 
         monkeypatch.setattr(cli_module, "data_path", lambda filename: FakePath(filename))
+        monkeypatch.setattr(cli_module, "load_heuristic_rules", lambda _path: [])
         monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
 
         args = self._make_args(use_llm=False)

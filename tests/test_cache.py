@@ -24,3 +24,9 @@ def test_response_cache_file_key_uses_prefix_and_size(tmp_path: Path) -> None:
     key_after = ResponseCache.build_file_key(pdf_path, prefix_bytes=64)
 
     assert key_before != key_after
+
+    pdf_path.write_bytes(b"C" + b"A" * 127 + b"B" * 129)
+    key_after_size = ResponseCache.build_file_key(pdf_path, prefix_bytes=64)
+
+    assert key_before != key_after_size
+    assert key_after != key_after_size

@@ -267,22 +267,15 @@ def run_doctor_checks(args: argparse.Namespace) -> int:
             raw = path.read_text(encoding="utf-8")
             parsed = json.loads(raw)
             if filename == "heuristic_scores.json":
-                raw_patterns = parsed.get("patterns", []) if isinstance(parsed, dict) else []
-                pattern_count = len(raw_patterns) if isinstance(raw_patterns, list) else 0
-                category_count = 0
                 try:
                     rules = load_heuristic_rules(path)
-                    pattern_count = len(rules)
-                    category_count = len({rule.category for rule in rules})
-                except (TypeError, ValueError):
-                    if isinstance(raw_patterns, list):
-                        category_count = len(
-                            {
-                                entry.get("category")
-                                for entry in raw_patterns
-                                if isinstance(entry, dict) and isinstance(entry.get("category"), str)
-                            }
-                        )
+                except (TypeError, ValueError) as exc:
+                    ok = False
+                    logger.warning("Doctor check failed for %s: %s", filename, exc)
+                    con.print(f"  [red]FAIL[/red] {filename}: {exc}")
+                    continue
+                pattern_count = len(rules)
+                category_count = len({rule.category for rule in rules})
                 con.print(
                     f"  [green]OK[/green]   {filename} "
                     f"[dim](patterns={pattern_count}, categories={category_count})[/dim]"

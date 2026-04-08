@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ai_pdf_renamer.llm_prompts import PROMPT_STRINGS, build_analysis_prompt, build_vision_filename_prompt
+from ai_pdf_renamer.llm_prompts import PROMPT_STRINGS, _language_code, build_analysis_prompt, build_vision_filename_prompt
 
 
 def test_prompt_strings_has_german_and_english() -> None:
@@ -34,3 +34,11 @@ def test_build_vision_filename_prompt_en() -> None:
     assert "INVOICE_AMAZON_JOHN_2023-11-15" in prompt
     assert "ONLY the filename" in prompt or "only the filename" in prompt
     assert "nothing else" in prompt
+
+
+def test_language_code_accepts_common_german_variants() -> None:
+    assert _language_code("de") == "de"
+    assert _language_code("DE") == "de"
+    assert _language_code(" de-DE ") == "de"
+    assert _language_code("de_DE") == "de"
+    assert _language_code("en") == "en"

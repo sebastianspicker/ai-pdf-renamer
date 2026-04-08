@@ -1014,6 +1014,37 @@ class TestRenamePipelineEdgeCases:
 
         assert seen == [(1, 2, "a.pdf"), (2, 2, "b.pdf")]
 
+    def test_produce_rename_results_reports_progress_with_workers(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        pdf_a = tmp_path / "a.pdf"
+        pdf_b = tmp_path / "b.pdf"
+        pdf_a.write_bytes(b"%PDF-1.4 a")
+        pdf_b.write_bytes(b"%PDF-1.4 b")
+        cfg = _cfg(workers=2)
+
+        monkeypatch.setattr(renamer, "_extract_pdf_content", lambda path, config: ("text", False))
+        monkeypatch.setattr(
+            renamer,
+            "_process_content_to_result",
+            lambda file_path, content, config, rules=None, used_vision=False: (
+                file_path,
+                file_path.stem,
+                {"category": "invoice"},
+                None,
+            ),
+        )
+
+        seen: list[tuple[int, int, str]] = []
+
+        renamer._produce_rename_results(
+            [pdf_a, pdf_b],
+            cfg,
+            progress_callback=lambda current, total, file_path: seen.append((current, total, file_path.name)),
+        )
+
+        assert sorted(seen, key=lambda item: item[2]) == [(1, 2, "a.pdf"), (2, 2, "b.pdf")]
+
     def test_rename_pdfs_files_override(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """files_override is passed to _collect_pdf_files and those files are processed."""
         pdf = tmp_path / "override-target.pdf"

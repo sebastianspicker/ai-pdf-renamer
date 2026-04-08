@@ -575,9 +575,7 @@ _INVOICE_ID_PATTERNS = [
     re.compile(
         r"\b(?:rechnungsnummer|rechnung\s*(?:nr\.?|nummer|#)|invoice\s*(?:no\.?|number|#|id)|"
         r"bill\s*(?:no\.?|number|#)|order\s*(?:no\.?|number)|auftragsnummer|bestellnummer|belegnummer|reference\s*no\.?)"
-        r"\s*[:\s#-]*\s*"
-        + _INVOICE_ID_VALUE
-        + r"\b",
+        r"\s*[:\s#-]*\s*" + _INVOICE_ID_VALUE + r"\b",
         re.IGNORECASE,
     ),
     re.compile(r"\b(?:inv|rechnung|rg|ref)\s*[#:-]?\s*(" + _INVOICE_ID_VALUE[1:-1] + r")\b", re.IGNORECASE),
@@ -601,11 +599,7 @@ _COMPANY_PATTERNS = [
         re.IGNORECASE,
     ),
     re.compile(r"\b(?:company|firma|an\s*:)\s*([A-Za-z0-9\s&.\-]{2,40})\b", re.IGNORECASE),
-    re.compile(
-        r"(?m)^\s*([A-Z][A-Za-z0-9&.,' -]{1,60}\s+"
-        + _COMPANY_SUFFIXES
-        + r")\s*$"
-    ),
+    re.compile(r"(?m)^\s*([A-Z][A-Za-z0-9&.,' -]{1,60}\s+" + _COMPANY_SUFFIXES + r")\s*$"),
 ]
 _MAX_STRUCTURED_LEN = 50
 

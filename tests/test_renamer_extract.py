@@ -6,9 +6,12 @@ import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from ai_pdf_renamer.config import RenamerConfig
 from ai_pdf_renamer.pdf_extract import DEFAULT_MAX_CONTENT_TOKENS
 from ai_pdf_renamer.renamer_extract import (
+    _log_extraction_strategy,
     _try_vision_extraction,
     effective_max_tokens,
     extract_pdf_content_with,
@@ -25,16 +28,16 @@ def test_effective_max_tokens_from_config() -> None:
     assert effective_max_tokens(config) == 5000
 
 
-def test_effective_max_tokens_from_env(monkeypatch: object) -> None:
+def test_effective_max_tokens_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Falls back to AI_PDF_RENAMER_MAX_TOKENS env var when config is None."""
-    monkeypatch.setenv("AI_PDF_RENAMER_MAX_TOKENS", "9999")  # type: ignore[attr-defined]
+    monkeypatch.setenv("AI_PDF_RENAMER_MAX_TOKENS", "9999")
     config = RenamerConfig(max_tokens_for_extraction=None)
     assert effective_max_tokens(config) == 9999
 
 
-def test_effective_max_tokens_default(monkeypatch: object) -> None:
+def test_effective_max_tokens_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """Returns DEFAULT_MAX_CONTENT_TOKENS when neither config nor env is set."""
-    monkeypatch.delenv("AI_PDF_RENAMER_MAX_TOKENS", raising=False)  # type: ignore[attr-defined]
+    monkeypatch.delenv("AI_PDF_RENAMER_MAX_TOKENS", raising=False)
     config = RenamerConfig(max_tokens_for_extraction=None)
     assert effective_max_tokens(config) == DEFAULT_MAX_CONTENT_TOKENS
 
@@ -207,6 +210,35 @@ def test_extract_vision_fallback() -> None:
     assert used_vision is True
 
 
+def test_extract_vision_first_does_not_retry_vision_fallback() -> None:
+    """A failed vision-first attempt should not trigger a second identical vision call."""
+    client = MagicMock()
+    client.model = "test-model"
+    client.complete_vision.return_value = ""
+
+    config = RenamerConfig(
+        vision_first=True,
+        use_vision_fallback=True,
+        vision_fallback_min_text_len=100,
+        use_ocr=False,
+        llm_timeout_s=30.0,
+        max_tokens_for_extraction=1000,
+    )
+
+    content, used_vision = extract_pdf_content_with(
+        Path("/fake/doc.pdf"),
+        config,
+        pdf_first_page_to_image_base64_fn=lambda _p: "base64img",
+        pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "short",
+        pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        llm_client=client,
+    )
+
+    assert content == "short"
+    assert used_vision is False
+    assert client.complete_vision.call_count == 1
+
+
 def test_extract_with_ocr() -> None:
     """config.use_ocr=True: OCR extraction is used instead of plain text."""
     client = MagicMock()
@@ -267,7 +299,7 @@ def test_extract_no_content() -> None:
     assert used_vision is False
 
 
-def test_extract_logs_text_strategy(caplog: object) -> None:
+def test_extract_logs_text_strategy(caplog: pytest.LogCaptureFixture) -> None:
     """Selected extraction strategy is logged for plain text extraction."""
     client = MagicMock()
     client.model = "test-model"
@@ -288,7 +320,7 @@ def test_extract_logs_text_strategy(caplog: object) -> None:
     assert any("ExtractionStrategy" in record.message and "text" in record.message for record in caplog.records)
 
 
-def test_extract_logs_vision_fallback_strategy(caplog: object) -> None:
+def test_extract_logs_vision_fallback_strategy(caplog: pytest.LogCaptureFixture) -> None:
     """Vision fallback decisions are logged with the selected path."""
     client = MagicMock()
     client.model = "test-model"
@@ -317,3 +349,18 @@ def test_extract_logs_vision_fallback_strategy(caplog: object) -> None:
     assert any(
         "ExtractionStrategy" in record.message and "vision_fallback" in record.message for record in caplog.records
     )
+
+
+def test_log_extraction_strategy_quotes_dynamic_values(caplog: pytest.LogCaptureFixture) -> None:
+    """Dynamic values in extraction logs are quoted and escaped for safe parsing."""
+    with caplog.at_level(logging.INFO, logger="ai_pdf_renamer.renamer_extract"):
+        _log_extraction_strategy(
+            Path('/fake/bad "name\n.pdf'),
+            "vision_fallback",
+            reason='line break\nand "quotes"',
+        )
+
+    message = caplog.records[-1].message
+    assert 'file=' in message and 'strategy=' in message and 'reason=' in message
+    assert 'file="bad \\"name\\n.pdf"' in message
+    assert 'reason="line break\\nand \\"quotes\\""' in message

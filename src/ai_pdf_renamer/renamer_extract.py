@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Callable
@@ -64,10 +65,16 @@ def _try_vision_extraction(
 
 def _log_extraction_strategy(path: Path, strategy: str, **details: object) -> None:
     """Emit a consistent extraction-strategy log entry for user-visible debugging."""
-    suffix = " ".join(f"{key}={value}" for key, value in details.items())
-    message = f"ExtractionStrategy file={path.name} strategy={strategy}"
-    if suffix:
-        message = f"{message} {suffix}"
+    serialized_details = " ".join(
+        f'{key}={json.dumps(str(value), ensure_ascii=False)}' for key, value in details.items()
+    )
+    message = (
+        "ExtractionStrategy "
+        f'file={json.dumps(path.name, ensure_ascii=False)} '
+        f'strategy={json.dumps(strategy, ensure_ascii=False)}'
+    )
+    if serialized_details:
+        message = f"{message} {serialized_details}"
     logger.info(message)
 
 
@@ -128,11 +135,15 @@ def extract_pdf_content_with(
     2. primary text extraction (`text` or `ocr`)
     3. `vision_fallback` when extracted text is too short
 
-    Returns `(content, used_vision_fallback)`.
+    Returns `(content, used_vision)`.
+    `used_vision` is `True` when any vision-based extraction path was selected,
+    including both `vision_first` and `vision_fallback`.
     """
     client = llm_client or create_llm_client_from_config(config)
+    tried_vision = False
 
     if config.vision_first:
+        tried_vision = True
         _log_extraction_strategy(path, "vision_first", outcome="attempt")
         result = _try_vision_extraction(
             path,
@@ -152,12 +163,13 @@ def extract_pdf_content_with(
         pdf_to_text_with_ocr_fn=pdf_to_text_with_ocr_fn,
     )
 
-    if config.use_vision_fallback and len(content.strip()) < config.vision_fallback_min_text_len:
+    content_length = len(content.strip())
+    if not tried_vision and config.use_vision_fallback and content_length < config.vision_fallback_min_text_len:
         _log_extraction_strategy(
             path,
             "vision_fallback",
             outcome="attempt",
-            text_length=len(content.strip()),
+            text_length=content_length,
             threshold=config.vision_fallback_min_text_len,
         )
         result = _try_vision_extraction(
@@ -171,12 +183,22 @@ def extract_pdf_content_with(
                 path,
                 "vision_fallback",
                 outcome="selected",
-                text_length=len(content.strip()),
+                text_length=content_length,
                 threshold=config.vision_fallback_min_text_len,
             )
             return (result, True)
         _log_extraction_strategy(path, primary_strategy, outcome="selected_after_failed_vision_fallback")
         return (content, False)
 
-    _log_extraction_strategy(path, primary_strategy, outcome="selected", text_length=len(content.strip()))
+    if tried_vision and config.use_vision_fallback and content_length < config.vision_fallback_min_text_len:
+        _log_extraction_strategy(
+            path,
+            primary_strategy,
+            outcome="selected_after_failed_vision_first",
+            text_length=content_length,
+            threshold=config.vision_fallback_min_text_len,
+        )
+        return (content, False)
+
+    _log_extraction_strategy(path, primary_strategy, outcome="selected", text_length=content_length)
     return (content, False)
