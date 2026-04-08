@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
+import runpy
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -1071,3 +1074,78 @@ class TestMainErrorHandling:
             )
 
         assert exc_info.value.code == 1
+
+    def test_main_uses_config_defaults_for_unset_cli_values(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Config-file values win over parser defaults when the CLI omits those options."""
+        monkeypatch.setattr(cli_mod, "setup_logging", lambda **k: None)
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+
+        config_path = tmp_path / "config.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "language": "en",
+                    "desired_case": "snakeCase",
+                    "dry_run": True,
+                    "workers": 7,
+                    "use_llm": False,
+                    "use_structured_fields": False,
+                    "include_patterns": ["*.pdf"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        captured: dict[str, RenamerConfig] = {}
+
+        def _capture(directory: str, *, config: RenamerConfig, files_override: list[Path] | None = None) -> None:
+            captured["config"] = config
+
+        monkeypatch.setattr(cli_mod, "rename_pdfs_in_directory", _capture)
+
+        cli_mod.main(["--dir", str(tmp_path), "--config", str(config_path)])
+
+        config = captured["config"]
+        assert config.language == "en"
+        assert config.desired_case == "snakeCase"
+        assert config.dry_run is True
+        assert config.workers == 7
+        assert config.use_llm is False
+        assert config.use_structured_fields is False
+        assert config.include_patterns == ["*.pdf"]
+
+    def test_main_exits_on_invalid_config_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A malformed --config file is fatal and does not continue with defaults."""
+        monkeypatch.setattr(cli_mod, "setup_logging", lambda **k: None)
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+
+        bad_config = tmp_path / "bad.json"
+        bad_config.write_text("{bad", encoding="utf-8")
+
+        rename_mock = MagicMock()
+        monkeypatch.setattr(cli_mod, "rename_pdfs_in_directory", rename_mock)
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli_mod.main(["--dir", str(tmp_path), "--config", str(bad_config)])
+
+        assert exc_info.value.code == 1
+        rename_mock.assert_not_called()
+
+
+def test_cli_module_entrypoint_runs_help(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Executing the module directly should invoke main() and print argparse help."""
+    monkeypatch.setattr(sys, "argv", ["ai_pdf_renamer.cli", "--help"])
+    existing_module = sys.modules.pop("ai_pdf_renamer.cli", None)
+
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            runpy.run_module("ai_pdf_renamer.cli", run_name="__main__")
+    finally:
+        if existing_module is not None:
+            sys.modules["ai_pdf_renamer.cli"] = existing_module
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage: ai-pdf-renamer" in captured.out

@@ -927,6 +927,55 @@ class TestWatchLoop:
             f"Expected exactly 1 rename call (file unchanged on 2nd iteration), got {len(rename_calls)}"
         )
 
+    def test_watch_loop_processes_new_file_seen_during_post_scan(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A legitimate new PDF discovered after a pass must be processed on the next iteration."""
+        original = tmp_path / "incoming.pdf"
+        renamed_output = tmp_path / "20260101-incoming.pdf"
+        newcomer = tmp_path / "arrived-later.pdf"
+        original.write_bytes(b"%PDF-1.4 original")
+        renamed_output.write_bytes(b"%PDF-1.4 renamed")
+        newcomer.write_bytes(b"%PDF-1.4 newcomer")
+        cfg = _cfg(dry_run=False)
+
+        scans = iter(
+            [
+                [original],
+                [renamed_output, newcomer],
+                [renamed_output, newcomer],
+                [renamed_output, newcomer],
+            ]
+        )
+        rename_calls: list[list[Path]] = []
+
+        def fake_collect(*args: Any, **kwargs: Any) -> list[Path]:
+            return next(scans)
+
+        def fake_rename(directory: Any, *, config: Any, files_override: list[Path] | None = None) -> set[Path]:
+            assert files_override is not None
+            rename_calls.append(files_override)
+            if files_override == [original]:
+                return {renamed_output}
+            return set()
+
+        sleep_count = 0
+
+        def fake_sleep(seconds: float) -> None:
+            nonlocal sleep_count
+            sleep_count += 1
+            if sleep_count >= 2:
+                raise KeyboardInterrupt("stop after second watch cycle")
+
+        monkeypatch.setattr(renamer, "_collect_pdf_files", fake_collect)
+        monkeypatch.setattr(renamer, "rename_pdfs_in_directory", fake_rename)
+        monkeypatch.setattr("time.sleep", fake_sleep)
+
+        with contextlib.suppress(KeyboardInterrupt):
+            renamer.run_watch_loop(tmp_path, config=cfg, interval_seconds=0.01)
+
+        assert rename_calls == [[original], [newcomer]]
+
 
 # ---------------------------------------------------------------------------
 # Rename pipeline edge cases (lines 508-671)

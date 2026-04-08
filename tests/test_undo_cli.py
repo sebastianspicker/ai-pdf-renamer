@@ -180,3 +180,50 @@ def test_run_undo_on_directory_path(tmp_path, capsys) -> None:
     run_undo(d, dry_run=False)
     captured = capsys.readouterr()
     assert "not a file" in captured.err
+
+
+def test_undo_rejects_cross_directory_entries(tmp_path, capsys) -> None:
+    """Undo entries must stay within the same parent directory."""
+    original_dir = tmp_path / "original"
+    renamed_dir = tmp_path / "renamed"
+    original_dir.mkdir()
+    renamed_dir.mkdir()
+
+    old = original_dir / "document.pdf"
+    new = renamed_dir / "document-renamed.pdf"
+    new.write_text("content", encoding="utf-8")
+
+    log = tmp_path / "rename.log"
+    log.write_text(f"{old}\t{new}\n", encoding="utf-8")
+
+    main(["--rename-log", str(log)])
+
+    assert not old.exists()
+    assert new.exists()
+    captured = capsys.readouterr()
+    assert "cross-directory undo denied" in captured.err
+
+
+def test_undo_rejects_symlink_escape_within_trusted_root(tmp_path, capsys) -> None:
+    """Symlinked paths that resolve outside the trusted root are rejected."""
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir(exist_ok=True)
+    link = tmp_path / "linked"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("Symlinks are not available in this environment")
+
+    old = tmp_path / "restored.pdf"
+    escaped_target = link / "escaped.pdf"
+    (outside / "escaped.pdf").write_text("content", encoding="utf-8")
+
+    log = tmp_path / "rename.log"
+    log.write_text(f"{old}\t{escaped_target}\n", encoding="utf-8")
+
+    main(["--rename-log", str(log)])
+
+    assert not old.exists()
+    assert (outside / "escaped.pdf").exists()
+    captured = capsys.readouterr()
+    assert "path traversal detected" in captured.err

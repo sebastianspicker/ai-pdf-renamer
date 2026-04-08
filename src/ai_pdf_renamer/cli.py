@@ -28,31 +28,44 @@ logger = logging.getLogger(__name__)
 _console = Console(stderr=True)
 
 
-def _load_config_file(path: str | Path) -> dict[str, object]:
-    """Load JSON or YAML config file. Returns a dict (empty on error or unknown format)."""
+class ConfigLoadError(ValueError):
+    """Raised when an explicitly requested config file cannot be loaded safely."""
+
+
+def _load_config_file(path: str | Path, *, raise_on_error: bool = False) -> dict[str, object]:
+    """Load JSON or YAML config file. Returns a dict unless raise_on_error is enabled."""
+
+    def _fail(message: str, *details: str) -> dict[str, object]:
+        _console.print(message)
+        for detail in details:
+            _console.print(detail)
+        if raise_on_error:
+            raise ConfigLoadError(str(path))
+        return {}
+
     p = Path(path)
     if not p.exists():
-        _console.print(f"[yellow]Config file not found:[/yellow] {p}")
-        _console.print("[dim]Create one with JSON or YAML format, or omit --config.[/dim]")
-        return {}
+        return _fail(
+            f"[yellow]Config file not found:[/yellow] {p}",
+            "[dim]Create one with JSON or YAML format, or omit --config.[/dim]",
+        )
     try:
         raw = p.read_text(encoding="utf-8")
     except OSError as exc:
-        _console.print(f"[red]Cannot read config file[/red] {p}: {exc}")
-        return {}
+        return _fail(f"[red]Cannot read config file[/red] {p}: {exc}")
     suf = p.suffix.lower()
     if suf == ".json":
         try:
             data = json.loads(raw)
             if not isinstance(data, dict):
                 dtype = type(data).__name__
-                _console.print(f"[yellow]Config file must contain a JSON object (got {dtype}):[/yellow] {p}")
-                return {}
+                return _fail(f"[yellow]Config file must contain a JSON object (got {dtype}):[/yellow] {p}")
             return data
         except json.JSONDecodeError as exc:
-            _console.print(f"[red]Invalid JSON in config file[/red] {p}")
-            _console.print(f"[dim]  Line {exc.lineno}, col {exc.colno}: {exc.msg}[/dim]")
-            return {}
+            return _fail(
+                f"[red]Invalid JSON in config file[/red] {p}",
+                f"[dim]  Line {exc.lineno}, col {exc.colno}: {exc.msg}[/dim]",
+            )
     if suf in (".yaml", ".yml"):
         try:
             import yaml
@@ -60,19 +73,19 @@ def _load_config_file(path: str | Path) -> dict[str, object]:
             data = yaml.safe_load(raw)
             if not isinstance(data, dict):
                 dtype = type(data).__name__
-                _console.print(f"[yellow]Config file must contain a YAML mapping (got {dtype}):[/yellow] {p}")
-                return {}
+                return _fail(f"[yellow]Config file must contain a YAML mapping (got {dtype}):[/yellow] {p}")
             return data
         except ImportError:
-            _console.print("[red]Cannot parse YAML config:[/red] PyYAML not installed.")
-            _console.print("[dim]  Install with: pip install pyyaml[/dim]")
-            return {}
+            return _fail(
+                "[red]Cannot parse YAML config:[/red] PyYAML not installed.",
+                "[dim]  Install with: pip install pyyaml[/dim]",
+            )
         except Exception as exc:
-            _console.print(f"[red]Invalid YAML in config file[/red] {p}: {exc}")
-            return {}
-    _console.print(f"[yellow]Unsupported config file format:[/yellow] {p.suffix}")
-    _console.print("[dim]Supported formats: .json, .yaml, .yml[/dim]")
-    return {}
+            return _fail(f"[red]Invalid YAML in config file[/red] {p}: {exc}")
+    return _fail(
+        f"[yellow]Unsupported config file format:[/yellow] {p.suffix}",
+        "[dim]Supported formats: .json, .yaml, .yml[/dim]",
+    )
 
 
 def _load_override_category_map(path: str | Path) -> dict[str, str]:
@@ -397,6 +410,8 @@ def _resolve_dirs(args: argparse.Namespace) -> tuple[list[str], str | None]:
 def _build_config_from_args(
     args: argparse.Namespace,
     file_defaults: dict[str, object],
+    *,
+    parser: argparse.ArgumentParser,
 ) -> RenamerConfig:
     """Build RenamerConfig from args and file defaults (with interactive prompts where applicable)."""
     language = _resolve_option(
@@ -436,17 +451,21 @@ def _build_config_from_args(
         free_prompt="Version (optional): ",
     )
 
-    # Pass all argparse values through to build_config(), which handles type coercion.
+    # Treat parser defaults as "unset" so file defaults win when the CLI omitted an option.
     raw = vars(args).copy()
+    for action in parser._actions:
+        if not action.dest or action.dest not in raw:
+            continue
+        if action.dest not in file_defaults:
+            continue
+        if raw[action.dest] == parser.get_default(action.dest):
+            raw[action.dest] = file_defaults[action.dest]
     raw.update(language=language, desired_case=desired_case, project=project, version=version)
     raw["manual_mode"] = bool(getattr(args, "manual_file", None))
     if raw["manual_mode"]:
         raw["interactive"] = True
     if getattr(args, "override_category_file", None):
         raw["override_category_map"] = _load_override_category_map(args.override_category_file)
-    # Merge filename_template from file defaults if not set via CLI
-    if not raw.get("filename_template"):
-        raw["filename_template"] = file_defaults.get("filename_template")
     try:
         return build_config(raw, file_defaults=file_defaults)
     except ValueError as exc:
@@ -517,6 +536,13 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(run_doctor_checks(args))
 
     dirs, single_file = _resolve_dirs(args)
-    file_defaults = _load_config_file(args.config) if getattr(args, "config", None) else {}
-    config = _build_config_from_args(args, file_defaults)
+    try:
+        file_defaults = _load_config_file(args.config, raise_on_error=True) if getattr(args, "config", None) else {}
+    except ConfigLoadError as exc:
+        raise SystemExit(1) from exc
+    config = _build_config_from_args(args, file_defaults, parser=parser)
     _run_renamer_or_watch(dirs, config, args, single_file=single_file)
+
+
+if __name__ == "__main__":
+    main()

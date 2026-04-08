@@ -5,13 +5,10 @@ Thank you for your interest in contributing. This document covers local setup, c
 ## Local setup
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-python -m pip install -U pip
-python -m pip install -e '.[dev,pdf]'
+uv sync --extra dev --extra pdf --extra tui
 ```
 
-Optional extras: `.[tokens]` for token counting, `.[ocr]` for OCR support, `.[llama-cpp]` for in-process LLM backend, `.[tui]` for the terminal UI.
+Optional extras beyond the default contributor setup: `--extra tokens` for token counting, `--extra ocr` for OCR support, `--extra llama-cpp` for the in-process LLM backend.
 
 ## Run checks
 
@@ -27,7 +24,7 @@ Clean ignored local artifacts (optional but recommended before reviews):
 make clean
 ```
 
-`make release-check` runs hygiene guard + lint + type check + tests and matches the CI gate exactly.
+`make release-check` runs hygiene guard + lint + type check + coverage-gated tests and matches the CI gate exactly.
 Run `make typecheck` alone to run `mypy` in isolation. Fix any reported issues locally first.
 
 ## Architecture overview
@@ -60,7 +57,7 @@ Data flow: `cli.py` builds a `RenamerConfig` → `renamer.py` iterates PDFs → 
 
 ## Code style
 
-- Python 3.13+.
+- Python 3.11+.
 - Format with Ruff: `ruff format .`
 - Lint with Ruff: `ruff check .`
 - Type-checked with mypy strict: `mypy src/ai_pdf_renamer/` (required, enforced in CI).

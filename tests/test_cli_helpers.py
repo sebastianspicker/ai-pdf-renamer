@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ai_pdf_renamer.cli import (
+    ConfigLoadError,
     _load_config_file,
     _load_override_category_map,
     run_doctor_checks,
@@ -57,6 +58,14 @@ class TestLoadConfigFile:
         result = _load_config_file(p)
 
         assert result == {}
+
+    def test_load_json_config_invalid_raises_when_requested(self, tmp_path: Path) -> None:
+        """Invalid JSON is fatal for explicit CLI config loading."""
+        p = tmp_path / "bad.json"
+        p.write_text("{ not valid json }", encoding="utf-8")
+
+        with pytest.raises(ConfigLoadError):
+            _load_config_file(p, raise_on_error=True)
 
     def test_load_yaml_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Valid YAML config file (with yaml importable) returns the parsed dict."""
@@ -126,11 +135,42 @@ class TestLoadConfigFile:
 
         assert result == {}
 
+    def test_load_yaml_invalid_raises_when_requested(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Invalid YAML is fatal for explicit CLI config loading."""
+        p = tmp_path / "config.yaml"
+        p.write_text("language: [oops", encoding="utf-8")
+
+        fake_yaml = types.ModuleType("yaml")
+
+        def _raise_yaml_error(raw: str) -> dict[str, object]:
+            raise ValueError("bad yaml")
+
+        fake_yaml.safe_load = _raise_yaml_error  # type: ignore[attr-defined]
+
+        import builtins
+
+        real_import = builtins.__import__
+
+        def patched_import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "yaml":
+                return fake_yaml
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", patched_import)
+
+        with pytest.raises(ConfigLoadError):
+            _load_config_file(p, raise_on_error=True)
+
     def test_load_config_missing_file(self, tmp_path: Path) -> None:
         """Nonexistent path returns an empty dict."""
         result = _load_config_file(tmp_path / "does_not_exist.json")
 
         assert result == {}
+
+    def test_load_config_missing_file_raises_when_requested(self, tmp_path: Path) -> None:
+        """Missing config files are fatal for explicit CLI config loading."""
+        with pytest.raises(ConfigLoadError):
+            _load_config_file(tmp_path / "does_not_exist.json", raise_on_error=True)
 
     def test_load_config_read_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """OSError on read_text returns an empty dict."""
@@ -153,6 +193,14 @@ class TestLoadConfigFile:
 
         assert result == {}
 
+    def test_load_config_unknown_suffix_raises_when_requested(self, tmp_path: Path) -> None:
+        """Unsupported config formats are fatal for explicit CLI config loading."""
+        p = tmp_path / "config.toml"
+        p.write_text('[section]\nkey = "value"\n', encoding="utf-8")
+
+        with pytest.raises(ConfigLoadError):
+            _load_config_file(p, raise_on_error=True)
+
     def test_load_json_config_non_dict(self, tmp_path: Path) -> None:
         """JSON file with a non-dict top-level (e.g. list) returns empty dict."""
         p = tmp_path / "config.json"
@@ -161,6 +209,14 @@ class TestLoadConfigFile:
         result = _load_config_file(p)
 
         assert result == {}
+
+    def test_load_json_config_non_dict_raises_when_requested(self, tmp_path: Path) -> None:
+        """Non-object JSON configs are fatal for explicit CLI config loading."""
+        p = tmp_path / "config.json"
+        p.write_text("[1, 2, 3]", encoding="utf-8")
+
+        with pytest.raises(ConfigLoadError):
+            _load_config_file(p, raise_on_error=True)
 
 
 def _raise_os_error(*args: Any, **kwargs: Any) -> Any:

@@ -49,6 +49,13 @@ def run_undo(log_path: Path, dry_run: bool) -> None:
         if not is_path_within(new_p, trusted_root):
             print(f"Skip (path traversal detected): {new_p}", file=sys.stderr)
             continue
+        try:
+            if old_p.parent.resolve() != new_p.parent.resolve():
+                print(f"Skip (cross-directory undo denied): {new_p} -> {old_p}", file=sys.stderr)
+                continue
+        except OSError:
+            print(f"Skip (path traversal detected): {new_p}", file=sys.stderr)
+            continue
         if not new_p.exists():
             print(f"Skip (new path missing): {new_p}", file=sys.stderr)
             continue

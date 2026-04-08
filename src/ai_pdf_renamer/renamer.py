@@ -575,7 +575,7 @@ def rename_pdfs_in_directory(
     *,
     config: RenamerConfig,
     files_override: list[Path] | None = None,
-) -> None:
+) -> set[Path]:
     """Rename all PDFs in a directory using the configured pipeline (extract, LLM/heuristic, rename).
 
     Write export metadata, plan file, and summary JSON after processing. Use files_override to
@@ -614,7 +614,7 @@ def rename_pdfs_in_directory(
             dry_run=bool(config.dry_run),
             failures=[],
         )
-        return
+        return set()
 
     def _mtime_key(p: Path) -> float:
         try:
@@ -634,6 +634,7 @@ def rename_pdfs_in_directory(
     failure_details: list[dict[str, str]] = []
     export_rows: list[dict[str, object]] = []
     plan_entries: list[dict[str, str]] = []
+    renamed_targets: set[Path] = set()
 
     results = _produce_rename_results(files, config, rules=rules)
 
@@ -725,6 +726,8 @@ def rename_pdfs_in_directory(
                     )
                 else:
                     logger.info("Renamed '%s' to '%s'", file_path.name, target.name)
+                    if target != file_path:
+                        renamed_targets.add(target.resolve())
                 renamed_count += 1
         except Exception as e:
             logger.exception("Failed to process %s: %s", file_path, e)
@@ -742,6 +745,7 @@ def rename_pdfs_in_directory(
         failed_count=failed_count,
         failure_details=failure_details,
     )
+    return renamed_targets
 
 
 def run_watch_loop(
@@ -815,28 +819,16 @@ def run_watch_loop(
                     for single in to_process:
                         if stop_requested:
                             break
-                        rename_pdfs_in_directory(
+                        actual_targets = rename_pdfs_in_directory(
                             path,
                             config=config,
                             files_override=[single],
                         )
-                    # Track renamed files: re-scan directory and update seen with new filenames/mtimes
-                    post_files = _collect_pdf_files(
-                        path,
-                        recursive=config.recursive,
-                        max_depth=config.max_depth,
-                        include_patterns=config.include_patterns,
-                        exclude_patterns=config.exclude_patterns,
-                        skip_if_already_named=config.skip_if_already_named,
-                        files_override=None,
-                        rules=rules,
-                    )
-                    for p in post_files:
-                        if p not in seen:
-                            with contextlib.suppress(OSError):
-                                seen[p] = p.stat().st_mtime
-                            # P1: Mark newly appeared files as renamed targets
-                            renamed_targets.add(p)
+                        if actual_targets:
+                            renamed_targets.update(actual_targets)
+                            for renamed_target in actual_targets:
+                                with contextlib.suppress(OSError):
+                                    seen[renamed_target] = renamed_target.stat().st_mtime
                 if not stop_requested:
                     time.sleep(interval_seconds)
             except Exception as exc:

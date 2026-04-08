@@ -1,30 +1,25 @@
-PYTHON ?= python
-PIP ?= $(PYTHON) -m pip
-RUFF ?= $(PYTHON) -m ruff
-MYPY ?= $(PYTHON) -m mypy
-PYTEST ?= $(PYTHON) -m pytest
+UV ?= uv
 
 .PHONY: install-dev lint format typecheck test cov clean hygiene-check release-check ci
 
 install-dev:
-	$(PIP) install -U pip
-	$(PIP) install -e '.[dev,pdf]'
+	$(UV) sync --extra dev --extra pdf --extra tui
 
 lint:
-	$(RUFF) format --check .
-	$(RUFF) check .
+	$(UV) run ruff format --check .
+	$(UV) run ruff check .
 
 format:
-	$(RUFF) format .
+	$(UV) run ruff format .
 
 typecheck:
-	$(MYPY) src/ai_pdf_renamer/
+	$(UV) run mypy src/ai_pdf_renamer/
 
 test:
-	$(PYTEST) -q
+	$(UV) run pytest -q
 
 cov:
-	$(PYTEST) --cov --cov-report=term-missing -q
+	$(UV) run pytest --cov=ai_pdf_renamer --cov-report=term-missing --cov-fail-under=85 -q
 
 clean:
 	rm -rf .pytest_cache .ruff_cache .mypy_cache .cache
@@ -42,6 +37,6 @@ hygiene-check:
 		exit 1; \
 	fi
 
-release-check: hygiene-check lint typecheck test
+release-check: hygiene-check lint typecheck cov
 
 ci: release-check
