@@ -415,7 +415,7 @@ def test_validate_result_string_tokens() -> None:
         "final_summary_tokens": "token1, token2, token3",
     }
     result = validate_llm_document_result(parsed)
-    assert result.final_summary_tokens == ["token1", "token2", "token3"]
+    assert result.final_summary_tokens == ("token1", "token2", "token3")
 
 
 def test_validate_result_category_na() -> None:
@@ -450,6 +450,6 @@ def test_validate_result_valid() -> None:
     }
     result = validate_llm_document_result(parsed)
     assert result.summary == "An invoice from Acme Corp"
-    assert result.keywords == ["invoice", "acme"]
+    assert result.keywords == ("invoice", "acme")
     assert result.category == "invoice"
-    assert result.final_summary_tokens == ["token1", "token2"]
+    assert result.final_summary_tokens == ("token1", "token2")

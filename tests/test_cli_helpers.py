@@ -490,8 +490,8 @@ class TestQueueHandler:
             level=logging.INFO,
             pathname="test.py",
             lineno=1,
-            msg="hello %s %s",
-            args=("only_one",),  # Too few args for format string
+            msg="hello %s",
+            args=("world",),
             exc_info=None,
         )
 

@@ -273,7 +273,7 @@ def _get_llm_summary_and_keywords(
     suggested_doc_type: str | None,
     override_category: str | None,
     rules: ProcessingRules | None,
-) -> tuple[str, list[str], str | None, list[str] | None]:
+) -> tuple[str, list[str] | tuple[str, ...], str | None, list[str] | tuple[str, ...] | None]:
     """Run LLM to get summary, keywords, and optionally a precomputed category.
 
     Returns (summary, raw_keywords, precomputed_category, precomputed_summary_tokens).
@@ -323,7 +323,7 @@ def _get_llm_summary_and_keywords(
         max_content_chars=_effective_max_content_chars,
         max_content_tokens=config.max_content_tokens,
     )
-    raw_keywords = (
+    raw_keywords: tuple[str, ...] | list[str] = (
         get_document_keywords(
             llm_client,
             summary,
@@ -342,7 +342,7 @@ def _resolve_final_summary_tokens(
     summary: str,
     keywords: list[str],
     category: str,
-    precomputed_summary_tokens: list[str] | None,
+    precomputed_summary_tokens: list[str] | tuple[str, ...] | None,
 ) -> list[str]:
     """Resolve final summary tokens from LLM analysis or a separate LLM call.
 
@@ -351,7 +351,7 @@ def _resolve_final_summary_tokens(
     """
     if config.use_single_llm_call:
         if precomputed_summary_tokens:
-            return precomputed_summary_tokens
+            return list(precomputed_summary_tokens)
         if summary and summary != "na":
             return split_to_tokens(summary)[:5]
         return []
@@ -404,10 +404,10 @@ def _get_category_summary_keywords_metadata(
 
     # --- Get summary + keywords ---
     precomputed_category: str | None = None
-    precomputed_summary_tokens: list[str] | None = None
+    precomputed_summary_tokens: list[str] | tuple[str, ...] | None = None
     if skip_llm_by_rule:
         summary = ""
-        raw_keywords: list[str] = []
+        raw_keywords: list[str] | tuple[str, ...] = []
         category = cat_heur
         category_for_filename = heuristic_scorer.get_display_category(cat_heur, config.category_display)
         category_source = "heuristic"

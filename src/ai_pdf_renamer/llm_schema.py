@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 
 from .data_paths import data_dir, package_data_path
@@ -59,9 +59,9 @@ class DocumentAnalysisResult:
     """Structured result of LLM document analysis; used for validation and defaults."""
 
     summary: str = DEFAULT_LLM_SUMMARY
-    keywords: list[str] = field(default_factory=list)
+    keywords: tuple[str, ...] = ()
     category: str = DEFAULT_LLM_CATEGORY
-    final_summary_tokens: list[str] | None = None
+    final_summary_tokens: tuple[str, ...] | None = None
 
 
 def validate_llm_document_result(parsed: dict[str, object]) -> DocumentAnalysisResult:
@@ -91,8 +91,10 @@ def validate_llm_document_result(parsed: dict[str, object]) -> DocumentAnalysisR
     else:
         summary = DEFAULT_LLM_SUMMARY
 
-    keywords = parsed.get("keywords")
-    keywords = [str(x).strip() for x in keywords if x and str(x).strip()] if isinstance(keywords, list) else []
+    raw_keywords = parsed.get("keywords")
+    keywords = (
+        tuple(str(x).strip() for x in raw_keywords if x and str(x).strip()) if isinstance(raw_keywords, list) else ()
+    )
 
     category = parsed.get("category")
     if isinstance(category, str) and category.strip():
@@ -102,11 +104,12 @@ def validate_llm_document_result(parsed: dict[str, object]) -> DocumentAnalysisR
     else:
         category = DEFAULT_LLM_CATEGORY
 
-    final_summary_tokens = parsed.get("final_summary_tokens")
-    if isinstance(final_summary_tokens, list):
-        final_summary_tokens = [str(x).strip() for x in final_summary_tokens if x and str(x).strip()]
-    elif isinstance(final_summary_tokens, str) and final_summary_tokens.strip():
-        final_summary_tokens = [t.strip() for t in final_summary_tokens.split(",") if t.strip()]
+    raw_fst = parsed.get("final_summary_tokens")
+    final_summary_tokens: tuple[str, ...] | None
+    if isinstance(raw_fst, list):
+        final_summary_tokens = tuple(str(x).strip() for x in raw_fst if x and str(x).strip())
+    elif isinstance(raw_fst, str) and raw_fst.strip():
+        final_summary_tokens = tuple(t.strip() for t in raw_fst.split(",") if t.strip())
     else:
         final_summary_tokens = None
 

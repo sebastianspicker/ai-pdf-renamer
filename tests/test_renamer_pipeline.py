@@ -721,16 +721,6 @@ class TestWriteSummaryJson_merged:
 # --- Merged from test_round6_renamer.py ---
 
 
-def _cfg_merged(**overrides: Any) -> RenamerConfig:
-    """Build a RenamerConfig with sensible test defaults."""
-    defaults: dict[str, Any] = {
-        "use_llm": False,
-        "use_single_llm_call": False,
-    }
-    defaults.update(overrides)
-    return RenamerConfig(**defaults)
-
-
 # ---------------------------------------------------------------------------
 # Post-rename hook HTTP path (lines 134-191)
 # ---------------------------------------------------------------------------

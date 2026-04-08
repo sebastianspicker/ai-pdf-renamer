@@ -76,7 +76,7 @@ def test_get_document_analysis_parses_valid_json():
     )
     assert isinstance(result, DocumentAnalysisResult)
     assert result.summary == "This is an invoice from Amazon."
-    assert result.keywords == ["invoice", "amazon", "payment"]
+    assert result.keywords == ("invoice", "amazon", "payment")
     assert result.category == "invoice"
     assert len(client.calls) == 1  # Single call
 
@@ -88,7 +88,7 @@ def test_get_document_analysis_returns_defaults_on_empty_content():
     result = get_document_analysis(client, "", language="en")
     assert result.summary == "na"
     assert result.category == "unknown"
-    assert result.keywords == []
+    assert result.keywords == ()
     assert len(client.calls) == 0  # No call made
 
 
@@ -298,9 +298,9 @@ def test_generate_filename_single_call_path(monkeypatch):
 
     analysis_result = DocumentAnalysisResult(
         summary="Invoice from Amazon for electronics.",
-        keywords=["invoice", "amazon", "electronics"],
+        keywords=("invoice", "amazon", "electronics"),
         category="invoice",
-        final_summary_tokens=["amazon", "electronics"],
+        final_summary_tokens=("amazon", "electronics"),
     )
     monkeypatch.setattr(filename_mod, "get_document_analysis", lambda *a, **k: analysis_result)
 

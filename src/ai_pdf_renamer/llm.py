@@ -244,7 +244,7 @@ def get_document_keywords(
     temperature: float = 0.0,
     suggested_category: str | None = None,
     lenient_json: bool = False,
-) -> list[str] | None:
+) -> tuple[str, ...] | None:
     """Extract 5-7 keywords from a document summary via LLM. Return None on failure."""
     cat_hint = ""
     if suggested_category and suggested_category.strip():

@@ -464,35 +464,6 @@ class TestGenerateFilename:
 # ---------------------------------------------------------------------------
 
 
-def _make_scorer_merged(
-    categories: list[tuple[str, str, float]] | None = None,
-) -> HeuristicScorer:
-    """Build a HeuristicScorer from (regex, category, score) triples."""
-    if categories is None:
-        categories = [
-            (r"invoice", "invoice", 10.0),
-            (r"contract", "contract", 5.0),
-        ]
-    rules = [
-        HeuristicRule(pattern=re.compile(regex, re.IGNORECASE), category=cat, score=sc) for regex, cat, sc in categories
-    ]
-    return HeuristicScorer(rules=rules)
-
-
-def _make_llm_client_merged() -> MagicMock:
-    """Return a MagicMock that satisfies LLMClient protocol."""
-    client = MagicMock()
-    client.model = "test-model"
-    client.base_url = "http://localhost:8080"
-    client.complete.return_value = '{"summary": "test"}'
-    client.complete_vision.return_value = '{"summary": "test"}'
-    return client
-
-
-def _empty_stopwords_merged() -> Stopwords:
-    return Stopwords(words=set())
-
-
 # ===========================================================================
 # 1. filename.py — template with missing/undefined variable
 # ===========================================================================
@@ -556,8 +527,10 @@ class TestFilenameMaxCharsTruncation:
         filename = "20260101-invoice-payment-reminder-final"
         result = _truncate_filename_to_max_chars(filename, config)
         assert len(result) <= 30
-        # Should truncate at a separator boundary when possible
-        assert "-" not in result or result == result.rsplit("-", 1)[0] or len(result) <= 30
+        # When truncated, should end at a separator boundary (not mid-word)
+        if len(result) < len(filename):
+            assert filename.startswith(result)
+            assert not result.endswith("-")
 
     def test_truncation_no_separator_hard_cut(self) -> None:
         from ai_pdf_renamer.filename import _truncate_filename_to_max_chars

@@ -317,7 +317,7 @@ def build_config(
     for part_name, part_dict in _parts:
         for k in part_dict:
             if k in _seen_keys:
-                logger.warning("Config key %r defined in both %s and %s (latter wins)", k, _seen_keys[k], part_name)
+                raise RuntimeError(f"Config key {k!r} defined in both {_seen_keys[k]} and {part_name}")
             _seen_keys[k] = part_name
         kwargs.update(part_dict)
 

@@ -176,7 +176,7 @@ class TestGetDocumentKeywords:
         client = _make_client()
         client.complete.return_value = '{"keywords":["invoice","Amazon","headphones","order","2024"]}'
         result = get_document_keywords(client, "An invoice from Amazon for headphones.", language="en")
-        assert result == ["invoice", "Amazon", "headphones", "order", "2024"]
+        assert result == ("invoice", "Amazon", "headphones", "order", "2024")
 
     def test_empty_response_returns_none(self) -> None:
         """Unparseable response returns None."""
@@ -202,7 +202,7 @@ class TestGetDocumentKeywords:
             language="de",
             suggested_category="Rechnung",
         )
-        assert result == ["Rechnung", "Amazon", "Kopfhörer"]
+        assert result == ("Rechnung", "Amazon", "Kopfhörer")
 
     def test_empty_keyword_list_returns_none(self) -> None:
         """An empty keywords array returns None (via validate_llm_document_result)."""
@@ -306,7 +306,7 @@ class TestGetDocumentAnalysis:
         )
         assert isinstance(result, DocumentAnalysisResult)
         assert result.summary == "Invoice from Amazon for electronics."
-        assert result.keywords == ["invoice", "Amazon", "electronics", "order", "2024"]
+        assert result.keywords == ("invoice", "Amazon", "electronics", "order", "2024")
         assert result.category == "Invoice"
 
     def test_bad_json_returns_defaults(self) -> None:
@@ -321,7 +321,7 @@ class TestGetDocumentAnalysis:
         assert isinstance(result, DocumentAnalysisResult)
         assert result.summary == DEFAULT_LLM_SUMMARY
         assert result.category == DEFAULT_LLM_CATEGORY
-        assert result.keywords == []
+        assert result.keywords == ()
 
     def test_short_content_returns_defaults(self) -> None:
         """Content under 50 chars returns default result without calling LLM."""
@@ -355,7 +355,7 @@ class TestGetDocumentAnalysis:
         )
         assert result.summary == "Only a summary here."
         assert result.category == DEFAULT_LLM_CATEGORY
-        assert result.keywords == []
+        assert result.keywords == ()
 
     def test_with_allowed_categories(self) -> None:
         """allowed_categories is passed through to prompt builder."""

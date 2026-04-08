@@ -162,14 +162,20 @@ class RenamerConfig:
         ext_kw = {k: v for k, v in flat_kwargs.items() if k in _EXTRACTION_FIELDS}
         out_kw = {k: v for k, v in flat_kwargs.items() if k in _OUTPUT_FIELDS}
 
-        object.__setattr__(self, "llm", llm if llm is not None and not llm_kw else LLMConfig(**llm_kw))
-        object.__setattr__(
-            self, "heuristic", heuristic if heuristic is not None and not heur_kw else HeuristicConfig(**heur_kw)
-        )
-        object.__setattr__(
-            self, "extraction", extraction if extraction is not None and not ext_kw else ExtractionConfig(**ext_kw)
-        )
-        object.__setattr__(self, "output", output if output is not None and not out_kw else OutputConfig(**out_kw))
+        # Merge flat overrides into provided sub-configs (preserves existing values)
+        def _merge(cls: type, existing: Any, overrides: dict[str, Any]) -> Any:
+            if existing is not None and overrides:
+                base = {f.name: getattr(existing, f.name) for f in fields(cls)}
+                base.update(overrides)
+                return cls(**base)
+            if existing is not None:
+                return existing
+            return cls(**overrides)
+
+        object.__setattr__(self, "llm", _merge(LLMConfig, llm, llm_kw))
+        object.__setattr__(self, "heuristic", _merge(HeuristicConfig, heuristic, heur_kw))
+        object.__setattr__(self, "extraction", _merge(ExtractionConfig, extraction, ext_kw))
+        object.__setattr__(self, "output", _merge(OutputConfig, output, out_kw))
 
         # Validation
         if self.desired_case not in _VALID_DESIRED_CASES:

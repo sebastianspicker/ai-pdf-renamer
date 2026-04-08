@@ -232,11 +232,16 @@ def pdf_to_text_with_ocr(
     ocrmypdf and system Tesseract. Falls back to non-OCR extraction on
     missing dependency or OCR failure.
     """
-    text = pdf_to_text(
-        filepath,
-        max_tokens=max_tokens,
-        max_pages=max_pages,
-    )
+    try:
+        text = pdf_to_text(
+            filepath,
+            max_tokens=max_tokens,
+            max_pages=max_pages,
+        )
+    except (RuntimeError, ValueError) as exc:
+        # Extraction failed entirely — proceed to OCR if available
+        logger.info("Text extraction failed for %s, will try OCR: %s", filepath, exc)
+        text = ""
     if not filepath or len(text.strip()) >= min_chars_for_ocr:
         return text
 

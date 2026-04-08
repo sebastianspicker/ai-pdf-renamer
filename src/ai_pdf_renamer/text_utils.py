@@ -216,11 +216,13 @@ def subtract_tokens(main_tokens: Iterable[str], remove_tokens: Iterable[str]) ->
     return result
 
 
-def normalize_keywords(raw: str | list[str] | None) -> list[str]:
+def normalize_keywords(raw: str | list[str] | tuple[str, ...] | None) -> list[str]:
     """Clean, deduplicate, and filter placeholder tokens from keywords, capped at MAX_NORMALIZED_KEYWORDS."""
     if raw is None:
         return []
-    tokens = [str(x).strip() for x in raw] if isinstance(raw, list) else [t.strip() for t in str(raw).split(",")]
+    tokens = (
+        [str(x).strip() for x in raw] if isinstance(raw, (list, tuple)) else [t.strip() for t in str(raw).split(",")]
+    )
 
     filtered: list[str] = []
     for token in tokens:

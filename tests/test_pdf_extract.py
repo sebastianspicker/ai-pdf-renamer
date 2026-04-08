@@ -1374,7 +1374,7 @@ class TestHookHTTPPost:
         ):
             _run_post_rename_hook("http://remote.example.com/hook", old, new, {})
 
-        assert any("plain HTTP" in r.message.lower() or "unencrypted" in r.message.lower() for r in caplog.records)
+        assert any("plain http" in r.message.lower() or "unencrypted" in r.message.lower() for r in caplog.records)
 
     def test_hook_http_request_exception(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """HTTP hook failure is logged, not raised."""
