@@ -5,6 +5,8 @@ import logging
 import os
 from pathlib import Path
 
+_MANAGED_HANDLER_ATTR = "_ai_pdf_renamer_managed"
+
 
 class StructuredLogFormatter(logging.Formatter):
     """Format log records as one JSON object per line (for CI/monitoring)."""
@@ -49,22 +51,41 @@ def setup_logging(*, log_file: str | Path = "error.log", level: int = logging.IN
     else:
         formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
-    if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in root.handlers):
+    console_handlers = [
+        h for h in root.handlers if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
+    ]
+    for handler in console_handlers:
+        handler.setLevel(level)
+        handler.setFormatter(formatter)
+    if not console_handlers:
         console_handler = logging.StreamHandler()
         console_handler.setLevel(level)
         console_handler.setFormatter(formatter)
+        setattr(console_handler, _MANAGED_HANDLER_ATTR, True)
         root.addHandler(console_handler)
 
-    if not any(isinstance(h, logging.FileHandler) for h in root.handlers):
-        try:
-            log_path = Path(log_file)
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            file_handler = logging.FileHandler(str(log_file), encoding="utf-8")
-            file_handler.setLevel(level)
-            file_handler.setFormatter(formatter)
-            root.addHandler(file_handler)
-        except OSError as exc:
-            # P2: Log to stderr as fallback instead of swallowing silently
-            import sys
+    try:
+        log_path = Path(log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        managed_file_handlers = [
+            h for h in root.handlers if isinstance(h, logging.FileHandler) and getattr(h, _MANAGED_HANDLER_ATTR, False)
+        ]
+        for handler in managed_file_handlers:
+            if Path(handler.baseFilename) != log_path:
+                root.removeHandler(handler)
+                handler.close()
+                continue
+            handler.setLevel(level)
+            handler.setFormatter(formatter)
+            return
 
-            print(f"Warning: Could not create file handler for {log_file}: {exc}", file=sys.stderr)
+        file_handler = logging.FileHandler(str(log_file), encoding="utf-8")
+        file_handler.setLevel(level)
+        file_handler.setFormatter(formatter)
+        setattr(file_handler, _MANAGED_HANDLER_ATTR, True)
+        root.addHandler(file_handler)
+    except OSError as exc:
+        # P2: Log to stderr as fallback instead of swallowing silently
+        import sys
+
+        print(f"Warning: Could not create file handler for {log_file}: {exc}", file=sys.stderr)

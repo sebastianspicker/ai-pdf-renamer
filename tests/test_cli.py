@@ -1133,6 +1133,19 @@ class TestMainErrorHandling:
         assert exc_info.value.code == 1
         rename_mock.assert_not_called()
 
+    def test_main_exits_on_invalid_rules_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A malformed --rules-file is fatal and does not continue with no rules."""
+        monkeypatch.setattr(cli_mod, "setup_logging", lambda **k: None)
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+
+        bad_rules = tmp_path / "bad-rules.json"
+        bad_rules.write_text("{bad", encoding="utf-8")
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli_mod.main(["--dir", str(tmp_path), "--dry-run", "--rules-file", str(bad_rules)])
+
+        assert exc_info.value.code == 1
+
 
 def test_cli_module_entrypoint_runs_help(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     """Executing the module directly should invoke main() and print argparse help."""

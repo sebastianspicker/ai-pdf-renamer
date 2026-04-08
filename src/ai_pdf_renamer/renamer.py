@@ -462,7 +462,7 @@ def suggest_rename_for_file(
     Does not rename or prompt. Returns (new_base, meta, error).
     new_base is None if content is empty or an error occurred.
     """
-    rules = load_processing_rules(config.rules_file)
+    rules = load_processing_rules(config.rules_file, raise_on_error=bool(config.rules_file))
     try:
         content, used_vision = _extract_pdf_content(file_path, config)
     except Exception as exc:
@@ -664,7 +664,7 @@ def rename_pdfs_in_directory(
         raise NotADirectoryError(f"Not a directory: {path}")
     path = path.resolve()
 
-    rules = load_processing_rules(config.rules_file)
+    rules = load_processing_rules(config.rules_file, raise_on_error=bool(config.rules_file))
     files = _collect_pdf_files(
         path,
         recursive=config.recursive,
@@ -836,7 +836,7 @@ def run_watch_loop(
     if not path.is_dir():
         raise NotADirectoryError(f"Not a directory: {path}")
 
-    rules = load_processing_rules(config.rules_file)
+    rules = load_processing_rules(config.rules_file, raise_on_error=bool(config.rules_file))
 
     stop_requested = False
 

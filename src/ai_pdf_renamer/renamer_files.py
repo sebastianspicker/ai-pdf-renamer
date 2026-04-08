@@ -42,8 +42,8 @@ def collect_pdf_files(
         candidates = [p for p in files_override if p.is_file() and p.suffix.lower() == ".pdf"]
     elif recursive:
         candidates = []
-        for p in directory.rglob("*.pdf"):
-            if not p.is_file() or p.name.startswith("."):
+        for p in directory.rglob("*"):
+            if not p.is_file() or p.suffix.lower() != ".pdf" or p.name.startswith("."):
                 continue
             # P2: Skip symlinks pointing outside the directory tree
             if not _is_safe_path(p, directory):

@@ -188,6 +188,18 @@ def test_collect_recursive_skips_hidden(tmp_path: Path) -> None:
     assert ".hidden.pdf" not in names
 
 
+def test_collect_recursive_accepts_uppercase_pdf_extension(tmp_path: Path) -> None:
+    """Recursive mode should collect PDFs regardless of extension casing."""
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    upper = nested / "REPORT.PDF"
+    upper.write_bytes(b"%PDF")
+
+    result = collect_pdf_files(tmp_path, recursive=True)
+
+    assert result == [upper]
+
+
 def test_collect_recursive_skips_unsafe_symlinks(tmp_path: Path) -> None:
     """Symlinks pointing outside root are skipped in recursive mode."""
     import tempfile

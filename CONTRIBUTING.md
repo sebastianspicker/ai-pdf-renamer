@@ -24,7 +24,8 @@ Clean ignored local artifacts (optional but recommended before reviews):
 make clean
 ```
 
-`make release-check` runs hygiene guard + lint + type check + coverage-gated tests and matches the CI gate exactly.
+`make release-check` runs the same hygiene, lint, type-check, and coverage-gated test commands as CI.
+CI still adds `uv sync --frozen --extra dev --extra pdf --extra tui` and a Python-version matrix, so local runs are close parity rather than byte-for-byte identical.
 Run `make typecheck` alone to run `mypy` in isolation. Fix any reported issues locally first.
 
 ## Architecture overview
