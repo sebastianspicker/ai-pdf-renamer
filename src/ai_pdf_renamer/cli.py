@@ -178,13 +178,14 @@ def _prompt_choice(
 
 def _resolve_log_config(args: argparse.Namespace) -> tuple[str, int]:
     """Resolve log file path and log level from args and env. Returns (log_file_path, log_level)."""
-    _default_log_dir = Path.home() / ".local" / "share" / "ai-pdf-renamer"
-    _default_log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = (
-        getattr(args, "log_file", None)
-        or os.environ.get("AI_PDF_RENAMER_LOG_FILE")
-        or str(_default_log_dir / "error.log")
-    )
+    log_file = getattr(args, "log_file", None) or os.environ.get("AI_PDF_RENAMER_LOG_FILE")
+    if not log_file:
+        _default_log_dir = Path.home() / ".local" / "share" / "ai-pdf-renamer"
+        try:
+            _default_log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = str(_default_log_dir / "error.log")
+        except OSError:
+            log_file = str(Path.cwd() / "error.log")
     if getattr(args, "verbose", False):
         log_level = logging.DEBUG
     elif getattr(args, "quiet", False):

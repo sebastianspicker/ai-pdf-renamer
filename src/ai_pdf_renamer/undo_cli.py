@@ -23,6 +23,9 @@ def run_undo(log_path: Path, dry_run: bool) -> None:
             file=sys.stderr,
         )
         return
+    # Use the log file's directory as the trusted root: both source and target of every
+    # undo operation must resolve within this tree to prevent path-traversal attacks.
+    trusted_root = log_path.resolve().parent
     pairs: list[tuple[str, str]] = []
     for line in log_path.read_text(encoding="utf-8").splitlines():
         s = line.strip()
@@ -40,10 +43,10 @@ def run_undo(log_path: Path, dry_run: bool) -> None:
     pairs.reverse()
     for old_path, new_path in pairs:
         old_p, new_p = Path(old_path), Path(new_path)
-        if not is_path_within(old_p, old_p.parent):
+        if not is_path_within(old_p, trusted_root):
             print(f"Skip (path traversal detected): {old_p}", file=sys.stderr)
             continue
-        if not is_path_within(new_p, new_p.parent):
+        if not is_path_within(new_p, trusted_root):
             print(f"Skip (path traversal detected): {new_p}", file=sys.stderr)
             continue
         if not new_p.exists():

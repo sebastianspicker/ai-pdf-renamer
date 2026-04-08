@@ -150,6 +150,12 @@ class RenamerConfig:
         output: OutputConfig | None = None,
         **flat_kwargs: Any,
     ) -> None:
+        # Detect unknown flat kwargs before dispatching to sub-configs so typos
+        # (e.g. ``date_format`` instead of ``date_locale``) are not silently dropped.
+        unknown = flat_kwargs.keys() - _ALL_FLAT_FIELDS
+        if unknown:
+            raise TypeError(f"RenamerConfig() got unexpected keyword argument(s): {', '.join(sorted(unknown))}")
+
         # Split flat kwargs into sub-config buckets
         llm_kw = {k: v for k, v in flat_kwargs.items() if k in _LLM_FIELDS}
         heur_kw = {k: v for k, v in flat_kwargs.items() if k in _HEURISTIC_FIELDS}

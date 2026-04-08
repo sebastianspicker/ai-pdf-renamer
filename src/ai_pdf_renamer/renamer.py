@@ -86,6 +86,8 @@ def _write_pdf_title_metadata(pdf_path: Path, title: str) -> None:
 
 _CSV_FORMULA_TRIGGERS = frozenset("=+-@|")
 _CSV_CONTROL_CHARS_RE = re.compile(r"[\t\r\n]")
+# C0 control chars (incl. NUL) must be stripped from env-var values passed to hook commands.
+_HOOK_ENV_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def _sanitize_csv_cell(value: object) -> object:
@@ -156,9 +158,10 @@ def _write_summary_json(
 
 def _run_post_rename_hook(hook_cmd: str, old_path: Path, new_path: Path, meta: dict[str, object]) -> None:
     """Run post-rename hook command or HTTP endpoint. On failure log and continue."""
-    # Sanitize path strings: strip NUL bytes (could truncate C strings) and control chars
-    _old = str(old_path).replace("\x00", "")
-    _new = str(new_path).replace("\x00", "")
+    # Sanitize path strings: strip NUL bytes (could truncate C strings) and other
+    # C0 control characters (\x00-\x1f, \x7f) that could cause issues in env vars.
+    _old = _HOOK_ENV_CONTROL_RE.sub("", str(old_path))
+    _new = _HOOK_ENV_CONTROL_RE.sub("", str(new_path))
     env = {**os.environ, "AI_PDF_RENAMER_OLD_PATH": _old, "AI_PDF_RENAMER_NEW_PATH": _new}
     try:
         meta_json = json.dumps(meta, default=str)
