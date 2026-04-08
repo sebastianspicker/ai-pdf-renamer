@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from ai_pdf_renamer.rules import (
     ProcessingRules,
     force_category_for_basename,
@@ -25,12 +27,8 @@ def test_load_processing_rules_invalid_json_returns_none(tmp_path: Path) -> None
 def test_load_processing_rules_invalid_json_raises_when_requested(tmp_path: Path) -> None:
     p = tmp_path / "rules.json"
     p.write_text("not json")
-    try:
+    with pytest.raises(ValueError, match="Could not load processing rules"):
         load_processing_rules(p, raise_on_error=True)
-    except ValueError as exc:
-        assert "Could not load processing rules" in str(exc)
-    else:
-        raise AssertionError("Expected ValueError for invalid rules file")
 
 
 def test_load_processing_rules_valid(tmp_path: Path) -> None:

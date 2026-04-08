@@ -7,7 +7,7 @@ name = "ai-pdf-renamer"
 dynamic = ["version"]
 description = "Rename PDFs based on extracted text, heuristic scoring, and an optional local LLM."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 license = { file = "LICENSE" }
 authors = [{ name = "sebastian" }]
 dependencies = [

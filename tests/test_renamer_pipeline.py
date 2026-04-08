@@ -393,7 +393,7 @@ class TestSuggestRenameForFile:
                 None,
             ),
         )
-        monkeypatch.setattr(renamer, "load_processing_rules", lambda path: None)
+        monkeypatch.setattr(renamer, "load_processing_rules", lambda path, **kwargs: None)
 
         new_base, meta, exc = renamer.suggest_rename_for_file(pdf, cfg)
 
@@ -413,7 +413,7 @@ class TestSuggestRenameForFile:
             "_extract_pdf_content",
             lambda path, config: ("", False),
         )
-        monkeypatch.setattr(renamer, "load_processing_rules", lambda path: None)
+        monkeypatch.setattr(renamer, "load_processing_rules", lambda path, **kwargs: None)
 
         new_base, meta, exc = renamer.suggest_rename_for_file(pdf, cfg)
 
@@ -431,7 +431,7 @@ class TestSuggestRenameForFile:
             raise OSError("cannot read PDF")
 
         monkeypatch.setattr(renamer, "_extract_pdf_content", _raise)
-        monkeypatch.setattr(renamer, "load_processing_rules", lambda path: None)
+        monkeypatch.setattr(renamer, "load_processing_rules", lambda path, **kwargs: None)
 
         new_base, meta, exc = renamer.suggest_rename_for_file(pdf, cfg)
 
@@ -462,7 +462,7 @@ class TestSuggestRenameForFile:
                 inner_exc,
             ),
         )
-        monkeypatch.setattr(renamer, "load_processing_rules", lambda path: None)
+        monkeypatch.setattr(renamer, "load_processing_rules", lambda path, **kwargs: None)
 
         new_base, meta, exc = renamer.suggest_rename_for_file(pdf, cfg)
 
@@ -983,9 +983,7 @@ class TestWatchLoop:
 
 
 class TestRenamePipelineEdgeCases:
-    def test_produce_rename_results_reports_progress(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_produce_rename_results_reports_progress(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         pdf_a = tmp_path / "a.pdf"
         pdf_b = tmp_path / "b.pdf"
         pdf_a.write_bytes(b"%PDF-1.4 a")

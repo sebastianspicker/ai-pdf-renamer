@@ -265,7 +265,7 @@ def run_doctor_checks(args: argparse.Namespace) -> int:
         try:
             path = data_path(filename)
             raw = path.read_text(encoding="utf-8")
-            parsed = json.loads(raw)
+            json.loads(raw)
             if filename == "heuristic_scores.json":
                 try:
                     rules = load_heuristic_rules(path)
@@ -539,8 +539,7 @@ def _run_renamer_or_watch(
     except requests.RequestException as exc:
         _console.print(f"[red]LLM/network error:[/red] {exc}")
         _console.print(
-            "[dim]Check server status, endpoint URL, or try increasing --llm-timeout. "
-            "Use --doctor to verify.[/dim]"
+            "[dim]Check server status, endpoint URL, or try increasing --llm-timeout. Use --doctor to verify.[/dim]"
         )
         raise SystemExit(1) from exc
     except Exception as exc:

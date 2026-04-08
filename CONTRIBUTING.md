@@ -58,7 +58,7 @@ Data flow: `cli.py` builds a `RenamerConfig` → `renamer.py` iterates PDFs → 
 
 ## Code style
 
-- Python 3.11+.
+- Python 3.11.
 - Format with Ruff: `ruff format .`
 - Lint with Ruff: `ruff check .`
 - Type-checked with mypy strict: `mypy src/ai_pdf_renamer/` (required, enforced in CI).

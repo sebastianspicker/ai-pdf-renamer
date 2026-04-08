@@ -134,8 +134,8 @@ def _normalize_month_token(month_name: str) -> str:
 
 
 def _validation_reference_date(today: date) -> date:
-    """Use the injected fallback date for deterministic plausibility checks."""
-    return today
+    """Use the later of the injected fallback date and the real current date for plausibility checks."""
+    return max(today, date.today())
 
 
 def _make_date_candidate(

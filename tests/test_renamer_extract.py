@@ -361,6 +361,6 @@ def test_log_extraction_strategy_quotes_dynamic_values(caplog: pytest.LogCapture
         )
 
     message = caplog.records[-1].message
-    assert 'file=' in message and 'strategy=' in message and 'reason=' in message
+    assert "file=" in message and "strategy=" in message and "reason=" in message
     assert 'file="bad \\"name\\n.pdf"' in message
     assert 'reason="line break\\nand \\"quotes\\""' in message

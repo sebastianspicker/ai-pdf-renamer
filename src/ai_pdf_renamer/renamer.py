@@ -53,9 +53,9 @@ class _NullProgressReporter:
 class _RichProgressReporter:
     def __init__(self, total: int, *, quiet: bool) -> None:
         from rich.console import Console
-        from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
+        from rich.progress import BarColumn, Progress, ProgressColumn, TextColumn, TimeElapsedColumn
 
-        columns: list[object] = []
+        columns: list[ProgressColumn] = []
         if quiet:
             columns.extend(
                 [
@@ -71,7 +71,7 @@ class _RichProgressReporter:
                     TextColumn("{task.percentage:>3.0f}%"),
                 ]
             )
-        columns.extend([TextColumn("{task.fields[filename]}", overflow="ellipsis"), TimeElapsedColumn()])
+        columns.extend([TextColumn("{task.fields[filename]}"), TimeElapsedColumn()])
         self._progress = Progress(*columns, console=Console(stderr=True), transient=True)
         self._task_id = self._progress.add_task("Processing PDFs", total=total, filename="")
 

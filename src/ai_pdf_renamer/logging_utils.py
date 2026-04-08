@@ -54,9 +54,9 @@ def setup_logging(*, log_file: str | Path = "error.log", level: int = logging.IN
     console_handlers = [
         h for h in root.handlers if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
     ]
-    for handler in console_handlers:
-        handler.setLevel(level)
-        handler.setFormatter(formatter)
+    for console_handler in console_handlers:
+        console_handler.setLevel(level)
+        console_handler.setFormatter(formatter)
     if not console_handlers:
         console_handler = logging.StreamHandler()
         console_handler.setLevel(level)
@@ -70,13 +70,13 @@ def setup_logging(*, log_file: str | Path = "error.log", level: int = logging.IN
         managed_file_handlers = [
             h for h in root.handlers if isinstance(h, logging.FileHandler) and getattr(h, _MANAGED_HANDLER_ATTR, False)
         ]
-        for handler in managed_file_handlers:
-            if Path(handler.baseFilename) != log_path:
-                root.removeHandler(handler)
-                handler.close()
+        for file_handler in managed_file_handlers:
+            if Path(file_handler.baseFilename) != log_path:
+                root.removeHandler(file_handler)
+                file_handler.close()
                 continue
-            handler.setLevel(level)
-            handler.setFormatter(formatter)
+            file_handler.setLevel(level)
+            file_handler.setFormatter(formatter)
             return
 
         file_handler = logging.FileHandler(str(log_file), encoding="utf-8")

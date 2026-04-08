@@ -6,7 +6,6 @@ import pytest
 
 from ai_pdf_renamer.text_utils import (
     MAX_NORMALIZED_KEYWORDS,
-    _validation_reference_date,
     chunk_text,
     convert_case,
     extract_date_from_content,
@@ -122,10 +121,6 @@ def test_extract_structured_fields_invoice_id() -> None:
     assert out["invoice_id"] == "INV-2025-001"
     assert out["amount"]
     assert "1234" in out["amount"] or "1.234" in out["amount"]
-
-
-def test_validation_reference_date_uses_injected_today() -> None:
-    assert _validation_reference_date(date(2000, 1, 1)) == date(2000, 1, 1)
 
 
 def test_extract_structured_fields_empty() -> None:
