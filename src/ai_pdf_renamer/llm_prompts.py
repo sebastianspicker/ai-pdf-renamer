@@ -44,7 +44,7 @@ PROMPT_STRINGS: dict[str, dict[str, Any]] = {
         "analysis_intro": "Analysiere das folgende Dokument und gib das Ergebnis als reines JSON zurück.",
         "analysis_schema_intro": "Antworte NUR mit einem JSON-Objekt in genau dieser Struktur:",
         "analysis_schema": (
-            '{"summary":"1-2 präzise Sätze","keywords":["KW1","KW2","KW3","KW4","KW5"],"category":"Kategorie"}'
+            '{"summary":"1-2 präzise Sätze","keywords":["KW1","KW2","KW3","KW4","KW5","KW6"],"category":"Kategorie"}'
         ),
         "analysis_examples_heading": "Beispiele:",
         "analysis_examples": [
@@ -95,7 +95,7 @@ PROMPT_STRINGS: dict[str, dict[str, Any]] = {
         "summary_combine_json_rule": 'Nur reines JSON {"summary":"..."}.',
         "vision_intro": "Erzeuge einen kurzen Dateinamen (ohne Endung) für dieses gescannte Dokument.",
         "vision_language_line": "In Deutsch.",
-        "vision_date_hint": "Optional: Datum am Ende (z. B. 15-11-2023).",
+        "vision_date_hint": "Optional: Datum am Ende (z. B. 2023-11-15).",
         "vision_uppercase_hint": "Großschreibung bevorzugt.",
         "vision_example_label": "Beispiel: ",
         "vision_example": "RECHNUNG_AMAZON_MAX_2023-11-15",
@@ -109,7 +109,7 @@ PROMPT_STRINGS: dict[str, dict[str, Any]] = {
         "analysis_intro": "Analyze the following document and return the result as pure JSON.",
         "analysis_schema_intro": "Respond ONLY with a JSON object in exactly this structure:",
         "analysis_schema": (
-            '{"summary":"1-2 precise sentences","keywords":["KW1","KW2","KW3","KW4","KW5"],"category":"Category"}'
+            '{"summary":"1-2 precise sentences","keywords":["KW1","KW2","KW3","KW4","KW5","KW6"],"category":"Category"}'
         ),
         "analysis_examples_heading": "Examples:",
         "analysis_examples": [
@@ -157,7 +157,7 @@ PROMPT_STRINGS: dict[str, dict[str, Any]] = {
         "summary_combine_json_rule": 'Return ONLY {"summary":"..."} in JSON.',
         "vision_intro": "Generate a short filename (without extension) for this scanned document.",
         "vision_language_line": "In English.",
-        "vision_date_hint": "Optional: date at end (e.g. 15-11-2023).",
+        "vision_date_hint": "Optional: date at end (e.g. 2023-11-15).",
         "vision_uppercase_hint": "Uppercase preferred.",
         "vision_example_label": "Example: ",
         "vision_example": "INVOICE_AMAZON_JOHN_2023-11-15",

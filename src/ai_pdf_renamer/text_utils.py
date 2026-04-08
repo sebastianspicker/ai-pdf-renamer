@@ -116,8 +116,9 @@ _DATE_MIN = date(1990, 1, 1)
 _DATE_MAX_FUTURE_DELTA = timedelta(days=366)
 _AMOUNT_MAX = 1_000_000.0
 _COMPANY_SUFFIXES = r"(?:GmbH|AG|Inc\.?|Ltd\.?|LLC)"
-_INVOICE_ID_VALUE_INNER = r"[A-Z0-9]{2,}(?:[/-][A-Z0-9]{2,})+"
-_INVOICE_ID_VALUE = f"({_INVOICE_ID_VALUE_INNER})"
+_INVOICE_ID_VALUE_SHORTHAND = r"[A-Z0-9]{2,}(?:[/-][A-Z0-9]{2,})+"
+_INVOICE_ID_VALUE_EXPLICIT = r"(?:[A-Z]{2,}\d{2,}|\d{4,})"
+_INVOICE_ID_VALUE = f"({_INVOICE_ID_VALUE_SHORTHAND}|{_INVOICE_ID_VALUE_EXPLICIT})"
 
 
 @dataclass(frozen=True)
@@ -133,8 +134,8 @@ def _normalize_month_token(month_name: str) -> str:
 
 
 def _validation_reference_date(today: date) -> date:
-    """Use the later of the injected fallback date and the real current date for plausibility checks."""
-    return max(today, date.today())
+    """Use the injected fallback date for deterministic plausibility checks."""
+    return today
 
 
 def _make_date_candidate(
@@ -579,7 +580,7 @@ _INVOICE_ID_PATTERNS = [
         r"\s*[:\s#-]*\s*" + _INVOICE_ID_VALUE + r"\b",
         re.IGNORECASE,
     ),
-    re.compile(r"\b(?:inv|rechnung|rg|ref)\s*[#:-]?\s*(" + _INVOICE_ID_VALUE_INNER + r")\b", re.IGNORECASE),
+    re.compile(r"\b(?:inv|rechnung|rg|ref)\s*[#:-]?\s*(" + _INVOICE_ID_VALUE_SHORTHAND + r")\b", re.IGNORECASE),
     re.compile(r"\b(\d{4,}-\d+)\b"),  # e.g. 2025-001234
 ]
 _AMOUNT_PATTERNS = [
@@ -680,7 +681,7 @@ def extract_structured_fields(
             normalized = _normalize_amount(m.group(1))
             if normalized and _is_plausible_amount(normalized):
                 result["amount"] = _sanitize_structured_value(normalized)
-            break
+                break
     for pat in _COMPANY_PATTERNS:
         m = pat.search(text)
         if m:

@@ -309,6 +309,17 @@ class TestLoadOverrideCategoryMap:
 class TestRunDoctorChecks:
     """Tests for run_doctor_checks: data files and optional deps."""
 
+    class FakePath:
+        def __init__(self, name: str, payload: str = "{}") -> None:
+            self._name = name
+            self._payload = payload
+
+        def read_text(self, encoding: str = "utf-8") -> str:
+            return self._payload
+
+        def __str__(self) -> str:
+            return f"/fake/{self._name}"
+
     @staticmethod
     def _make_args(**overrides: Any) -> argparse.Namespace:
         """Create a minimal argparse.Namespace for doctor checks."""
@@ -330,19 +341,8 @@ class TestRunDoctorChecks:
             p = Path(__file__).parent / "fake_data" / filename
             return p
 
-        # Create a mock Path-like that responds to read_text
-        class FakePath:
-            def __init__(self, name: str) -> None:
-                self._name = name
-
-            def read_text(self, encoding: str = "utf-8") -> str:
-                return valid_json
-
-            def __str__(self) -> str:
-                return f"/fake/{self._name}"
-
         def mock_data_path(filename: str) -> Any:
-            return FakePath(filename)
+            return self.FakePath(filename, valid_json)
 
         monkeypatch.setattr(cli_module, "data_path", mock_data_path)
         monkeypatch.setattr(cli_module, "load_heuristic_rules", lambda _path: [])
@@ -364,17 +364,6 @@ class TestRunDoctorChecks:
         """Doctor prints loaded pattern and category counts for heuristic scores."""
         import ai_pdf_renamer.cli as cli_module
 
-        class FakePath:
-            def __init__(self, name: str, payload: str) -> None:
-                self._name = name
-                self._payload = payload
-
-            def read_text(self, encoding: str = "utf-8") -> str:
-                return self._payload
-
-            def __str__(self) -> str:
-                return f"/fake/{self._name}"
-
         heuristic_payload = json.dumps(
             {
                 "patterns": [
@@ -387,8 +376,8 @@ class TestRunDoctorChecks:
 
         def fake_data_path(filename: str) -> Any:
             if filename == "heuristic_scores.json":
-                return FakePath(filename, heuristic_payload)
-            return FakePath(filename, stopwords_payload)
+                return self.FakePath(filename, heuristic_payload)
+            return self.FakePath(filename, stopwords_payload)
 
         monkeypatch.setattr(cli_module, "data_path", fake_data_path)
         monkeypatch.setattr(
@@ -414,24 +403,13 @@ class TestRunDoctorChecks:
         """Malformed heuristic patterns must report FAIL instead of a green OK."""
         import ai_pdf_renamer.cli as cli_module
 
-        class FakePath:
-            def __init__(self, name: str, payload: str) -> None:
-                self._name = name
-                self._payload = payload
-
-            def read_text(self, encoding: str = "utf-8") -> str:
-                return self._payload
-
-            def __str__(self) -> str:
-                return f"/fake/{self._name}"
-
         heuristic_payload = json.dumps({"patterns": [{"regex": "(", "category": "broken", "score": 1}]})
         stopwords_payload = json.dumps({"stopwords": []})
 
         def fake_data_path(filename: str) -> Any:
             if filename == "heuristic_scores.json":
-                return FakePath(filename, heuristic_payload)
-            return FakePath(filename, stopwords_payload)
+                return self.FakePath(filename, heuristic_payload)
+            return self.FakePath(filename, stopwords_payload)
 
         def raise_invalid_regex(_path: Any) -> Any:
             raise ValueError("Invalid regex")
@@ -475,18 +453,8 @@ class TestRunDoctorChecks:
         """When data files contain invalid JSON, doctor reports FAIL."""
         import ai_pdf_renamer.cli as cli_module
 
-        class FakePath:
-            def __init__(self, name: str) -> None:
-                self._name = name
-
-            def read_text(self, encoding: str = "utf-8") -> str:
-                return "{ broken json"
-
-            def __str__(self) -> str:
-                return f"/fake/{self._name}"
-
         def mock_data_path(filename: str) -> Any:
-            return FakePath(filename)
+            return self.FakePath(filename, "{ broken json")
 
         monkeypatch.setattr(cli_module, "data_path", mock_data_path)
         monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
@@ -505,17 +473,7 @@ class TestRunDoctorChecks:
         import ai_pdf_renamer.cli as cli_module
 
         # Stub data_path to succeed
-        class FakePath:
-            def __init__(self, name: str) -> None:
-                self._name = name
-
-            def read_text(self, encoding: str = "utf-8") -> str:
-                return "{}"
-
-            def __str__(self) -> str:
-                return f"/fake/{self._name}"
-
-        monkeypatch.setattr(cli_module, "data_path", lambda filename: FakePath(filename))
+        monkeypatch.setattr(cli_module, "data_path", lambda filename: self.FakePath(filename))
         monkeypatch.setattr(cli_module, "load_heuristic_rules", lambda _path: [])
 
         # Make find_spec return a truthy ModuleSpec-like for known optional deps
@@ -544,17 +502,7 @@ class TestRunDoctorChecks:
         """When all optional deps are missing, doctor prints WARN/INFO (but still passes)."""
         import ai_pdf_renamer.cli as cli_module
 
-        class FakePath:
-            def __init__(self, name: str) -> None:
-                self._name = name
-
-            def read_text(self, encoding: str = "utf-8") -> str:
-                return "{}"
-
-            def __str__(self) -> str:
-                return f"/fake/{self._name}"
-
-        monkeypatch.setattr(cli_module, "data_path", lambda filename: FakePath(filename))
+        monkeypatch.setattr(cli_module, "data_path", lambda filename: self.FakePath(filename))
         monkeypatch.setattr(cli_module, "load_heuristic_rules", lambda _path: [])
         monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
 
@@ -575,17 +523,7 @@ class TestRunDoctorChecks:
         """When use_llm is False, doctor prints skip message for LLM checks."""
         import ai_pdf_renamer.cli as cli_module
 
-        class FakePath:
-            def __init__(self, name: str) -> None:
-                self._name = name
-
-            def read_text(self, encoding: str = "utf-8") -> str:
-                return "{}"
-
-            def __str__(self) -> str:
-                return f"/fake/{self._name}"
-
-        monkeypatch.setattr(cli_module, "data_path", lambda filename: FakePath(filename))
+        monkeypatch.setattr(cli_module, "data_path", lambda filename: self.FakePath(filename))
         monkeypatch.setattr(cli_module, "load_heuristic_rules", lambda _path: [])
         monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
 

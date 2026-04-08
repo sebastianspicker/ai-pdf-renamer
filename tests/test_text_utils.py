@@ -6,6 +6,7 @@ import pytest
 
 from ai_pdf_renamer.text_utils import (
     MAX_NORMALIZED_KEYWORDS,
+    _validation_reference_date,
     chunk_text,
     convert_case,
     extract_date_from_content,
@@ -121,6 +122,10 @@ def test_extract_structured_fields_invoice_id() -> None:
     assert out["invoice_id"] == "INV-2025-001"
     assert out["amount"]
     assert "1234" in out["amount"] or "1.234" in out["amount"]
+
+
+def test_validation_reference_date_uses_injected_today() -> None:
+    assert _validation_reference_date(date(2000, 1, 1)) == date(2000, 1, 1)
 
 
 def test_extract_structured_fields_empty() -> None:
@@ -472,6 +477,13 @@ def test_structured_fields_invoice_no_pattern() -> None:
     assert out["invoice_id"] == "ABC-1234"
 
 
+def test_structured_fields_invoice_number_allows_explicit_compact_ids() -> None:
+    """'Invoice Number:' also recognizes compact alphanumeric ids."""
+    text = "Invoice Number: INV12345\nTotal: 100.00 EUR"
+    out = extract_structured_fields(text)
+    assert out["invoice_id"] == "INV12345"
+
+
 def test_structured_fields_max_chars_limit() -> None:
     """Only the first max_chars characters are searched."""
     # Put invoice id far beyond max_chars (space before keyword for word boundary)
@@ -523,3 +535,10 @@ def test_structured_fields_rejects_implausible_large_amount() -> None:
     text = "Total: 1000001.00 EUR"
     out = extract_structured_fields(text)
     assert out["amount"] == ""
+
+
+def test_structured_fields_amount_tries_later_patterns_after_rejected_candidate() -> None:
+    """Later amount patterns are still tried after an implausible earlier candidate."""
+    text = "Total: 1000001.00 EUR\nEUR 249.90"
+    out = extract_structured_fields(text)
+    assert out["amount"] == "249.90"

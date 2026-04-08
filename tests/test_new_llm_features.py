@@ -7,6 +7,8 @@ import re
 from datetime import date
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from ai_pdf_renamer.config import RenamerConfig
 from ai_pdf_renamer.llm_backend import HttpLLMBackend, create_llm_client_from_config
 from ai_pdf_renamer.llm_schema import DocumentAnalysisResult
@@ -385,6 +387,17 @@ def test_no_preset_uses_apple_silicon_defaults():
     assert cfg.llm_model == "qwen2.5:3b"
     assert cfg.llm_base_url == "http://127.0.0.1:11434/v1/completions"
     assert cfg.max_context_chars == 120_000
+
+
+def test_invalid_preset_warns_and_falls_back(caplog: pytest.LogCaptureFixture) -> None:
+    from ai_pdf_renamer.config_resolver import build_config
+
+    with caplog.at_level("WARNING", logger="ai_pdf_renamer.config_resolver"):
+        cfg = build_config({"llm_preset": "typo-preset"})
+
+    assert cfg.llm_model == "qwen2.5:3b"
+    assert "Unknown llm_preset='typo-preset'" in caplog.text
+    assert "'apple-silicon'" in caplog.text
 
 
 def test_explicit_max_content_chars_overrides_preset():

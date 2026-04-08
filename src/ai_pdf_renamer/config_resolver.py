@@ -6,7 +6,6 @@ produce consistent RenamerConfig values.
 
 from __future__ import annotations
 
-import copy
 import logging
 import os
 from collections.abc import Mapping
@@ -142,7 +141,7 @@ def _resolve_precedence(*values: Any) -> Any:
 
 def _resolve_presets(raw_data: Mapping[str, Any]) -> _PresetResolution:
     """Apply named preset defaults once and return resolved LLM hardware defaults."""
-    data = copy.copy(dict(raw_data))
+    data = dict(raw_data)
 
     preset = _str(data.get("preset"), "")
     if preset == "scanned":
@@ -176,6 +175,8 @@ def _resolve_presets(raw_data: Mapping[str, Any]) -> _PresetResolution:
 
     llm_preset = _normalize_str_or_none(data.get("llm_preset"))
     effective_preset = llm_preset if llm_preset in _LLM_PRESET_DEFAULTS else "apple-silicon"
+    if llm_preset is not None and llm_preset != effective_preset:
+        logger.warning("Unknown llm_preset=%r; falling back to %r", llm_preset, effective_preset)
     return _PresetResolution(
         data=data,
         llm_defaults=_LLM_PRESET_DEFAULTS[effective_preset],
