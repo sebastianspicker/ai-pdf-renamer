@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import json
 import logging
 
+from .cache import ResponseCache
 from .llm_backend import HttpLLMBackend, LLMClient, LocalLLMClient  # noqa: F401 (re-exports)
 from .llm_parsing import (
     CONTEXT_128K_CHUNK_OVERLAP,
     CONTEXT_128K_CHUNK_SIZE,
     CONTEXT_128K_MAX_CHARS_SINGLE,
-    _extract_json_from_response,
     _replace_prompt_placeholders,
+    extract_and_validate_json,
     parse_json_field,
     truncate_for_llm,
 )
@@ -33,6 +33,26 @@ logger = logging.getLogger(__name__)
 _RETRY_TEMP_INCREMENT = 0.2
 
 
+def _build_cache_key(
+    cache_key_base: str | None,
+    *,
+    operation: str,
+    model: str,
+    language: str,
+    payload: str,
+) -> str | None:
+    """Build a stable response-cache key for one LLM operation."""
+    if not cache_key_base:
+        return None
+    return ResponseCache.derive_response_key(
+        cache_key_base,
+        operation=operation,
+        model=model,
+        language=language,
+        extra=payload,
+    )
+
+
 def complete_json_with_retry(
     client: LLMClient,
     prompt: str,
@@ -41,28 +61,29 @@ def complete_json_with_retry(
     max_retries: int = 3,
     max_tokens: int | None = 1024,
     json_mode: bool = False,
+    cache: ResponseCache | None = None,
+    cache_key: str | None = None,
 ) -> str:
     """Retry LLM completion up to max_retries times, increasing temperature, until valid JSON."""
+    if cache is not None and cache_key is not None:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            logger.debug("LLM cache hit for %s", cache_key)
+            return cached
+
     response_format = {"type": "json_object"} if json_mode else None
     effective_retries = 1 if json_mode else max_retries
     temp = temperature
     last = ""
     for i in range(effective_retries):
         last = client.complete(prompt, temperature=temp, max_tokens=max_tokens, response_format=response_format)
-        candidate = last.strip()
-        if candidate.startswith("{"):
-            try:
-                json.loads(candidate)
-                return last
-            except json.JSONDecodeError:
-                pass
-        extracted = _extract_json_from_response(last)
-        if extracted.startswith("{"):
-            try:
-                json.loads(extracted)
-                return last
-            except json.JSONDecodeError:
-                pass
+        try:
+            extract_and_validate_json(last)
+            if cache is not None and cache_key is not None:
+                cache.set(cache_key, last)
+            return last
+        except ValueError:
+            pass
         temp += _RETRY_TEMP_INCREMENT
         logger.info("Retry %s: New temperature=%s", i + 1, temp)
     logger.error(
@@ -77,16 +98,29 @@ def _try_prompts_for_key(
     prompts: list[str],
     *,
     key: str,
+    language: str,
+    operation: str,
     temperature: float,
     max_tokens: int | None = 1024,
     lenient: bool = False,
+    cache: ResponseCache | None = None,
+    cache_key_base: str | None = None,
 ) -> str | list[str] | None:
     for i, prompt in enumerate(prompts):
+        cache_key = _build_cache_key(
+            cache_key_base,
+            operation=f"{operation}:{i}",
+            model=client.model,
+            language=language,
+            payload=prompt,
+        )
         r = complete_json_with_retry(
             client,
             prompt,
             temperature=temperature + i * _RETRY_TEMP_INCREMENT,
             max_tokens=max_tokens,
+            cache=cache,
+            cache_key=cache_key,
         )
         v = parse_json_field(r, key=key, lenient=lenient)
         if v is not None:
@@ -107,6 +141,8 @@ def get_document_analysis(
     suggested_categories: list[str] | None = None,
     lenient_json: bool = False,
     json_mode: bool = False,
+    cache: ResponseCache | None = None,
+    cache_key_base: str | None = None,
 ) -> DocumentAnalysisResult:
     """Extract summary, keywords, and category from document text in a single LLM call.
 
@@ -135,24 +171,23 @@ def get_document_analysis(
         max_retries=2,
         max_tokens=1024,
         json_mode=json_mode,
+        cache=cache,
+        cache_key=_build_cache_key(
+            cache_key_base,
+            operation="analysis",
+            model=client.model,
+            language=language,
+            payload=prompt,
+        ),
     )
-    parsed = _extract_json_from_response(raw) if raw else ""
     try:
-        data = json.loads(parsed) if parsed.strip().startswith("{") else {}
-    except json.JSONDecodeError:
+        data = extract_and_validate_json(
+            raw,
+            expected_keys={"summary", "keywords", "category"},
+            lenient_keys={"summary", "category"} if lenient_json else None,
+        )
+    except ValueError:
         data = {}
-
-    if not data and lenient_json and raw:
-        # Try lenient extraction for individual fields
-        from .llm_parsing import _lenient_extract_key_value
-
-        summary_val = _lenient_extract_key_value(raw, "summary")
-        category_val = _lenient_extract_key_value(raw, "category")
-        data = {}
-        if summary_val:
-            data["summary"] = summary_val
-        if category_val:
-            data["category"] = category_val
 
     return validate_llm_document_result(data)
 
@@ -168,6 +203,8 @@ def get_document_summary(
     max_content_tokens: int | None = None,
     suggested_doc_type: str | None = None,
     lenient_json: bool = False,
+    cache: ResponseCache | None = None,
+    cache_key_base: str | None = None,
 ) -> str:
     """Generate a short document summary via LLM, chunking long content and combining partial summaries.
 
@@ -194,9 +231,13 @@ def get_document_summary(
             client,
             prompts,
             key="summary",
+            language=language,
+            operation="summary_short",
             temperature=temperature,
             max_tokens=1024,
             lenient=lenient_json,
+            cache=cache,
+            cache_key_base=cache_key_base,
         )
         result = validate_llm_document_result({"summary": val if isinstance(val, str) else ""})
         return result.summary
@@ -215,6 +256,14 @@ def get_document_summary(
             temperature=temperature,
             max_retries=3,
             max_tokens=1024,
+            cache=cache,
+            cache_key=_build_cache_key(
+                cache_key_base,
+                operation=f"summary_chunk:{len(partial)}",
+                model=client.model,
+                language=language,
+                payload=chunk_prompt,
+            ),
         )
         v = parse_json_field(r, key="summary", lenient=lenient_json)
         partial.append(v if isinstance(v, str) else "")
@@ -230,6 +279,14 @@ def get_document_summary(
         temperature=temperature + _RETRY_TEMP_INCREMENT,
         max_retries=3,
         max_tokens=1024,
+        cache=cache,
+        cache_key=_build_cache_key(
+            cache_key_base,
+            operation="summary_combine",
+            model=client.model,
+            language=language,
+            payload=final_prompt,
+        ),
     )
     v_final = parse_json_field(r_final, key="summary", lenient=lenient_json)
     result = validate_llm_document_result({"summary": v_final if isinstance(v_final, str) else ""})
@@ -244,6 +301,8 @@ def get_document_keywords(
     temperature: float = 0.0,
     suggested_category: str | None = None,
     lenient_json: bool = False,
+    cache: ResponseCache | None = None,
+    cache_key_base: str | None = None,
 ) -> tuple[str, ...] | None:
     """Extract 5-7 keywords from a document summary via LLM. Return None on failure."""
     cat_hint = ""
@@ -279,9 +338,13 @@ def get_document_keywords(
         client,
         prompts,
         key="keywords",
+        language=language,
+        operation="keywords",
         temperature=temperature,
         max_tokens=512,
         lenient=lenient_json,
+        cache=cache,
+        cache_key_base=cache_key_base,
     )
     result = validate_llm_document_result({"keywords": val if isinstance(val, list) else []})
     return result.keywords if result.keywords else None
@@ -297,6 +360,8 @@ def get_document_category(
     suggested_categories: list[str] | None = None,
     allowed_categories: list[str] | None = None,
     lenient_json: bool = False,
+    cache: ResponseCache | None = None,
+    cache_key_base: str | None = None,
 ) -> str:
     """Classify document category via LLM, optionally constrained to allowed/suggested categories."""
     keywords_joined = ", ".join(keywords)
@@ -327,9 +392,13 @@ def get_document_category(
         client,
         prompts,
         key="category",
+        language=language,
+        operation="category",
         temperature=temperature,
         max_tokens=256,
         lenient=lenient_json,
+        cache=cache,
+        cache_key_base=cache_key_base,
     )
     raw = val if isinstance(val, str) else ""
     if len(raw.strip()) > 80:
@@ -348,6 +417,8 @@ def get_final_summary_tokens(
     language: str = "de",
     temperature: float = 0.0,
     lenient_json: bool = False,
+    cache: ResponseCache | None = None,
+    cache_key_base: str | None = None,
 ) -> list[str] | None:
     """Extract 3-5 short summary tokens from document text via LLM. Return None on failure."""
     kw_str = ", ".join(keywords)
@@ -379,9 +450,13 @@ def get_final_summary_tokens(
         client,
         prompts,
         key="final_summary",
+        language=language,
+        operation="final_summary",
         temperature=temperature,
         max_tokens=256,
         lenient=lenient_json,
+        cache=cache,
+        cache_key_base=cache_key_base,
     )
     if not isinstance(val, str):
         return None
@@ -421,6 +496,8 @@ def get_document_filename_simple(
     temperature: float = 0.0,
     max_content_chars: int | None = None,
     max_content_tokens: int | None = None,
+    cache: ResponseCache | None = None,
+    cache_key_base: str | None = None,
 ) -> str:
     """
     Ask the LLM for a single short filename (3-6 words, underscores). No JSON.
@@ -459,7 +536,20 @@ def get_document_filename_simple(
             _PLACEHOLDER_DOCUMENT_CONTENT: safe_text,
         },
     )
+    cache_key = _build_cache_key(
+        cache_key_base,
+        operation="simple_filename",
+        model=client.model,
+        language=language,
+        payload=prompt,
+    )
+    if cache is not None and cache_key is not None:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return sanitize_filename_from_llm(cached)
     raw = client.complete(prompt, temperature=temperature, max_tokens=128)
     if raw and isinstance(raw, str):
         raw = raw.strip().rstrip(".")
+    if cache is not None and cache_key is not None and raw:
+        cache.set(cache_key, raw)
     return sanitize_filename_from_llm(raw)

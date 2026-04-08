@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ai_pdf_renamer.cache import ResponseCache
 from ai_pdf_renamer.llm import (
     _RETRY_TEMP_INCREMENT,
     complete_json_with_retry,
@@ -392,6 +393,32 @@ class TestGetDocumentAnalysis:
         )
         call_kwargs = client.complete.call_args.kwargs
         assert call_kwargs["response_format"] == {"type": "json_object"}
+
+    def test_uses_cache_on_repeat_calls(self) -> None:
+        """A cached analysis response avoids a second LLM request."""
+        client = _make_client()
+        client.complete.return_value = '{"summary":"cached","keywords":["invoice"],"category":"invoice"}'
+        cache = ResponseCache()
+
+        content = "This is a long invoice document content. " * 8
+        first = get_document_analysis(
+            client,
+            content,
+            language="en",
+            cache=cache,
+            cache_key_base="file:abc123",
+        )
+        second = get_document_analysis(
+            client,
+            content,
+            language="en",
+            cache=cache,
+            cache_key_base="file:abc123",
+        )
+
+        assert first.summary == "cached"
+        assert second.summary == "cached"
+        assert client.complete.call_count == 1
 
 
 # ---------------------------------------------------------------------------

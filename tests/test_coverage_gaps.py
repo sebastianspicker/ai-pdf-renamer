@@ -329,11 +329,48 @@ class TestBuildConfigPresets:
         assert cfg.use_vision_fallback is True
         assert cfg.simple_naming_mode is True
 
+    def test_build_config_fast_preset(self) -> None:
+        cfg = build_config({"preset": "fast"}, env={})
+        assert cfg.use_llm is False
+        assert cfg.min_heuristic_score >= 0.5
+        assert cfg.min_heuristic_score_gap >= 0.2
+
+    def test_build_config_accurate_preset(self) -> None:
+        cfg = build_config({"preset": "accurate"}, env={})
+        assert cfg.use_llm is True
+        assert cfg.use_single_llm_call is False
+        assert cfg.use_embeddings_for_conflict is True
+
+    def test_build_config_batch_preset_enables_cache_and_workers(self) -> None:
+        cfg = build_config({"preset": "batch"}, env={})
+        assert cfg.cache_dir is not None
+        assert cfg.workers >= 2
+
+    def test_build_config_cache_dir_from_env(self) -> None:
+        cfg = build_config({}, env={"AI_PDF_RENAMER_CACHE_DIR": "/tmp/ai-pdf-cache"})
+        assert str(cfg.cache_dir) == "/tmp/ai-pdf-cache"
+
     def test_build_config_default_heuristic_override(self) -> None:
         """Without no_heuristic_override, default override scores are set."""
         cfg = build_config({}, env={})
         assert cfg.heuristic_override_min_score == pytest.approx(0.55)
         assert cfg.heuristic_override_min_gap == pytest.approx(0.3)
+
+    def test_build_config_reports_multiple_validation_errors(self) -> None:
+        """Config validation reports multiple invalid enum values together."""
+        with pytest.raises(ValueError) as excinfo:
+            build_config(
+                {
+                    "desired_case": "invalid-case",
+                    "date_locale": "ymd",
+                    "category_display": "invalid-display",
+                },
+                env={},
+            )
+        message = str(excinfo.value)
+        assert "desired_case" in message
+        assert "date_locale" in message
+        assert "category_display" in message
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +380,7 @@ class TestBuildConfigPresets:
 
 class TestLoadRulesEdgeCases:
     def test_load_rules_invalid_regex(self, tmp_path: Path) -> None:
-        """Rule with invalid regex pattern is skipped and a warning is logged."""
+        """Rule with invalid regex pattern fails fast."""
         data = {
             "patterns": [
                 {"regex": "[invalid(", "category": "bad", "score": 1.0},
@@ -352,9 +389,8 @@ class TestLoadRulesEdgeCases:
         }
         rules_file = tmp_path / "rules.json"
         rules_file.write_text(json.dumps(data))
-        rules = load_heuristic_rules(rules_file)
-        assert len(rules) == 1
-        assert rules[0].category == "good"
+        with pytest.raises(ValueError, match="Invalid regex"):
+            load_heuristic_rules(rules_file)
 
     def test_load_rules_missing_regex_key(self, tmp_path: Path) -> None:
         """Rule entry without 'regex' key is skipped."""
@@ -426,6 +462,28 @@ class TestMaxScorePerCategory:
             max_score_per_category=None,
         )
         assert scores["invoice"] == pytest.approx(8.0)
+
+    def test_negative_regex_skips_false_positive_match(self, tmp_path: Path) -> None:
+        """A negative_regex suppresses local false positives such as 'invoice address'."""
+        data = {
+            "patterns": [
+                {
+                    "regex": r"(?i)invoice",
+                    "negative_regex": r"invoice\s+address",
+                    "category": "invoice",
+                    "score": 4.0,
+                }
+            ]
+        }
+        rules_file = tmp_path / "rules.json"
+        rules_file.write_text(json.dumps(data))
+        rules = load_heuristic_rules(rules_file)
+
+        false_positive = _score_text("Please update the invoice address for returns.", rules, None)
+        valid = _score_text("Invoice INV-2025-001 total due.", rules, None)
+
+        assert false_positive == {}
+        assert valid["invoice"] == pytest.approx(4.0)
 
 
 class TestEmbeddingConflict:

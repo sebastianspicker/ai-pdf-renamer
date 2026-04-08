@@ -357,6 +357,48 @@ class TestRunDoctorChecks:
         assert "meta_stopwords.json" in captured.out
         assert "passed" in captured.out.lower()
 
+    def test_doctor_reports_pattern_statistics(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Doctor prints loaded pattern and category counts for heuristic scores."""
+        import ai_pdf_renamer.cli as cli_module
+
+        class FakePath:
+            def __init__(self, name: str, payload: str) -> None:
+                self._name = name
+                self._payload = payload
+
+            def read_text(self, encoding: str = "utf-8") -> str:
+                return self._payload
+
+            def __str__(self) -> str:
+                return f"/fake/{self._name}"
+
+        heuristic_payload = json.dumps(
+            {
+                "patterns": [
+                    {"regex": "invoice", "category": "invoice", "score": 2},
+                    {"regex": "contract", "category": "contract", "score": 2},
+                ]
+            }
+        )
+        stopwords_payload = json.dumps({"stopwords": []})
+
+        def fake_data_path(filename: str) -> Any:
+            if filename == "heuristic_scores.json":
+                return FakePath(filename, heuristic_payload)
+            return FakePath(filename, stopwords_payload)
+
+        monkeypatch.setattr(cli_module, "data_path", fake_data_path)
+        monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+
+        result = run_doctor_checks(self._make_args())
+        captured = capsys.readouterr()
+
+        assert result == 0
+        assert "patterns=2" in captured.out
+        assert "categories=2" in captured.out
+
     def test_doctor_data_files_missing(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -695,6 +737,17 @@ class TestLoadHeuristicRules:
         # Verify it can be used with HeuristicScorer
         scorer = HeuristicScorer(rules=rules)
         assert scorer.best_category("This is an invoice") == "invoice"
+
+    def test_load_heuristic_rules_invalid_regex_fails_fast(self, tmp_path: Path) -> None:
+        """Invalid regex patterns raise ValueError instead of being skipped silently."""
+        rules_file = tmp_path / "rules.json"
+        rules_file.write_text(
+            json.dumps({"patterns": [{"regex": "(", "category": "invoice", "score": 1.0}]}),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="Invalid regex"):
+            load_heuristic_rules(rules_file)
 
 
 class TestCategoryAliases:

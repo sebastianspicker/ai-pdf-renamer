@@ -16,6 +16,7 @@ from rich.console import Console
 from .cli_parser import build_parser
 from .config_resolver import build_config
 from .data_paths import data_path
+from .heuristics import load_heuristic_rules
 from .logging_utils import setup_logging
 from .renamer import (
     RenamerConfig,
@@ -264,8 +265,30 @@ def run_doctor_checks(args: argparse.Namespace) -> int:
         try:
             path = data_path(filename)
             raw = path.read_text(encoding="utf-8")
-            json.loads(raw)
-            con.print(f"  [green]OK[/green]   {filename}")
+            parsed = json.loads(raw)
+            if filename == "heuristic_scores.json":
+                raw_patterns = parsed.get("patterns", []) if isinstance(parsed, dict) else []
+                pattern_count = len(raw_patterns) if isinstance(raw_patterns, list) else 0
+                category_count = 0
+                try:
+                    rules = load_heuristic_rules(path)
+                    pattern_count = len(rules)
+                    category_count = len({rule.category for rule in rules})
+                except (TypeError, ValueError):
+                    if isinstance(raw_patterns, list):
+                        category_count = len(
+                            {
+                                entry.get("category")
+                                for entry in raw_patterns
+                                if isinstance(entry, dict) and isinstance(entry.get("category"), str)
+                            }
+                        )
+                con.print(
+                    f"  [green]OK[/green]   {filename} "
+                    f"[dim](patterns={pattern_count}, categories={category_count})[/dim]"
+                )
+            else:
+                con.print(f"  [green]OK[/green]   {filename}")
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             ok = False
             con.print(f"  [red]FAIL[/red] {filename}: {exc}")
@@ -470,6 +493,7 @@ def _build_config_from_args(
         return build_config(raw, file_defaults=file_defaults)
     except ValueError as exc:
         _console.print(f"[red]Configuration error:[/red] {exc}")
+        _console.print("[dim]Run --validate-config to check settings without processing files.[/dim]")
         raise SystemExit(1) from exc
 
 
@@ -513,10 +537,18 @@ def _run_renamer_or_watch(
         raise SystemExit(1) from exc
     except ValueError as exc:
         _console.print(f"[red]Configuration error:[/red] {exc}")
+        _console.print("[dim]Run --validate-config to check config precedence and merged values.[/dim]")
+        raise SystemExit(1) from exc
+    except requests.Timeout as exc:
+        _console.print(f"[red]LLM timeout:[/red] {exc}")
+        _console.print("[dim]Try increasing --llm-timeout or check server status. Use --doctor to verify.[/dim]")
         raise SystemExit(1) from exc
     except requests.RequestException as exc:
         _console.print(f"[red]LLM/network error:[/red] {exc}")
-        _console.print("[dim]Check that the LLM server is running. Use --doctor to verify.[/dim]")
+        _console.print(
+            "[dim]Check server status, endpoint URL, or try increasing --llm-timeout. "
+            "Use --doctor to verify.[/dim]"
+        )
         raise SystemExit(1) from exc
     except Exception as exc:
         logger.debug("Unhandled exception", exc_info=True)
@@ -535,12 +567,15 @@ def main(argv: list[str] | None = None) -> None:
     if getattr(args, "doctor", False):
         raise SystemExit(run_doctor_checks(args))
 
-    dirs, single_file = _resolve_dirs(args)
     try:
         file_defaults = _load_config_file(args.config, raise_on_error=True) if getattr(args, "config", None) else {}
     except ConfigLoadError as exc:
         raise SystemExit(1) from exc
     config = _build_config_from_args(args, file_defaults, parser=parser)
+    if getattr(args, "validate_config", False):
+        _console.print("[green]Configuration valid.[/green]")
+        raise SystemExit(0)
+    dirs, single_file = _resolve_dirs(args)
     _run_renamer_or_watch(dirs, config, args, single_file=single_file)
 
 

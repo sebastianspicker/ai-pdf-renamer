@@ -10,10 +10,18 @@ import copy
 import logging
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .config import RenamerConfig, build_config_from_flat_dict
+from .cache import default_cache_dir
+from .config import (
+    _VALID_CATEGORY_DISPLAY,
+    _VALID_DATE_LOCALES,
+    _VALID_DESIRED_CASES,
+    RenamerConfig,
+    build_config_from_flat_dict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +39,12 @@ _LLM_PRESET_DEFAULTS: dict[str, dict[str, object]] = {
         "max_context_chars": 480_000,
     },
 }
+
+
+@dataclass(frozen=True)
+class _PresetResolution:
+    data: dict[str, Any]
+    llm_defaults: dict[str, object]
 
 
 def _optional_float(value: Any) -> float | None:
@@ -114,18 +128,90 @@ def _normalize_str_or_none(value: Any) -> str | None:
     return str(value).strip() or None
 
 
-def _build_core_options(data: dict[str, Any], file_cfg: Mapping[str, Any]) -> dict[str, Any]:
-    """Language, case, project, version, date settings, heuristic tuning, and general flags."""
-    preset = _str(data.get("preset"), "")
+def _resolve_precedence(*values: Any) -> Any:
+    """Return the first value that is explicitly set.
 
-    # --- skip-LLM-category thresholds (preset may supply defaults) ---
+    Precedence is caller-defined, but build_config uses:
+    CLI/raw input > environment > config file > hardcoded defaults.
+    """
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _resolve_presets(raw_data: Mapping[str, Any]) -> _PresetResolution:
+    """Apply named preset defaults once and return resolved LLM hardware defaults."""
+    data = copy.copy(dict(raw_data))
+
+    preset = _str(data.get("preset"), "")
+    if preset == "scanned":
+        data["use_vision_fallback"] = True
+        data["simple_naming_mode"] = True
+    elif preset == "high-confidence-heuristic":
+        if data.get("skip_llm_category_if_heuristic_score_ge") in (None, ""):
+            data["skip_llm_category_if_heuristic_score_ge"] = 0.5
+        if data.get("skip_llm_category_if_heuristic_gap_ge") in (None, ""):
+            data["skip_llm_category_if_heuristic_gap_ge"] = 0.3
+    elif preset == "fast":
+        data["use_llm"] = False
+        if data.get("min_heuristic_score") in (None, ""):
+            data["min_heuristic_score"] = 0.6
+        if data.get("min_heuristic_score_gap") in (None, ""):
+            data["min_heuristic_score_gap"] = 0.25
+    elif preset == "accurate":
+        data["use_llm"] = True
+        data["use_single_llm_call"] = False
+        data["use_embeddings_for_conflict"] = True
+        if data.get("min_heuristic_score") in (None, ""):
+            data["min_heuristic_score"] = 0.1
+        if data.get("min_heuristic_score_gap") in (None, ""):
+            data["min_heuristic_score_gap"] = 0.0
+    elif preset == "batch":
+        data["use_cache"] = True
+        if data.get("workers") in (None, ""):
+            data["workers"] = 4
+        if data.get("cache_dir") in (None, ""):
+            data["cache_dir"] = str(default_cache_dir())
+
+    llm_preset = _normalize_str_or_none(data.get("llm_preset"))
+    effective_preset = llm_preset if llm_preset in _LLM_PRESET_DEFAULTS else "apple-silicon"
+    return _PresetResolution(
+        data=data,
+        llm_defaults=_LLM_PRESET_DEFAULTS[effective_preset],
+    )
+
+
+def _validate_config_kwargs(kwargs: Mapping[str, Any]) -> list[str]:
+    """Collect config validation issues so callers see all invalid enum settings at once."""
+    errors: list[str] = []
+
+    desired_case = _str(kwargs.get("desired_case"), "kebabCase")
+    if desired_case not in _VALID_DESIRED_CASES:
+        errors.append(
+            f"desired_case={desired_case!r} must be one of: {', '.join(sorted(_VALID_DESIRED_CASES))}"
+        )
+
+    date_locale = _str(kwargs.get("date_locale"), "dmy").lower()
+    if date_locale not in _VALID_DATE_LOCALES:
+        errors.append(
+            f"date_locale={date_locale!r} must be one of: {', '.join(sorted(_VALID_DATE_LOCALES))}"
+        )
+
+    category_display = _str(kwargs.get("category_display"), "specific").lower()
+    if category_display not in _VALID_CATEGORY_DISPLAY:
+        errors.append(
+            "category_display="
+            f"{category_display!r} must be one of: {', '.join(sorted(_VALID_CATEGORY_DISPLAY))}"
+        )
+
+    return errors
+
+
+def _build_core_options(data: dict[str, Any]) -> dict[str, Any]:
+    """Language, case, project, version, date settings, heuristic tuning, and general flags."""
     skip_llm_score = _optional_float(data.get("skip_llm_category_if_heuristic_score_ge"))
     skip_llm_gap = _optional_float(data.get("skip_llm_category_if_heuristic_gap_ge"))
-    if preset == "high-confidence-heuristic":
-        if skip_llm_score is None:
-            skip_llm_score = 0.5
-        if skip_llm_gap is None:
-            skip_llm_gap = 0.3
 
     # --- heuristic override ---
     heuristic_override_min_score = _optional_float(data.get("heuristic_override_min_score"))
@@ -183,8 +269,8 @@ def _build_core_options(data: dict[str, Any], file_cfg: Mapping[str, Any]) -> di
 
 def _build_llm_options(
     data: dict[str, Any],
-    file_cfg: Mapping[str, Any],
     preset_defaults: dict[str, object],
+    env_map: Mapping[str, str],
 ) -> dict[str, Any]:
     """LLM backend, URL, model, timeout, chat API, JSON mode, and preset."""
     llm_preset = _normalize_str_or_none(data.get("llm_preset"))
@@ -210,32 +296,31 @@ def _build_llm_options(
         "llm_json_mode": _bool(data.get("llm_json_mode"), True),
         "llm_preset": llm_preset,
         "max_context_chars": resolved_max_context_chars,
+        "use_cache": _bool(data.get("use_cache"), True),
+        "cache_dir": _normalize_path_or_none(
+            _resolve_precedence(data.get("cache_dir"), env_map.get("AI_PDF_RENAMER_CACHE_DIR"))
+        ),
     }
 
 
 def _build_extraction_options(
     data: dict[str, Any],
-    file_cfg: Mapping[str, Any],
     env_map: Mapping[str, str],
 ) -> dict[str, Any]:
     """OCR, vision, tokens, workers, and max content settings."""
-    preset = _str(data.get("preset"), "")
-
     use_vision_fallback = _bool(data.get("use_vision_fallback"), False) or _env_true(
         env_map, "AI_PDF_RENAMER_USE_VISION_FALLBACK"
     )
     vision_first = _bool(data.get("vision_first"), False) or _env_true(env_map, "AI_PDF_RENAMER_VISION_FIRST")
 
-    if preset == "scanned":
-        use_vision_fallback = True
-        data["simple_naming_mode"] = True
-
-    max_content_chars = _positive_int_or_none(
-        data.get("max_content_chars") or env_map.get("AI_PDF_RENAMER_MAX_CONTENT_CHARS")
-    )
-    max_content_tokens = _positive_int_or_none(
-        data.get("max_content_tokens") or env_map.get("AI_PDF_RENAMER_MAX_CONTENT_TOKENS")
-    )
+    max_content_chars = _positive_int_or_none(_resolve_precedence(
+        data.get("max_content_chars"),
+        env_map.get("AI_PDF_RENAMER_MAX_CONTENT_CHARS"),
+    ))
+    max_content_tokens = _positive_int_or_none(_resolve_precedence(
+        data.get("max_content_tokens"),
+        env_map.get("AI_PDF_RENAMER_MAX_CONTENT_TOKENS"),
+    ))
 
     return {
         "use_ocr": _bool(data.get("use_ocr"), False),
@@ -257,8 +342,11 @@ def _build_output_options(
     env_map: Mapping[str, str],
 ) -> dict[str, Any]:
     """Dry-run, backup, hooks, export, logging, interactive, and rules."""
-    post_rename_hook = _str(data.get("post_rename_hook"), "") or _str(
-        env_map.get("AI_PDF_RENAMER_POST_RENAME_HOOK"), ""
+    post_rename_hook = _normalize_str_or_none(
+        _resolve_precedence(data.get("post_rename_hook"), env_map.get("AI_PDF_RENAMER_POST_RENAME_HOOK"))
+    )
+    filename_template = _normalize_str_or_none(
+        _resolve_precedence(data.get("filename_template"), file_cfg.get("filename_template"))
     )
 
     return {
@@ -275,12 +363,13 @@ def _build_output_options(
         "max_depth": _int_with_default(data.get("max_depth"), 0),
         "include_patterns": data.get("include_patterns"),
         "exclude_patterns": data.get("exclude_patterns"),
-        "filename_template": (
-            _str(data.get("filename_template"), "") or _str(file_cfg.get("filename_template"), "") or None
-        ),
+        "filename_template": filename_template,
         "plan_file_path": _normalize_path_or_none(data.get("plan_file_path")),
         "interactive": _bool(data.get("interactive"), False),
         "manual_mode": _bool(data.get("manual_mode"), False),
+        "progress": _bool(data.get("progress"), False),
+        "quiet_progress": _bool(data.get("quiet_progress"), False),
+        "explain": _bool(data.get("explain"), False),
     }
 
 
@@ -294,20 +383,16 @@ def build_config(
     env_map = env if env is not None else os.environ
     defaults = file_defaults or {}
 
-    # P2: Deep copy to avoid mutating the caller's dict (e.g. scanned preset sets simple_naming_mode)
-    data: dict[str, Any] = copy.copy(dict(raw))
-
-    # --- Resolve LLM hardware preset defaults ---
-    llm_preset = _normalize_str_or_none(data.get("llm_preset"))
-    effective_preset = llm_preset if llm_preset in _LLM_PRESET_DEFAULTS else "apple-silicon"
-    preset_defaults = _LLM_PRESET_DEFAULTS[effective_preset]
+    # Precedence inside this resolver is explicit:
+    # raw/CLI input > environment > config file defaults > hardcoded defaults.
+    preset_resolution = _resolve_presets(raw)
+    data = preset_resolution.data
+    preset_defaults = preset_resolution.llm_defaults
 
     # --- Build partial dicts from helpers ---
-    # NOTE: _build_extraction_options must run before _build_core_options because the
-    # "scanned" preset mutates data["simple_naming_mode"], which _build_core_options reads.
-    extraction = _build_extraction_options(data, defaults, env_map)
-    core = _build_core_options(data, defaults)
-    llm = _build_llm_options(data, defaults, preset_defaults)
+    extraction = _build_extraction_options(data, env_map)
+    core = _build_core_options(data)
+    llm = _build_llm_options(data, preset_defaults, env_map)
     output = _build_output_options(data, defaults, env_map)
 
     # --- Merge into one dict (detect accidental key overlaps) ---
@@ -324,5 +409,9 @@ def build_config(
     # Manual mode implies interactive behavior.
     if kwargs["manual_mode"]:
         kwargs["interactive"] = True
+
+    validation_errors = _validate_config_kwargs(kwargs)
+    if validation_errors:
+        raise ValueError("Invalid configuration:\n- " + "\n- ".join(validation_errors))
 
     return build_config_from_flat_dict(kwargs)

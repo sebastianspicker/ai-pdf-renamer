@@ -107,6 +107,23 @@ class TestHeuristicTextForCategory:
         assert result == content[:20]
 
 
+class TestGetDateStr:
+    """Tests for _get_date_str."""
+
+    def test_get_date_str_prefers_pdf_metadata_after_invalid_text_date(self) -> None:
+        """Invalid text dates fall back to PDF metadata when enabled."""
+        from ai_pdf_renamer.filename import _get_date_str
+
+        config = RenamerConfig(use_pdf_metadata_for_date=True)
+        result = _get_date_str(
+            "Printed 2099-12-31",
+            config,
+            today=date(2026, 4, 8),
+            pdf_metadata={"creation_date": "2024-11-02", "mod_date": "2024-11-05"},
+        )
+        assert result == "20241102"
+
+
 # ---------------------------------------------------------------------------
 # _resolve_category_with_llm
 # ---------------------------------------------------------------------------

@@ -62,6 +62,46 @@ def _try_vision_extraction(
     return None
 
 
+def _log_extraction_strategy(path: Path, strategy: str, **details: object) -> None:
+    """Emit a consistent extraction-strategy log entry for user-visible debugging."""
+    suffix = " ".join(f"{key}={value}" for key, value in details.items())
+    message = f"ExtractionStrategy file={path.name} strategy={strategy}"
+    if suffix:
+        message = f"{message} {suffix}"
+    logger.info(message)
+
+
+def _extract_primary_content(
+    path: Path,
+    config: RenamerConfig,
+    *,
+    pdf_to_text_fn: Callable[..., str],
+    pdf_to_text_with_ocr_fn: Callable[..., str],
+) -> tuple[str, str]:
+    """Run the primary extraction path before any optional vision fallback."""
+    if config.use_ocr:
+        _log_extraction_strategy(path, "ocr", reason="config.use_ocr")
+        return (
+            pdf_to_text_with_ocr_fn(
+                path,
+                max_pages=config.max_pages_for_extraction or 0,
+                max_tokens=effective_max_tokens(config),
+                language=config.language,
+            ),
+            "ocr",
+        )
+
+    _log_extraction_strategy(path, "text", reason="default")
+    return (
+        pdf_to_text_fn(
+            path,
+            max_pages=config.max_pages_for_extraction or 0,
+            max_tokens=effective_max_tokens(config),
+        ),
+        "text",
+    )
+
+
 def extract_pdf_content(path: Path, config: RenamerConfig) -> tuple[str, bool]:
     return extract_pdf_content_with(
         path,
@@ -81,10 +121,19 @@ def extract_pdf_content_with(
     pdf_to_text_with_ocr_fn: Callable[..., str] = pdf_to_text_with_ocr,
     llm_client: LLMClient | None = None,
 ) -> tuple[str, bool]:
-    """Extract text or optional vision fallback output. Returns (content, used_vision_fallback)."""
+    """Extract content using the configured strategy order.
+
+    Strategy order:
+    1. `vision_first` if enabled
+    2. primary text extraction (`text` or `ocr`)
+    3. `vision_fallback` when extracted text is too short
+
+    Returns `(content, used_vision_fallback)`.
+    """
     client = llm_client or create_llm_client_from_config(config)
 
     if config.vision_first:
+        _log_extraction_strategy(path, "vision_first", outcome="attempt")
         result = _try_vision_extraction(
             path,
             config,
@@ -92,23 +141,25 @@ def extract_pdf_content_with(
             image_fn=pdf_first_page_to_image_base64_fn,
         )
         if result:
+            _log_extraction_strategy(path, "vision_first", outcome="selected")
             return (result, True)
+        _log_extraction_strategy(path, "vision_first", outcome="fall_back_to_primary")
 
-    if config.use_ocr:
-        content = pdf_to_text_with_ocr_fn(
-            path,
-            max_pages=config.max_pages_for_extraction or 0,
-            max_tokens=effective_max_tokens(config),
-            language=config.language,
-        )
-    else:
-        content = pdf_to_text_fn(
-            path,
-            max_pages=config.max_pages_for_extraction or 0,
-            max_tokens=effective_max_tokens(config),
-        )
+    content, primary_strategy = _extract_primary_content(
+        path,
+        config,
+        pdf_to_text_fn=pdf_to_text_fn,
+        pdf_to_text_with_ocr_fn=pdf_to_text_with_ocr_fn,
+    )
 
     if config.use_vision_fallback and len(content.strip()) < config.vision_fallback_min_text_len:
+        _log_extraction_strategy(
+            path,
+            "vision_fallback",
+            outcome="attempt",
+            text_length=len(content.strip()),
+            threshold=config.vision_fallback_min_text_len,
+        )
         result = _try_vision_extraction(
             path,
             config,
@@ -116,12 +167,16 @@ def extract_pdf_content_with(
             image_fn=pdf_first_page_to_image_base64_fn,
         )
         if result:
-            logger.info(
-                "Used vision fallback for %s (text length %d < %d)",
-                path.name,
-                len(content.strip()),
-                config.vision_fallback_min_text_len,
+            _log_extraction_strategy(
+                path,
+                "vision_fallback",
+                outcome="selected",
+                text_length=len(content.strip()),
+                threshold=config.vision_fallback_min_text_len,
             )
             return (result, True)
+        _log_extraction_strategy(path, primary_strategy, outcome="selected_after_failed_vision_fallback")
+        return (content, False)
 
+    _log_extraction_strategy(path, primary_strategy, outcome="selected", text_length=len(content.strip()))
     return (content, False)

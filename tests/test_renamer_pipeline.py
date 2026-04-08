@@ -808,7 +808,7 @@ class TestProcessContentToResult:
         monkeypatch.setattr(
             renamer,
             "generate_filename",
-            lambda content, *, config, override_category=None, pdf_metadata=None, rules=None: (
+            lambda content, *, config, override_category=None, pdf_metadata=None, rules=None, source_path=None: (
                 "20260101-invoice-acme",
                 {"category": "invoice"},
             ),
@@ -983,6 +983,37 @@ class TestWatchLoop:
 
 
 class TestRenamePipelineEdgeCases:
+    def test_produce_rename_results_reports_progress(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        pdf_a = tmp_path / "a.pdf"
+        pdf_b = tmp_path / "b.pdf"
+        pdf_a.write_bytes(b"%PDF-1.4 a")
+        pdf_b.write_bytes(b"%PDF-1.4 b")
+        cfg = _cfg(workers=1)
+
+        monkeypatch.setattr(renamer, "_extract_pdf_content", lambda path, config: ("text", False))
+        monkeypatch.setattr(
+            renamer,
+            "_process_content_to_result",
+            lambda file_path, content, config, rules=None, used_vision=False: (
+                file_path,
+                file_path.stem,
+                {"category": "invoice"},
+                None,
+            ),
+        )
+
+        seen: list[tuple[int, int, str]] = []
+
+        renamer._produce_rename_results(
+            [pdf_a, pdf_b],
+            cfg,
+            progress_callback=lambda current, total, file_path: seen.append((current, total, file_path.name)),
+        )
+
+        assert seen == [(1, 2, "a.pdf"), (2, 2, "b.pdf")]
+
     def test_rename_pdfs_files_override(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """files_override is passed to _collect_pdf_files and those files are processed."""
         pdf = tmp_path / "override-target.pdf"
@@ -1000,7 +1031,9 @@ class TestRenamePipelineEdgeCases:
         monkeypatch.setattr(
             renamer,
             "_produce_rename_results",
-            lambda files, config, rules=None: [(pdf, "20260101-overridden-file", {"category": "test"}, None)],
+            lambda files, config, rules=None, progress_callback=None: [
+                (pdf, "20260101-overridden-file", {"category": "test"}, None)
+            ],
         )
 
         renamer.rename_pdfs_in_directory(
@@ -1027,7 +1060,7 @@ class TestRenamePipelineEdgeCases:
         monkeypatch.setattr(
             renamer,
             "_produce_rename_results",
-            lambda files, config, rules=None: [
+            lambda files, config, rules=None, progress_callback=None: [
                 (
                     pdf,
                     "20260101-exported-doc",

@@ -8,6 +8,7 @@ from ai_pdf_renamer.llm_parsing import (
     _extract_json_from_response,
     _lenient_extract_key_value,
     _sanitize_json_string_value,
+    extract_and_validate_json,
     parse_json_field,
     truncate_for_llm,
 )
@@ -195,6 +196,27 @@ class TestParseJsonField:
         assert parse_json_field('{"summary":true}', key="summary") is None
 
 
+class TestExtractAndValidateJson:
+    def test_extract_and_validate_json_valid_object(self) -> None:
+        result = extract_and_validate_json('```json\n{"summary":"ok"}\n```', expected_keys={"summary"})
+        assert result["summary"] == "ok"
+
+    def test_extract_and_validate_json_lenient_fallback(self) -> None:
+        result = extract_and_validate_json('"summary":"fallback"', expected_keys={"summary"}, lenient_keys={"summary"})
+        assert result["summary"] == "fallback"
+
+    def test_extract_and_validate_json_reports_context(self) -> None:
+        try:
+            extract_and_validate_json("not json", expected_keys={"summary", "category"})
+        except ValueError as exc:
+            message = str(exc)
+            assert "summary" in message
+            assert "category" in message
+            assert "received" in message.lower()
+        else:
+            raise AssertionError("Expected ValueError")
+
+
 # ---------------------------------------------------------------------------
 # truncate_for_llm
 # ---------------------------------------------------------------------------
@@ -284,7 +306,9 @@ class TestParseJsonFieldSalvageChain:
         with patch("ai_pdf_renamer.llm_parsing.logger") as mock_logger:
             result = parse_json_field(response, key="summary")
             assert result is None
-            mock_logger.warning.assert_called_once_with("LLM response could not be parsed as JSON; using fallback")
+            warning_call = mock_logger.warning.call_args
+            assert warning_call is not None
+            assert "LLM response could not be parsed as JSON; using fallback" in warning_call.args[0]
 
 
 # ---------------------------------------------------------------------------

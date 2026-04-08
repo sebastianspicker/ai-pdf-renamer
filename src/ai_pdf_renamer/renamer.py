@@ -11,6 +11,7 @@ import signal
 import subprocess  # nosec B404
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -38,9 +39,82 @@ from .rules import (
 logger = logging.getLogger(__name__)
 
 
+class _NullProgressReporter:
+    def __enter__(self) -> _NullProgressReporter:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        return None
+
+    def update(self, current: int, total: int, file_path: Path) -> None:
+        return None
+
+
+class _RichProgressReporter:
+    def __init__(self, total: int, *, quiet: bool) -> None:
+        from rich.console import Console
+        from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
+
+        columns: list[object] = []
+        if quiet:
+            columns.extend(
+                [
+                    TextColumn("{task.percentage:>3.0f}%"),
+                    TextColumn("{task.completed}/{task.total}"),
+                ]
+            )
+        else:
+            columns.extend(
+                [
+                    TextColumn("{task.completed}/{task.total}"),
+                    BarColumn(bar_width=None),
+                    TextColumn("{task.percentage:>3.0f}%"),
+                ]
+            )
+        columns.extend([TextColumn("{task.fields[filename]}", overflow="ellipsis"), TimeElapsedColumn()])
+        self._progress = Progress(*columns, console=Console(stderr=True), transient=True)
+        self._task_id = self._progress.add_task("Processing PDFs", total=total, filename="")
+
+    def __enter__(self) -> _RichProgressReporter:
+        self._progress.start()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self._progress.stop()
+
+    def update(self, current: int, total: int, file_path: Path) -> None:
+        self._progress.update(self._task_id, total=total, completed=current, filename=file_path.name)
+
+
+def _create_progress_reporter(total: int, config: RenamerConfig) -> _NullProgressReporter | _RichProgressReporter:
+    """Create an opt-in progress reporter without affecting default CLI output."""
+    if not (config.progress or config.quiet_progress):
+        return _NullProgressReporter()
+    try:
+        return _RichProgressReporter(total, quiet=bool(config.quiet_progress))
+    except ImportError:
+        logger.warning("Rich progress unavailable; continuing without progress UI.")
+        return _NullProgressReporter()
+
+
 def _stop_requested(config: RenamerConfig) -> bool:
     stop_event = config.stop_event
     return bool(stop_event is not None and hasattr(stop_event, "is_set") and stop_event.is_set())
+
+
+def _extract_pdf_content(path: Path, config: RenamerConfig) -> tuple[str, bool]:
+    """Compatibility shim for the extraction pipeline.
+
+    The strategy logic lives in renamer_extract.py; this wrapper keeps the
+    renamer-level patch points stable for tests and local overrides.
+    """
+    return _extract_pdf_content_with(
+        path,
+        config,
+        pdf_first_page_to_image_base64_fn=pdf_first_page_to_image_base64,
+        pdf_to_text_fn=pdf_to_text,
+        pdf_to_text_with_ocr_fn=pdf_to_text_with_ocr,
+    )
 
 
 def _write_pdf_title_metadata(pdf_path: Path, title: str) -> None:
@@ -276,17 +350,6 @@ def _apply_post_rename_actions(
         _run_post_rename_hook(hook_cmd, file_path, target, meta)
 
 
-def _extract_pdf_content(path: Path, config: RenamerConfig) -> tuple[str, bool]:
-    """Extract PDF content using text/OCR/vision strategies."""
-    return _extract_pdf_content_with(
-        path,
-        config,
-        pdf_first_page_to_image_base64_fn=pdf_first_page_to_image_base64,
-        pdf_to_text_fn=pdf_to_text,
-        pdf_to_text_with_ocr_fn=pdf_to_text_with_ocr,
-    )
-
-
 def _process_content_to_result(
     file_path: Path,
     content: str,
@@ -309,6 +372,7 @@ def _process_content_to_result(
             override_category=override_cat,
             pdf_metadata=pdf_meta,
             rules=rules,
+            source_path=file_path,
         )
         new_base = sanitize_filename_base(filename_str)
         meta = meta or {}
@@ -420,6 +484,7 @@ def _produce_rename_results(
     files: list[Path],
     config: RenamerConfig,
     rules: ProcessingRules | None = None,
+    progress_callback: Callable[[int, int, Path], None] | None = None,
 ) -> list[tuple[Path, str | None, dict[str, object] | None, BaseException | None]]:
     """Produce (file_path, new_base, meta, exc) per file; parallel or single-worker with prefetch."""
     workers = max(1, config.workers or 1)
@@ -444,13 +509,16 @@ def _produce_rename_results(
                     stop_early = True
                     break
                 try:
-                    results.append(future.result())
+                    result = future.result()
                 except BaseException as exc:
                     # P2: Catch BaseException to handle KeyboardInterrupt properly
                     if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                         stop_early = True
                         break
-                    results.append((p, None, None, exc))
+                    result = (p, None, None, exc)
+                results.append(result)
+                if progress_callback is not None:
+                    progress_callback(len(results), len(files), p)
         finally:
             if stop_early:
                 for pending, _ in futures:
@@ -473,18 +541,23 @@ def _produce_rename_results(
                 )
             except Exception as exc:
                 results.append((file_path, None, None, exc))
+                if progress_callback is not None:
+                    progress_callback(len(results), len(files), file_path)
                 prefetched = None
                 continue
             prefetched = executor.submit(_extract_pdf_content, files[i + 1], config) if i + 1 < len(files) else None
             if not content.strip():
                 results.append((file_path, None, None, None))
+                if progress_callback is not None:
+                    progress_callback(len(results), len(files), file_path)
                 continue
             try:
-                results.append(
-                    _process_content_to_result(file_path, content, config, rules=rules, used_vision=used_vision)
-                )
+                result = _process_content_to_result(file_path, content, config, rules=rules, used_vision=used_vision)
             except Exception as exc:
-                results.append((file_path, None, None, exc))
+                result = (file_path, None, None, exc)
+            results.append(result)
+            if progress_callback is not None:
+                progress_callback(len(results), len(files), file_path)
     return results
 
 
@@ -636,7 +709,11 @@ def rename_pdfs_in_directory(
     plan_entries: list[dict[str, str]] = []
     renamed_targets: set[Path] = set()
 
-    results = _produce_rename_results(files, config, rules=rules)
+    with _create_progress_reporter(len(files), config) as progress_reporter:
+        if config.progress or config.quiet_progress:
+            results = _produce_rename_results(files, config, rules=rules, progress_callback=progress_reporter.update)
+        else:
+            results = _produce_rename_results(files, config, rules=rules)
 
     for i, (file_path, new_base, meta, exc) in enumerate(results):
         if _stop_requested(config):

@@ -25,6 +25,58 @@ def test_parser_max_tokens_help_uses_runtime_default() -> None:
     assert str(DEFAULT_MAX_CONTENT_TOKENS) in help_text
 
 
+def test_parser_accepts_cache_progress_and_diagnostics_flags() -> None:
+    from ai_pdf_renamer.cli_parser import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "--dir",
+            ".",
+            "--cache-dir",
+            "/tmp/cache",
+            "--no-cache",
+            "--progress",
+            "--quiet-progress",
+            "--explain",
+            "--validate-config",
+        ]
+    )
+    assert args.cache_dir == "/tmp/cache"
+    assert args.use_cache is False
+    assert args.progress is True
+    assert args.quiet_progress is True
+    assert args.explain is True
+    assert args.validate_config is True
+
+
+def test_help_text_documents_new_presets() -> None:
+    from ai_pdf_renamer.cli_parser import build_parser
+
+    help_text = build_parser().format_help()
+    assert "fast" in help_text
+    assert "accurate" in help_text
+    assert "batch" in help_text
+
+
+def test_validate_config_mode_exits_before_processing(monkeypatch, tmp_path: Path) -> None:
+    import ai_pdf_renamer.cli as cli
+
+    monkeypatch.setattr(cli, "setup_logging", lambda **k: None)
+    rename_called = {"value": False}
+
+    def fake_rename(*args, **kwargs):
+        rename_called["value"] = True
+
+    monkeypatch.setattr(cli, "rename_pdfs_in_directory", fake_rename)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--validate-config", "--dir", str(tmp_path)])
+
+    assert excinfo.value.code == 0
+    assert rename_called["value"] is False
+
+
 def test_doctor_mode_invokes_preflight(monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     import ai_pdf_renamer.cli as cli
 

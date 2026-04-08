@@ -18,6 +18,12 @@ def _add_dirs_and_file_args(p: argparse._ActionsContainer) -> None:
         help="Check dependencies, data files, and LLM connectivity, then exit.",
     )
     p.add_argument(
+        "--validate-config",
+        dest="validate_config",
+        action="store_true",
+        help="Validate CLI/env/config-file settings and exit without processing files.",
+    )
+    p.add_argument(
         "--dir",
         dest="dirs",
         nargs="*",
@@ -495,8 +501,11 @@ def _add_llm_args(p: argparse._ActionsContainer) -> None:
         "--preset",
         dest="preset",
         default=None,
-        choices=["high-confidence-heuristic", "scanned"],
-        help="Preset: high-confidence-heuristic or scanned (vision fallback + simple naming).",
+        choices=["high-confidence-heuristic", "scanned", "fast", "accurate", "batch"],
+        help=(
+            "Preset: high-confidence-heuristic, scanned, fast (heuristics-first), "
+            "accurate (more LLM + embeddings), or batch (higher workers + persistent cache)."
+        ),
     )
     p.add_argument(
         "--llm-preset",
@@ -618,6 +627,37 @@ def _add_output_and_ux_args(p: argparse._ActionsContainer) -> None:
         metavar="N",
         help="Parallel workers for extract+generate (default 1). Renames applied sequentially.",
     )
+    p.add_argument(
+        "--cache-dir",
+        dest="cache_dir",
+        default=None,
+        metavar="DIR",
+        help="Persistent cache directory for LLM responses. Env: AI_PDF_RENAMER_CACHE_DIR",
+    )
+    p.add_argument(
+        "--no-cache",
+        dest="use_cache",
+        action="store_false",
+        help="Disable response caching for LLM calls.",
+    )
+    p.add_argument(
+        "--progress",
+        dest="progress",
+        action="store_true",
+        help="Show a Rich progress bar during processing. Opt-in to keep piped output stable.",
+    )
+    p.add_argument(
+        "--quiet-progress",
+        dest="quiet_progress",
+        action="store_true",
+        help="Show compact percentage-only progress output.",
+    )
+    p.add_argument(
+        "--explain",
+        dest="explain",
+        action="store_true",
+        help="Log detailed classification reasoning: heuristic scores, LLM outputs, and conflict resolution.",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -634,6 +674,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  ai-pdf-renamer --dir ./invoices --dry-run\n"
             "  ai-pdf-renamer --file report.pdf --manual\n"
             "  ai-pdf-renamer --dir ./scans --preset scanned --ocr\n"
+            "  ai-pdf-renamer --dir ./archive --preset batch --progress\n"
             "  ai-pdf-renamer --doctor\n"
             "\n"
             "Config: defaults can be set in a JSON/YAML file via --config.\n"

@@ -249,6 +249,43 @@ def test_extract_date_prefer_leading_chars_not_in_header() -> None:
     assert extract_date_from_content(text, today=date(2000, 1, 1), prefer_leading_chars=100) == "2025-08-20"
 
 
+def test_extract_date_iso8601_timestamp() -> None:
+    """ISO 8601 timestamps with time and timezone are supported."""
+    text = "Created at 2025-03-15T14:30:59Z by the system."
+    assert extract_date_from_content(text, today=date(2000, 1, 1)) == "2025-03-15"
+
+
+def test_extract_date_keyword_weight_prefers_document_date() -> None:
+    """Keyword-labelled dates outrank an earlier generic printed date."""
+    text = "Printed 2020-01-01\nRechnungsdatum: 15.03.2025\nFooter"
+    assert extract_date_from_content(text, today=date(2000, 1, 1), prefer_leading_chars=500) == "2025-03-15"
+
+
+def test_extract_date_rejects_old_dates_before_1990() -> None:
+    """Implausibly old dates are rejected."""
+    assert extract_date_from_content("Archived 1987-03-01", today=date(2026, 4, 8)) == "2026-04-08"
+
+
+def test_extract_date_rejects_future_dates_beyond_one_year() -> None:
+    """Dates more than one year in the future are rejected."""
+    assert extract_date_from_content("Due 2027-06-15", today=date(2026, 4, 8)) == "2026-04-08"
+
+
+def test_extract_date_uses_pdf_metadata_fallback() -> None:
+    """PDF metadata is used when the text contains no valid date."""
+    result = extract_date_from_content(
+        "Printed 2099-12-31",
+        today=date(2026, 4, 8),
+        pdf_metadata={"creation_date": "2024-11-02", "mod_date": "2024-11-05"},
+    )
+    assert result == "2024-11-02"
+
+
+def test_extract_date_short_month_name_english() -> None:
+    """English month abbreviations are supported."""
+    assert extract_date_from_content("Statement dated Sep 5, 2024", today=date(2000, 1, 1)) == "2024-09-05"
+
+
 # ---------------------------------------------------------------------------
 # chunk_text boundary conditions
 # ---------------------------------------------------------------------------
@@ -458,3 +495,31 @@ def test_structured_fields_amount_summe() -> None:
     text = "Summe: 500,00 EUR"
     out = extract_structured_fields(text)
     assert out["amount"] == "500.00"
+
+
+def test_structured_fields_invoice_id_with_prefixed_id() -> None:
+    """Prefixed invoice ids with letters, hyphens, and slashes are recognized."""
+    text = "Invoice ID: RE-2025/AB-991\nTotal: 149,99 EUR"
+    out = extract_structured_fields(text)
+    assert out["invoice_id"] == "RE-2025AB-991"
+
+
+def test_structured_fields_company_legal_suffix_llc() -> None:
+    """Company names with common legal suffixes are extracted without a label."""
+    text = "Vendor\nExample Holdings LLC\n123 Main Street"
+    out = extract_structured_fields(text)
+    assert out["company"] == "Example_Holdings_LLC"
+
+
+def test_structured_fields_amount_us_number_format() -> None:
+    """US thousands and decimal separators are normalized."""
+    text = "Invoice total: 1,234.56"
+    out = extract_structured_fields(text)
+    assert out["amount"] == "1234.56"
+
+
+def test_structured_fields_rejects_implausible_large_amount() -> None:
+    """Amounts above the consumer-document sanity threshold are rejected."""
+    text = "Total: 1000001.00 EUR"
+    out = extract_structured_fields(text)
+    assert out["amount"] == ""

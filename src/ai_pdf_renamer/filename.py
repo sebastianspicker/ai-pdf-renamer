@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime
+from pathlib import Path
 
+from .cache import ResponseCache, get_shared_response_cache
 from .config import RenamerConfig
 from .heuristics import (
     CategoryCombineParams,
@@ -30,7 +32,6 @@ from .rename_ops import sanitize_filename_base
 from .rules import ProcessingRules
 from .text_utils import (
     Stopwords,
-    _find_date_in_text,
     clean_token,
     convert_case,
     extract_date_from_content,
@@ -58,25 +59,8 @@ def _get_date_str(
         today=today,
         date_locale=config.date_locale,
         prefer_leading_chars=config.date_prefer_leading_chars or 0,
+        pdf_metadata=pdf_metadata if config.use_pdf_metadata_for_date else None,
     )
-    if not config.use_pdf_metadata_for_date:
-        return content_date.replace("-", "")
-    if today is None:
-        today = date.today()
-    # P1: Check whether a date was actually found in the content (vs. today fallback).
-    # _find_date_in_text returns None if no date is found; extract_date_from_content
-    # returns today's date as a fallback. We need to distinguish "today found in text"
-    # from "no date found, using today as fallback".
-    loc = (config.date_locale or "dmy").lower()
-    date_actually_found = _find_date_in_text(pdf_content or "", date_locale=loc, today=today) is not None
-    if date_actually_found:
-        return content_date.replace("-", "")
-    # No date found in content; try PDF metadata
-    if pdf_metadata:
-        for key in ("creation_date", "mod_date"):
-            meta_date = pdf_metadata.get(key)
-            if meta_date and isinstance(meta_date, str):
-                return meta_date.replace("-", "")
     return content_date.replace("-", "")
 
 
@@ -156,6 +140,8 @@ def _resolve_category_with_llm(
     keywords: list[str],
     rules: ProcessingRules | None = None,
     precomputed_llm_category: str | None = None,
+    response_cache: ResponseCache | None = None,
+    cache_key_base: str | None = None,
 ) -> tuple[str, str, str]:
     """Resolve final category (heuristic + optional LLM, combine_categories).
     Returns (category, category_for_filename, category_source)."""
@@ -196,6 +182,8 @@ def _resolve_category_with_llm(
             suggested_categories=suggested if not allowed else None,
             allowed_categories=allowed,
             lenient_json=config.lenient_llm_json,
+            cache=response_cache,
+            cache_key_base=cache_key_base,
         )
         cat_llm = _validate_llm_category_against_allowed(cat_llm, allowed)
 
@@ -234,6 +222,16 @@ def _resolve_category_with_llm(
         cat_llm,
         category,
     )
+    if config.explain:
+        logger.info(
+            "Explain ConflictResolution source=%s heuristic=%s heuristic_score=%.2f heuristic_gap=%.2f llm=%s final=%s",
+            category_source,
+            cat_heur,
+            heuristic_score,
+            heuristic_gap,
+            cat_llm,
+            category,
+        )
     return (category, category_for_filename, category_source)
 
 
@@ -273,6 +271,8 @@ def _get_llm_summary_and_keywords(
     suggested_doc_type: str | None,
     override_category: str | None,
     rules: ProcessingRules | None,
+    response_cache: ResponseCache | None = None,
+    cache_key_base: str | None = None,
 ) -> tuple[str, list[str] | tuple[str, ...], str | None, list[str] | tuple[str, ...] | None]:
     """Run LLM to get summary, keywords, and optionally a precomputed category.
 
@@ -310,6 +310,8 @@ def _get_llm_summary_and_keywords(
             suggested_categories=_suggested if not _allowed else None,
             lenient_json=config.lenient_llm_json,
             json_mode=config.llm_json_mode,
+            cache=response_cache,
+            cache_key_base=cache_key_base,
         )
         return (analysis.summary, analysis.keywords or [], analysis.category, analysis.final_summary_tokens)
 
@@ -322,6 +324,8 @@ def _get_llm_summary_and_keywords(
         lenient_json=config.lenient_llm_json,
         max_content_chars=_effective_max_content_chars,
         max_content_tokens=config.max_content_tokens,
+        cache=response_cache,
+        cache_key_base=cache_key_base,
     )
     raw_keywords: tuple[str, ...] | list[str] = (
         get_document_keywords(
@@ -330,6 +334,8 @@ def _get_llm_summary_and_keywords(
             language=config.language,
             suggested_category=cat_heur if cat_heur != "unknown" else None,
             lenient_json=config.lenient_llm_json,
+            cache=response_cache,
+            cache_key_base=cache_key_base,
         )
         or []
     )
@@ -343,6 +349,8 @@ def _resolve_final_summary_tokens(
     keywords: list[str],
     category: str,
     precomputed_summary_tokens: list[str] | tuple[str, ...] | None,
+    response_cache: ResponseCache | None = None,
+    cache_key_base: str | None = None,
 ) -> list[str]:
     """Resolve final summary tokens from LLM analysis or a separate LLM call.
 
@@ -363,6 +371,8 @@ def _resolve_final_summary_tokens(
             category=category,
             language=config.language,
             lenient_json=config.lenient_llm_json,
+            cache=response_cache,
+            cache_key_base=cache_key_base,
         )
         or []
     )
@@ -376,6 +386,8 @@ def _get_category_summary_keywords_metadata(
     stopwords: Stopwords,
     override_category: str | None,
     rules: ProcessingRules | None = None,
+    response_cache: ResponseCache | None = None,
+    cache_key_base: str | None = None,
 ) -> tuple[str, list[str], list[str], list[str], dict[str, object]]:
     """Resolve category (override/heuristic/LLM), run LLM summary/keywords, clean tokens, build metadata.
     Returns (category_for_filename, category_clean, keyword_clean, summary_clean, metadata)."""
@@ -401,6 +413,21 @@ def _get_category_summary_keywords_metadata(
             suggested_doc_type_for_summary,
         ) = _resolve_heuristic_category(heuristic_text, config, heuristic_scorer)
         skip_llm_by_rule = config.use_llm and rules is not None and cat_heur in rules.skip_llm_if_heuristic_category
+        if config.explain:
+            logger.info(
+                "Explain Heuristic category=%s score=%.2f gap=%.2f top=%s",
+                cat_heur,
+                heuristic_score,
+                heuristic_gap,
+                heuristic_scorer.top_n_categories(
+                    heuristic_text,
+                    n=min(5, config.heuristic_suggestions_top_n),
+                    language=config.language,
+                    max_score_per_category=config.max_score_per_category,
+                    title_weight_region=config.title_weight_region,
+                    title_weight_factor=config.title_weight_factor,
+                ),
+            )
 
     # --- Get summary + keywords ---
     precomputed_category: str | None = None
@@ -423,11 +450,20 @@ def _get_category_summary_keywords_metadata(
             suggested_doc_type_for_summary,
             override_category,
             rules,
+            response_cache=response_cache,
+            cache_key_base=cache_key_base,
         )
     else:
         summary = ""
         raw_keywords = []
     keywords = normalize_keywords(raw_keywords)
+    if config.explain and config.use_llm and not skip_llm_by_rule:
+        logger.info(
+            "Explain LLM summary=%r keywords=%s precomputed_category=%r",
+            summary,
+            keywords,
+            precomputed_category,
+        )
 
     # --- Resolve category ---
     if not skip_llm_by_rule and override_category is None:
@@ -443,6 +479,8 @@ def _get_category_summary_keywords_metadata(
             keywords,
             rules=rules,
             precomputed_llm_category=precomputed_category,
+            response_cache=response_cache,
+            cache_key_base=cache_key_base,
         )
 
     category_unknown = (category or "").strip().lower() in ("unknown", "na", "document", "")
@@ -459,6 +497,8 @@ def _get_category_summary_keywords_metadata(
             keywords,
             category,
             precomputed_summary_tokens,
+            response_cache=response_cache,
+            cache_key_base=cache_key_base,
         )
     else:
         final_summary_tokens = []
@@ -647,6 +687,7 @@ def generate_filename(
     today: date | None = None,
     pdf_metadata: dict[str, object] | None = None,
     rules: ProcessingRules | None = None,
+    source_path: Path | None = None,
 ) -> tuple[str, dict[str, object]]:
     """
     Constructs the final filename and metadata:
@@ -662,6 +703,10 @@ def generate_filename(
     llm_client = llm_client or create_llm_client_from_config(config)
     stopwords = stopwords or default_stopwords()
     heuristic_scorer = heuristic_scorer or default_heuristic_scorer(config.language)
+    response_cache = get_shared_response_cache(config.cache_dir) if config.use_cache else None
+    cache_key_base = None
+    if response_cache is not None and source_path is not None and source_path.exists():
+        cache_key_base = ResponseCache.build_file_key(source_path)
 
     date_str = _get_date_str(pdf_content, config, today, pdf_metadata)
     _eff_max_content_chars = config.max_content_chars or config.max_context_chars
@@ -672,6 +717,8 @@ def generate_filename(
             language=config.language,
             max_content_chars=_eff_max_content_chars,
             max_content_tokens=config.max_content_tokens,
+            cache=response_cache,
+            cache_key_base=cache_key_base,
         )
         sep = _filename_sep(config)
         filename = sep.join([date_str, simple_part])
@@ -704,6 +751,8 @@ def generate_filename(
             stopwords,
             override_category,
             rules=rules,
+            response_cache=response_cache,
+            cache_key_base=cache_key_base,
         )
     )
     sf: dict[str, str] = {}

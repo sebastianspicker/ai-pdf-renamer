@@ -3,41 +3,82 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from .rename_ops import FILENAME_RESERVED_WIN, FILENAME_UNSAFE_RE
 
 # Maximum keywords returned from normalize_keywords.
 MAX_NORMALIZED_KEYWORDS = 7
 
-_DATE_RE_YMD = re.compile(r"\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b")
+_DATE_RE_YMD = re.compile(
+    r"\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T\s]\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?\b"
+)
+_DATE_RE_YMD_COMPACT = re.compile(r"\b(\d{4})(\d{2})(\d{2})(?:T\d{6}(?:Z|[+-]\d{2}:?\d{2})?)?\b")
 _DATE_RE_DMY = re.compile(r"\b(\d{1,2})[./-](\d{1,2})[./-](\d{4})\b")
 
 # Long-form: "18. Februar 2025" (DE) or "February 18, 2025" / "18 February 2025" (EN)
-_DE_MONTHS = "januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember"
-_EN_MONTHS = "january|february|march|april|may|june|july|august|september|october|november|december"
+_DE_MONTHS = (
+    "januar|jan\\.?|februar|feb\\.?|märz|mär\\.?|mrz\\.?|maerz|april|apr\\.?|mai|"
+    "juni|jun\\.?|juli|jul\\.?|august|aug\\.?|september|sept?\\.?|oktober|okt\\.?|november|nov\\.?|dezember|dez\\.?"
+)
+_EN_MONTHS = (
+    "january|jan\\.?|february|feb\\.?|march|mar\\.?|april|apr\\.?|may|"
+    "june|jun\\.?|july|jul\\.?|august|aug\\.?|september|sept?\\.?|october|oct\\.?|november|nov\\.?|december|dec\\.?"
+)
 _MONTH_TO_NUM = {
     "januar": 1,
+    "jan": 1,
     "january": 1,
+    "jan.": 1,
     "februar": 2,
+    "feb": 2,
     "february": 2,
+    "feb.": 2,
     "märz": 3,
+    "mär": 3,
+    "mrz": 3,
     "maerz": 3,
     "march": 3,
+    "mar": 3,
+    "mär.": 3,
+    "mrz.": 3,
+    "mar.": 3,
     "april": 4,
+    "apr": 4,
+    "apr.": 4,
     "mai": 5,
     "may": 5,
     "juni": 6,
     "june": 6,
+    "jun": 6,
+    "jun.": 6,
     "juli": 7,
     "july": 7,
+    "jul": 7,
+    "jul.": 7,
     "august": 8,
+    "aug": 8,
+    "aug.": 8,
     "september": 9,
+    "sep": 9,
+    "sep.": 9,
+    "sept": 9,
+    "sept.": 9,
     "oktober": 10,
     "october": 10,
+    "okt": 10,
+    "okt.": 10,
+    "oct": 10,
+    "oct.": 10,
     "november": 11,
+    "nov": 11,
+    "nov.": 11,
     "dezember": 12,
     "december": 12,
+    "dez": 12,
+    "dez.": 12,
+    "dec": 12,
+    "dec.": 12,
 }
 _DATE_RE_DE_LONG = re.compile(
     r"\b(\d{1,2})\.\s*(" + _DE_MONTHS + r")\s+(\d{4})\b",
@@ -67,6 +108,229 @@ _DATE_RE_MONTH_YEAR_EN = re.compile(
     r"\b(" + _EN_MONTHS + r")\s+(\d{4})\b",
     re.IGNORECASE,
 )
+_DATE_KEYWORD_RE = re.compile(
+    r"(?i)\b(datum|date|rechnungsdatum|invoice\s+date|document\s+date|issue\s+date|issued|statement\s+date|"
+    r"billing\s+date|stand|erstellt|ausgestellt|belegdatum)\b"
+)
+_DATE_MIN = date(1990, 1, 1)
+_DATE_MAX_FUTURE_DELTA = timedelta(days=366)
+_AMOUNT_MAX = 1_000_000.0
+_COMPANY_SUFFIXES = r"(?:GmbH|AG|Inc\.?|Ltd\.?|LLC)"
+_INVOICE_ID_VALUE = r"([A-Z0-9]{2,}(?:[/-][A-Z0-9]{2,})+)"
+
+
+@dataclass(frozen=True)
+class _DateCandidate:
+    value: date
+    start: int
+    score: int
+
+
+def _normalize_month_token(month_name: str) -> str:
+    """Normalize month names and abbreviations for lookup."""
+    return month_name.strip().lower()
+
+
+def _validation_reference_date(today: date) -> date:
+    """Use the later of the injected fallback date and the real current date for plausibility checks."""
+    return max(today, date.today())
+
+
+def _make_date_candidate(
+    y: str,
+    m: str,
+    d: str,
+    *,
+    today: date,
+    start: int,
+    content: str,
+    prefer_leading_chars: int,
+    base_score: int,
+) -> _DateCandidate | None:
+    """Build a validated candidate with positional weighting."""
+    try:
+        candidate = date(int(y), int(m), int(d))
+    except (TypeError, ValueError):
+        return None
+    validation_today = _validation_reference_date(today)
+    if candidate < _DATE_MIN or candidate > validation_today + _DATE_MAX_FUTURE_DELTA:
+        return None
+    score = base_score
+    if prefer_leading_chars > 0 and start < prefer_leading_chars:
+        score += 30
+        prefix = content[max(0, start - 40) : start]
+        if _DATE_KEYWORD_RE.search(prefix):
+            score += 60
+    score -= min(start // 2000, 12)
+    return _DateCandidate(value=candidate, start=start, score=score)
+
+
+def _best_date_candidate(candidates: list[_DateCandidate]) -> str | None:
+    """Return the highest-scoring candidate as YYYY-MM-DD."""
+    if not candidates:
+        return None
+    best = max(candidates, key=lambda candidate: (candidate.score, -candidate.start))
+    return best.value.strftime("%Y-%m-%d")
+
+
+def _find_date_candidates(
+    content: str,
+    *,
+    date_locale: str,
+    today: date,
+    prefer_leading_chars: int = 0,
+) -> list[_DateCandidate]:
+    """Collect validated date candidates from document text."""
+    candidates: list[_DateCandidate] = []
+
+    for match in _DATE_RE_PREFIX_DMY.finditer(content):
+        g1, g2, year = match.groups()
+        matched_text = match.group(0).lower()
+        is_german_label = any(
+            lbl in matched_text for lbl in ("rechnungsdatum", "datum", "stand", "erstellt", "rechnung")
+        )
+        day, month = (g1, g2) if is_german_label or date_locale == "dmy" else (g2, g1)
+        if candidate := _make_date_candidate(
+            year,
+            month,
+            day,
+            today=today,
+            start=match.start(),
+            content=content,
+            prefer_leading_chars=prefer_leading_chars,
+            base_score=100,
+        ):
+            candidates.append(candidate)
+
+    for match in _DATE_RE_YMD.finditer(content):
+        year, month, day = match.groups()
+        if candidate := _make_date_candidate(
+            year,
+            month,
+            day,
+            today=today,
+            start=match.start(),
+            content=content,
+            prefer_leading_chars=prefer_leading_chars,
+            base_score=120,
+        ):
+            candidates.append(candidate)
+
+    for match in _DATE_RE_YMD_COMPACT.finditer(content):
+        year, month, day = match.groups()
+        if candidate := _make_date_candidate(
+            year,
+            month,
+            day,
+            today=today,
+            start=match.start(),
+            content=content,
+            prefer_leading_chars=prefer_leading_chars,
+            base_score=115,
+        ):
+            candidates.append(candidate)
+
+    for match in _DATE_RE_DMY.finditer(content):
+        g1, g2, year = match.groups()
+        month, day = (g1, g2) if date_locale == "mdy" else (g2, g1)
+        if candidate := _make_date_candidate(
+            year,
+            month,
+            day,
+            today=today,
+            start=match.start(),
+            content=content,
+            prefer_leading_chars=prefer_leading_chars,
+            base_score=100,
+        ):
+            candidates.append(candidate)
+
+    for match in _DATE_RE_DE_LONG.finditer(content):
+        day, month_name, year = match.groups()
+        month = str(_MONTH_TO_NUM.get(_normalize_month_token(month_name), 0))
+        if month != "0" and (
+            candidate := _make_date_candidate(
+                year,
+                month,
+                day,
+                today=today,
+                start=match.start(),
+                content=content,
+                prefer_leading_chars=prefer_leading_chars,
+                base_score=110,
+            )
+        ):
+            candidates.append(candidate)
+
+    for match in _DATE_RE_EN_LONG.finditer(content):
+        month_name, day, year = match.groups()
+        month = str(_MONTH_TO_NUM.get(_normalize_month_token(month_name), 0))
+        if month != "0" and (
+            candidate := _make_date_candidate(
+                year,
+                month,
+                day,
+                today=today,
+                start=match.start(),
+                content=content,
+                prefer_leading_chars=prefer_leading_chars,
+                base_score=110,
+            )
+        ):
+            candidates.append(candidate)
+
+    for match in _DATE_RE_EN_LONG_DD.finditer(content):
+        day, month_name, year = match.groups()
+        month = str(_MONTH_TO_NUM.get(_normalize_month_token(month_name), 0))
+        if month != "0" and (
+            candidate := _make_date_candidate(
+                year,
+                month,
+                day,
+                today=today,
+                start=match.start(),
+                content=content,
+                prefer_leading_chars=prefer_leading_chars,
+                base_score=110,
+            )
+        ):
+            candidates.append(candidate)
+
+    for match in _DATE_RE_MONTH_YEAR_DE.finditer(content):
+        month_name, year = match.groups()
+        month = str(_MONTH_TO_NUM.get(_normalize_month_token(month_name), 0))
+        if month != "0" and (
+            candidate := _make_date_candidate(
+                year,
+                month,
+                "1",
+                today=today,
+                start=match.start(),
+                content=content,
+                prefer_leading_chars=prefer_leading_chars,
+                base_score=70,
+            )
+        ):
+            candidates.append(candidate)
+
+    for match in _DATE_RE_MONTH_YEAR_EN.finditer(content):
+        month_name, year = match.groups()
+        month = str(_MONTH_TO_NUM.get(_normalize_month_token(month_name), 0))
+        if month != "0" and (
+            candidate := _make_date_candidate(
+                year,
+                month,
+                "1",
+                today=today,
+                start=match.start(),
+                content=content,
+                prefer_leading_chars=prefer_leading_chars,
+                base_score=70,
+            )
+        ):
+            candidates.append(candidate)
+
+    return candidates
 
 
 def _find_date_in_text(
@@ -74,75 +338,47 @@ def _find_date_in_text(
     *,
     date_locale: str,
     today: date,
+    prefer_leading_chars: int = 0,
 ) -> str | None:
     """Try all date patterns on content; return YYYY-MM-DD or None."""
-
-    def make_ymd(y: str, m: str, d: str) -> str | None:
-        try:
-            year_int = int(y)
-            if year_int < 1900 or year_int > 2100:
-                return None
-            dte = date(year_int, int(m), int(d))
-            return dte.strftime("%Y-%m-%d")
-        except (ValueError, TypeError):
-            return None
-
-    match = _DATE_RE_YMD.search(content)
-    if match:
-        y, m, d = match.groups()
-        if (p := make_ymd(y, m, d)) is not None:
-            return p
-    match = _DATE_RE_DMY.search(content)
-    if match:
-        g1, g2, year = match.groups()
-        month, day = (g1, g2) if (date_locale or "dmy").lower() == "mdy" else (g2, g1)
-        if (p := make_ymd(year, month, day)) is not None:
-            return p
-    match = _DATE_RE_PREFIX_DMY.search(content)
-    if match:
-        g1, g2, year = match.groups()
-        # P1: Check if the matched label is German; if so, always parse as DMY
-        matched_text = match.group(0).lower()
-        is_german_label = any(
-            lbl in matched_text for lbl in ("rechnungsdatum", "datum", "stand", "erstellt", "rechnung")
+    return _best_date_candidate(
+        _find_date_candidates(
+            content,
+            date_locale=(date_locale or "dmy").lower(),
+            today=today,
+            prefer_leading_chars=prefer_leading_chars,
         )
-        if is_german_label or (date_locale or "dmy").lower() == "dmy":
-            day, month = g1, g2
-        else:
-            day, month = g2, g1
-        if (p := make_ymd(year, month, day)) is not None:
-            return p
-    match = _DATE_RE_DE_LONG.search(content)
-    if match:
-        day, month_name, year = match.groups()
-        m = str(_MONTH_TO_NUM.get(month_name.lower(), 0))
-        if m != "0" and (p := make_ymd(year, m, day)) is not None:
-            return p
-    match = _DATE_RE_EN_LONG.search(content)
-    if match:
-        month_name, day, year = match.groups()
-        m = str(_MONTH_TO_NUM.get(month_name.lower(), 0))
-        if m != "0" and (p := make_ymd(year, m, day)) is not None:
-            return p
-    match = _DATE_RE_EN_LONG_DD.search(content)
-    if match:
-        day, month_name, year = match.groups()
-        m = str(_MONTH_TO_NUM.get(month_name.lower(), 0))
-        if m != "0" and (p := make_ymd(year, m, day)) is not None:
-            return p
-    match = _DATE_RE_MONTH_YEAR_DE.search(content)
-    if match:
-        month_name, year = match.groups()
-        m = str(_MONTH_TO_NUM.get(month_name.lower(), 0))
-        if m != "0" and (p := make_ymd(year, m, "1")) is not None:
-            return p
-    match = _DATE_RE_MONTH_YEAR_EN.search(content)
-    if match:
-        month_name, year = match.groups()
-        m = str(_MONTH_TO_NUM.get(month_name.lower(), 0))
-        if m != "0" and (p := make_ymd(year, m, "1")) is not None:
-            return p
-    return None
+    )
+
+
+def _best_metadata_date(pdf_metadata: dict[str, object] | None, *, today: date) -> str | None:
+    """Return the best valid PDF metadata date."""
+    if not isinstance(pdf_metadata, dict):
+        return None
+    best: _DateCandidate | None = None
+    for index, key in enumerate(("creation_date", "mod_date")):
+        raw_value = pdf_metadata.get(key)
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            continue
+        match = _DATE_RE_YMD.search(raw_value) or _DATE_RE_YMD_COMPACT.search(raw_value)
+        if not match:
+            continue
+        year, month, day = match.groups()
+        candidate = _make_date_candidate(
+            year,
+            month,
+            day,
+            today=today,
+            start=index,
+            content=key,
+            prefer_leading_chars=0,
+            base_score=25 - index,
+        )
+        if candidate is None:
+            continue
+        if best is None or candidate.score > best.score:
+            best = candidate
+    return best.value.strftime("%Y-%m-%d") if best is not None else None
 
 
 def extract_date_from_content(
@@ -151,6 +387,7 @@ def extract_date_from_content(
     today: date | None = None,
     date_locale: str = "dmy",
     prefer_leading_chars: int = 0,
+    pdf_metadata: dict[str, object] | None = None,
 ) -> str:
     """
     Search text for date formats; return 'YYYY-MM-DD'. Uses first valid date.
@@ -165,11 +402,9 @@ def extract_date_from_content(
         today = date.today()
     loc = (date_locale or "dmy").lower()
 
-    if prefer_leading_chars > 0 and len(content) > prefer_leading_chars:
-        leading = content[:prefer_leading_chars]
-        if parsed := _find_date_in_text(leading, date_locale=loc, today=today):
-            return parsed
-    if parsed := _find_date_in_text(content, date_locale=loc, today=today):
+    if parsed := _find_date_in_text(content, date_locale=loc, today=today, prefer_leading_chars=prefer_leading_chars):
+        return parsed
+    if parsed := _best_metadata_date(pdf_metadata, today=today):
         return parsed
     return today.strftime("%Y-%m-%d")
 
@@ -338,11 +573,14 @@ def split_to_tokens(text: str | None) -> list[str]:
 # Structured fields: invoice number, amount, company (for template placeholders)
 _INVOICE_ID_PATTERNS = [
     re.compile(
-        r"\b(?:rechnungsnummer|rechnung\s*nr\.?|rechnung\s*#?|invoice\s*no\.?|invoice\s*#?|"
-        r"bill\s*no\.?|order\s*no\.?|auftragsnummer|bestellnummer)\s*[:\s#]*\s*([A-Z0-9][A-Z0-9\-/]+)\b",
+        r"\b(?:rechnungsnummer|rechnung\s*(?:nr\.?|nummer|#)|invoice\s*(?:no\.?|number|#|id)|"
+        r"bill\s*(?:no\.?|number|#)|order\s*(?:no\.?|number)|auftragsnummer|bestellnummer|belegnummer|reference\s*no\.?)"
+        r"\s*[:\s#-]*\s*"
+        + _INVOICE_ID_VALUE
+        + r"\b",
         re.IGNORECASE,
     ),
-    re.compile(r"\b(?:inv|rechnung)\s*[#:]?\s*([A-Z0-9][A-Z0-9\-/]{2,})\b", re.IGNORECASE),
+    re.compile(r"\b(?:inv|rechnung|rg|ref)\s*[#:-]?\s*(" + _INVOICE_ID_VALUE[1:-1] + r")\b", re.IGNORECASE),
     re.compile(r"\b(\d{4,}-\d+)\b"),  # e.g. 2025-001234
 ]
 _AMOUNT_PATTERNS = [
@@ -363,6 +601,11 @@ _COMPANY_PATTERNS = [
         re.IGNORECASE,
     ),
     re.compile(r"\b(?:company|firma|an\s*:)\s*([A-Za-z0-9\s&.\-]{2,40})\b", re.IGNORECASE),
+    re.compile(
+        r"(?m)^\s*([A-Z][A-Za-z0-9&.,' -]{1,60}\s+"
+        + _COMPANY_SUFFIXES
+        + r")\s*$"
+    ),
 ]
 _MAX_STRUCTURED_LEN = 50
 
@@ -382,28 +625,39 @@ def _normalize_amount(raw: str) -> str:
     Handles European format (1.234,56 or 1 234,56) and US format (1,234.56).
     """
     s = re.sub(r"[^\d.,]", "", raw)
-    # P2: Handle European thousand separators
-    # European: 1.234,56 -> dots are thousand separators, comma is decimal
-    # US: 1,234.56 -> commas are thousand separators, dot is decimal
+    if not s:
+        return ""
+
     if "," in s and "." in s:
         last_comma = s.rfind(",")
         last_dot = s.rfind(".")
-        # European (1.234,56) vs US (1,234.56): comma after dot means European
-        s = s.replace(".", "").replace(",", ".") if last_comma > last_dot else s.replace(",", "")
+        if last_comma > last_dot:
+            integer_part = s[:last_comma].replace(".", "").replace(",", "")
+            decimal_part = re.sub(r"[^\d]", "", s[last_comma + 1 :])
+            s = f"{integer_part}.{decimal_part}" if decimal_part else integer_part
+        else:
+            integer_part = s[:last_dot].replace(",", "").replace(".", "")
+            decimal_part = re.sub(r"[^\d]", "", s[last_dot + 1 :])
+            s = f"{integer_part}.{decimal_part}" if decimal_part else integer_part
     elif "," in s:
-        # Could be European decimal (3,50) or thousand separator (1,000)
-        # If comma has exactly 3 digits after it and it's the only comma, treat as thousand sep
-        # Exactly 3 digits after a single comma = thousand separator; otherwise decimal
-        parts = s.split(",")
-        s = s.replace(",", "") if len(parts) == 2 and len(parts[1]) == 3 else s.replace(",", ".")
-    # Dots only: could be thousand separator (1.000) or decimal (3.50)
-    # Multiple dots -> thousand separators
-    elif s.count(".") > 1:
-        # Multiple dots are thousand separators, no decimal
-        s = s.replace(".", "")
-    if re.match(r"^[\d.]+$", s):
-        return s
-    return ""
+        left, right = s.rsplit(",", 1)
+        s = f"{left.replace(',', '').replace('.', '')}.{right}" if len(right) == 2 else left.replace(",", "") + right
+    elif "." in s:
+        left, right = s.rsplit(".", 1)
+        s = f"{left.replace('.', '').replace(',', '')}.{right}" if len(right) == 2 else left.replace(".", "") + right
+
+    if not re.fullmatch(r"\d+(?:\.\d+)?", s):
+        return ""
+    return s
+
+
+def _is_plausible_amount(normalized: str) -> bool:
+    """Reject obviously implausible consumer-document amounts."""
+    try:
+        amount = float(normalized)
+    except ValueError:
+        return False
+    return 0 < amount <= _AMOUNT_MAX
 
 
 def extract_structured_fields(
@@ -429,7 +683,7 @@ def extract_structured_fields(
         m = pat.search(text)
         if m:
             normalized = _normalize_amount(m.group(1))
-            if normalized:
+            if normalized and _is_plausible_amount(normalized):
                 result["amount"] = _sanitize_structured_value(normalized)
             break
     for pat in _COMPANY_PATTERNS:

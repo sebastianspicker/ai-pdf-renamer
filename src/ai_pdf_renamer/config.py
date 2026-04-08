@@ -39,6 +39,8 @@ class LLMConfig:
     vision_first: bool = False
     max_content_chars: int | None = None
     max_content_tokens: int | None = None
+    use_cache: bool = True
+    cache_dir: str | Path | None = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,9 @@ class OutputConfig:
     rules_file: str | Path | None = None
     post_rename_hook: str | None = None
     stop_event: object | None = None
+    progress: bool = False
+    quiet_progress: bool = False
+    explain: bool = False
 
 
 # Build field -> sub-config mapping at import time

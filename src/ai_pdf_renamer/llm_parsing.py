@@ -18,6 +18,30 @@ CONTEXT_128K_CHUNK_OVERLAP = 5_000
 TRUNCATION_SUFFIX = "\n[...]"
 
 
+def _preview_text(text: str, *, limit: int = 160) -> str:
+    """Return a compact single-line preview for log and error messages."""
+    compact = re.sub(r"\s+", " ", text.strip())
+    return compact if len(compact) <= limit else compact[: limit - 3] + "..."
+
+
+def _build_json_error_context(
+    response: str,
+    *,
+    expected_keys: set[str] | None,
+    attempted_paths: list[str],
+    errors: list[str],
+) -> str:
+    """Build a readable error message for JSON parsing failures."""
+    expected = ", ".join(sorted(expected_keys or set())) or "<any JSON object>"
+    attempted = ", ".join(attempted_paths) or "<none>"
+    details = "; ".join(errors) or "no parse candidates were produced"
+    received = _preview_text(response)
+    return (
+        f"Expected JSON object with keys {expected}; received: {received!r}. "
+        f"Attempted paths: {attempted}. Errors: {details}"
+    )
+
+
 def _extract_json_from_response(response: str) -> str:
     """
     Try to extract a JSON object from LLM response that may contain leading prose
@@ -156,51 +180,88 @@ def _lenient_extract_key_value(text: str, key: str) -> str | None:
     return unescaped or None
 
 
+def extract_and_validate_json(
+    response: str | None,
+    *,
+    expected_keys: set[str] | None = None,
+    lenient_keys: set[str] | None = None,
+) -> dict[str, object]:
+    """Extract, sanitize, and parse a JSON object from an LLM response.
+
+    Raises ValueError with parsing context when no valid JSON object can be recovered.
+    """
+    if response is None or not isinstance(response, str):
+        raise ValueError("Expected JSON response as string; received non-string response.")
+    resp_str = response.strip()
+    if not resp_str:
+        raise ValueError("Expected JSON response as string; received empty response.")
+
+    expected = {key for key in (expected_keys or set()) if key}
+    lenient = {key for key in (lenient_keys or set()) if key}
+    attempted_paths: list[str] = []
+    errors: list[str] = []
+    candidates: list[tuple[str, str]] = []
+    seen_candidates: set[str] = set()
+
+    def add_candidate(path_name: str, candidate: str) -> None:
+        normalized = candidate.strip()
+        if not normalized.startswith("{") or normalized in seen_candidates:
+            return
+        seen_candidates.add(normalized)
+        candidates.append((path_name, normalized))
+
+    add_candidate("raw", resp_str)
+    if expected:
+        for key in sorted(expected):
+            add_candidate(f"sanitized:{key}", _sanitize_json_string_value(resp_str, key=key))
+    add_candidate("extracted", _extract_json_from_response(resp_str))
+
+    for path_name, candidate in candidates:
+        attempted_paths.append(path_name)
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            errors.append(f"{path_name}: {exc.msg} at pos {exc.pos}")
+            continue
+        if not isinstance(parsed, dict):
+            errors.append(f"{path_name}: expected object, got {type(parsed).__name__}")
+            continue
+        return parsed
+
+    if lenient:
+        attempted_paths.append("lenient")
+        salvaged: dict[str, object] = {}
+        for key in sorted(lenient):
+            if value := _lenient_extract_key_value(resp_str, key):
+                salvaged[key] = value
+        if salvaged:
+            return salvaged
+        errors.append(f"lenient: none of {', '.join(sorted(lenient))} found")
+
+    raise ValueError(
+        _build_json_error_context(
+            response,
+            expected_keys=expected,
+            attempted_paths=attempted_paths,
+            errors=errors,
+        )
+    )
+
+
 def parse_json_field(response: str | None, *, key: str, lenient: bool = False) -> str | list[str] | None:
     """Extract a field value from an LLM JSON response, with code-fence stripping and salvage fallbacks.
 
     Return the string or list[str] value for key, or None if extraction fails.
     """
-    if response is None:
-        return None
-    if not isinstance(response, str):
-        return None
-    resp_str = response.strip()
-    if not resp_str:
-        return None
-    # Normalize: extract JSON from code fences or leading prose.
-    if not resp_str.startswith("{"):
-        extracted = _extract_json_from_response(resp_str)
-        if extracted.startswith("{"):
-            resp_str = extracted
-        else:
-            if lenient:
-                val = _lenient_extract_key_value(resp_str, key)
-                if val is not None and val.strip() and val.strip().lower() != "na":
-                    return val.strip()
-            return None
-
     try:
-        data = json.loads(resp_str)
-    except json.JSONDecodeError:
-        # Only salvage when response looks like a single-key string object (avoids corrupting lists/multi-key).
-        single_key_pattern = re.compile(r'^\s*\{\s*"' + re.escape(key) + r'"\s*:\s*"', re.DOTALL)
-        if not single_key_pattern.match(resp_str):
-            logger.warning("LLM response could not be parsed as JSON; using fallback")
-            return None
-        try:
-            data = json.loads(_sanitize_json_string_value(resp_str, key=key))
-        except json.JSONDecodeError:
-            extracted = _extract_json_from_response(response)
-            if extracted.startswith("{"):
-                try:
-                    data = json.loads(extracted)
-                except json.JSONDecodeError:
-                    logger.warning("LLM response could not be parsed as JSON; using fallback")
-                    return None
-            else:
-                logger.warning("LLM response could not be parsed as JSON; using fallback")
-                return None
+        data = extract_and_validate_json(
+            response,
+            expected_keys={key},
+            lenient_keys={key} if lenient else None,
+        )
+    except ValueError as exc:
+        logger.warning("LLM response could not be parsed as JSON; using fallback. %s", exc)
+        return None
 
     value = data.get(key)
     if isinstance(value, list):

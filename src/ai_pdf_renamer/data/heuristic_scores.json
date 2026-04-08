@@ -86,6 +86,11 @@
       "score": 4
     },
     {
+      "regex": "(?i)\\b(lohnsteuer\\s*bescheinigung|abrechnungs\\s*zeitraum|netto\\s*entgelt|brutto\\s*entgelt|net\\s*pay|gross\\s*pay|payroll\\s*statement|salary\\s*slip|pay\\s*slip|pay\\s*advice|earnings\\s*statement|gehalts\\s*nachweis|gehalts\\s*zettel|lohn\\s*zettel|entgelt\\s*nachweis|pays[il1]ip)\\b",
+      "category": "payslip",
+      "score": 4.2
+    },
+    {
       "regex": "(?i)\\b(lohn\\s*abrechnung|gehalts\\s*abrechnung|entgelt\\s*abrechnung|payslip|salary\\s*statement|pay\\s*stub)\\b",
       "category": "payslip",
       "score": 4
@@ -201,6 +206,11 @@
       "score": 4.5
     },
     {
+      "regex": "(?i)\\b(versicherungs\\s*nummer|versicherungsnummer|versicherung\\s*schein\\s*nr\\.?|policen(?:\\s*nummer|\\s*nr\\.?)?|policy\\s*(?:number|no\\.?|holder)|insured\\s*person|coverage\\s*period|versicherurig|verslcherung|lnsurance)\\b",
+      "category": "insurance_policy",
+      "score": 4.1
+    },
+    {
       "regex": "(?i)\\b(versicherung\\s*antrag|insurance\\s*application)\\b",
       "category": "insurance_application",
       "score": 4
@@ -268,9 +278,20 @@
       "score": 4
     },
     {
+      "regex": "(?i)\\b(vertrag|vertag|contract|contrac[t1]|service\\s*agreement|subscription\\s*agreement|consulting\\s*contract|rahmen\\s*vertrag)\\b",
+      "category": "contract",
+      "score": 2.8
+    },
+    {
+      "regex": "(?i)\\b(rechnungs\\s*nummer|rechnungs\\s*datum|umsatz\\s*steuer|ust-?id|mwst\\.?|vat\\s*invoice|tax\\s*invoice|invoice\\s*(?:number|date|no\\.?|#)|lnvoice|inv0ice|rechnurig|rechnungs\\s*betrag)\\b",
+      "category": "invoice",
+      "score": 4.2
+    },
+    {
       "regex": "(?i)\\b(rechnung|rechung|rechnug|invoice|bill)\\b|\\b(gesamtsumme|bruttobetrag|nettobetrag|total\\s*amount|gross|net)\\b",
       "category": "invoice",
-      "score": 3.5
+      "score": 3.5,
+      "negative_regex": "(?i)\\b(invoice\\s*address|billing\\s*address|address\\s*for\\s*invoice|rechnungs\\s*adresse|rechnungs\\s*anschrift)\\b"
     },
     {
       "regex": "(?i)\\b(quittung|receipt)\\b",

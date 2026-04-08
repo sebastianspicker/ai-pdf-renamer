@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -264,3 +265,55 @@ def test_extract_no_content() -> None:
 
     assert content == ""
     assert used_vision is False
+
+
+def test_extract_logs_text_strategy(caplog: object) -> None:
+    """Selected extraction strategy is logged for plain text extraction."""
+    client = MagicMock()
+    client.model = "test-model"
+    config = RenamerConfig(use_ocr=False, vision_first=False, use_vision_fallback=False, max_tokens_for_extraction=1000)
+
+    with caplog.at_level(logging.INFO, logger="ai_pdf_renamer.renamer_extract"):
+        content, used_vision = extract_pdf_content_with(
+            Path("/fake/doc.pdf"),
+            config,
+            pdf_first_page_to_image_base64_fn=lambda _p: None,
+            pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "Hello world from PDF",
+            pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+            llm_client=client,
+        )
+
+    assert content == "Hello world from PDF"
+    assert used_vision is False
+    assert any("ExtractionStrategy" in record.message and "text" in record.message for record in caplog.records)
+
+
+def test_extract_logs_vision_fallback_strategy(caplog: object) -> None:
+    """Vision fallback decisions are logged with the selected path."""
+    client = MagicMock()
+    client.model = "test-model"
+    client.complete_vision.return_value = "Vision fallback result"
+    config = RenamerConfig(
+        vision_first=False,
+        use_vision_fallback=True,
+        vision_fallback_min_text_len=100,
+        use_ocr=False,
+        llm_timeout_s=30.0,
+        max_tokens_for_extraction=1000,
+    )
+
+    with caplog.at_level(logging.INFO, logger="ai_pdf_renamer.renamer_extract"):
+        content, used_vision = extract_pdf_content_with(
+            Path("/fake/doc.pdf"),
+            config,
+            pdf_first_page_to_image_base64_fn=lambda _p: "base64img",
+            pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "short",
+            pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+            llm_client=client,
+        )
+
+    assert content == "Vision_fallback_result"
+    assert used_vision is True
+    assert any(
+        "ExtractionStrategy" in record.message and "vision_fallback" in record.message for record in caplog.records
+    )

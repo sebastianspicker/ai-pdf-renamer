@@ -155,6 +155,9 @@ def test_build_analysis_prompt_de():
     assert "keywords" in prompt
     assert "category" in prompt
     assert "Analysiere" in prompt
+    assert "Beispiele" in prompt
+    assert "Wenn mehrere Dokumenttypen" in prompt
+    assert 'Generische Kategorien wie "document" oder "letter"' in prompt
 
 
 def test_build_analysis_prompt_en():
@@ -163,6 +166,9 @@ def test_build_analysis_prompt_en():
     prompt = build_analysis_prompt("en", "A document about taxes.")
     assert "Analyze" in prompt
     assert "summary" in prompt
+    assert "Examples" in prompt
+    assert "If multiple document types seem possible" in prompt
+    assert 'Do not return generic categories like "document" or "letter"' in prompt
 
 
 def test_build_analysis_prompt_with_doc_type_hint():

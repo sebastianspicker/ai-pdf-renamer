@@ -2,7 +2,20 @@
 
 from __future__ import annotations
 
-from ai_pdf_renamer.llm_prompts import build_vision_filename_prompt
+from ai_pdf_renamer.llm_prompts import PROMPT_STRINGS, build_analysis_prompt, build_vision_filename_prompt
+
+
+def test_prompt_strings_has_german_and_english() -> None:
+    assert "de" in PROMPT_STRINGS
+    assert "en" in PROMPT_STRINGS
+    assert "analysis_intro" in PROMPT_STRINGS["de"]
+    assert "analysis_intro" in PROMPT_STRINGS["en"]
+
+
+def test_build_analysis_prompt_uses_language_table() -> None:
+    prompt = build_analysis_prompt("en", "A test document")
+    assert PROMPT_STRINGS["en"]["analysis_intro"] in prompt
+    assert PROMPT_STRINGS["en"]["analysis_rules_heading"] in prompt
 
 
 def test_build_vision_filename_prompt_de() -> None:

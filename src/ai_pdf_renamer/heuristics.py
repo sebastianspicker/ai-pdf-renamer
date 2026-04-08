@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ class HeuristicRule:
     pattern: re.Pattern[str]
     category: str
     score: float
+    negative_pattern: re.Pattern[str] | None = None
     language: str | None = None
     parent: str | None = None
 
@@ -38,6 +40,7 @@ def load_heuristic_rules(path: str | Path) -> list[HeuristicRule]:
 
     for entry in raw_patterns:
         regex = entry.get("regex")
+        negative_regex = entry.get("negative_regex")
         category = entry.get("category")
         score = entry.get("score")
         if not isinstance(regex, str) or not isinstance(category, str):
@@ -45,8 +48,16 @@ def load_heuristic_rules(path: str | Path) -> list[HeuristicRule]:
         try:
             compiled = re.compile(regex)
         except re.error as exc:
-            logger.warning("Invalid regex skipped: %r (%s)", regex, exc)
-            continue
+            raise ValueError(f"Invalid regex in data file at {path_obj.absolute()}: {regex!r} ({exc})") from exc
+        negative_compiled: re.Pattern[str] | None = None
+        if isinstance(negative_regex, str) and negative_regex.strip():
+            try:
+                negative_compiled = re.compile(negative_regex)
+            except re.error as exc:
+                raise ValueError(
+                    f"Invalid negative regex in data file at {path_obj.absolute()} for {category!r}: "
+                    f"{negative_regex!r} ({exc})"
+                ) from exc
         try:
             score_f = float(score)
         except (TypeError, ValueError):
@@ -68,6 +79,7 @@ def load_heuristic_rules(path: str | Path) -> list[HeuristicRule]:
                 pattern=compiled,
                 category=category,
                 score=score_f,
+                negative_pattern=negative_compiled,
                 language=language,
                 parent=parent,
             )
@@ -110,6 +122,7 @@ def _score_text(
     rules: list[HeuristicRule],
     language: str | None,
     *,
+    rules_by_category: dict[str, list[HeuristicRule]] | None = None,
     title_weight_region: int = 0,
     title_weight_factor: float = 1.5,
     max_score_per_category: float | None = None,
@@ -124,27 +137,54 @@ def _score_text(
     Pattern files should be validated for catastrophic backtracking before deployment.
     """
     scores: dict[str, float] = {}
+    started_at = time.perf_counter()
     # Mitigate potential ReDoS by capping the text length searched by regexes.
     search_text = text if len(text) <= max_text_length else text[:max_text_length]
-    for rule in rules:
-        if language is not None and rule.language is not None and rule.language != language:
-            continue
-        # P2: Use finditer to count all matches and check title region for each
-        matches = list(rule.pattern.finditer(search_text))
-        if not matches:
-            continue
-        delta = 0.0
-        for match in matches:
-            weight = 1.0
-            # P2: Check all matches for title region, not just the first
-            if title_weight_region > 0 and match.start() < title_weight_region:
-                weight = title_weight_factor
-            delta += rule.score * weight
-        scores[rule.category] = scores.get(rule.category, 0.0) + delta
+    grouped_rules = rules_by_category
+    if grouped_rules is None:
+        grouped_rules = {}
+        for rule in rules:
+            grouped_rules.setdefault(rule.category, []).append(rule)
+    for category, category_rules in grouped_rules.items():
+        category_score = 0.0
+        for rule in category_rules:
+            if language is not None and rule.language is not None and rule.language != language:
+                continue
+            matches = list(rule.pattern.finditer(search_text))
+            if not matches:
+                continue
+            delta = 0.0
+            for match in matches:
+                if rule.negative_pattern is not None:
+                    window_start = max(0, match.start() - 48)
+                    window_end = min(len(search_text), match.end() + 48)
+                    if rule.negative_pattern.search(search_text[window_start:window_end]):
+                        continue
+                weight = 1.0
+                if title_weight_region > 0 and match.start() < title_weight_region:
+                    weight = title_weight_factor
+                delta += rule.score * weight
+            if delta <= 0:
+                continue
+            category_score += delta
+            if max_score_per_category is not None and category_score >= max_score_per_category:
+                category_score = max_score_per_category
+                break
+        if category_score > 0:
+            scores[category] = category_score
     if max_score_per_category is not None:
         for cat in list(scores):
             if scores[cat] > max_score_per_category:
                 scores[cat] = max_score_per_category
+    if logger.isEnabledFor(logging.DEBUG):
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        logger.debug(
+            "HeuristicMatchTiming chars=%s categories=%s rules=%s elapsed_ms=%.2f",
+            len(search_text),
+            len(grouped_rules),
+            len(rules),
+            elapsed_ms,
+        )
     return scores
 
 
@@ -152,14 +192,18 @@ def _score_text(
 class HeuristicScorer:
     rules: list[HeuristicRule]
     _parent_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _rules_by_category: dict[str, list[HeuristicRule]] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Pre-compute parent map once at construction (frozen dataclass: use object.__setattr__).
         cache: dict[str, str] = {}
+        grouped: dict[str, list[HeuristicRule]] = {}
         for rule in self.rules:
             if rule.parent is not None and rule.parent.strip():
                 cache[rule.category] = rule.parent.strip()
+            grouped.setdefault(rule.category, []).append(rule)
         object.__setattr__(self, "_parent_map", cache)
+        object.__setattr__(self, "_rules_by_category", grouped)
 
     def best_category(
         self,
@@ -194,6 +238,7 @@ class HeuristicScorer:
             text,
             self.rules,
             language,
+            rules_by_category=self._rules_by_category,
             title_weight_region=title_weight_region,
             title_weight_factor=title_weight_factor,
             max_score_per_category=max_score_per_category,
@@ -251,6 +296,7 @@ class HeuristicScorer:
             text,
             self.rules,
             language,
+            rules_by_category=self._rules_by_category,
             title_weight_region=title_weight_region,
             title_weight_factor=title_weight_factor,
             max_score_per_category=max_score_per_category,
