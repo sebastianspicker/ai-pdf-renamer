@@ -66,12 +66,12 @@ def _try_vision_extraction(
 def _log_extraction_strategy(path: Path, strategy: str, **details: object) -> None:
     """Emit a consistent extraction-strategy log entry for user-visible debugging."""
     serialized_details = " ".join(
-        f'{key}={json.dumps(str(value), ensure_ascii=False)}' for key, value in details.items()
+        f"{key}={json.dumps(str(value), ensure_ascii=False)}" for key, value in details.items()
     )
     message = (
         "ExtractionStrategy "
-        f'file={json.dumps(path.name, ensure_ascii=False)} '
-        f'strategy={json.dumps(strategy, ensure_ascii=False)}'
+        f"file={json.dumps(path.name, ensure_ascii=False)} "
+        f"strategy={json.dumps(strategy, ensure_ascii=False)}"
     )
     if serialized_details:
         message = f"{message} {serialized_details}"

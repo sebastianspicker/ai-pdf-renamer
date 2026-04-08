@@ -116,7 +116,8 @@ _DATE_MIN = date(1990, 1, 1)
 _DATE_MAX_FUTURE_DELTA = timedelta(days=366)
 _AMOUNT_MAX = 1_000_000.0
 _COMPANY_SUFFIXES = r"(?:GmbH|AG|Inc\.?|Ltd\.?|LLC)"
-_INVOICE_ID_VALUE = r"([A-Z0-9]{2,}(?:[/-][A-Z0-9]{2,})+)"
+_INVOICE_ID_VALUE_INNER = r"[A-Z0-9]{2,}(?:[/-][A-Z0-9]{2,})+"
+_INVOICE_ID_VALUE = f"({_INVOICE_ID_VALUE_INNER})"
 
 
 @dataclass(frozen=True)
@@ -578,7 +579,7 @@ _INVOICE_ID_PATTERNS = [
         r"\s*[:\s#-]*\s*" + _INVOICE_ID_VALUE + r"\b",
         re.IGNORECASE,
     ),
-    re.compile(r"\b(?:inv|rechnung|rg|ref)\s*[#:-]?\s*(" + _INVOICE_ID_VALUE[1:-1] + r")\b", re.IGNORECASE),
+    re.compile(r"\b(?:inv|rechnung|rg|ref)\s*[#:-]?\s*(" + _INVOICE_ID_VALUE_INNER + r")\b", re.IGNORECASE),
     re.compile(r"\b(\d{4,}-\d+)\b"),  # e.g. 2025-001234
 ]
 _AMOUNT_PATTERNS = [

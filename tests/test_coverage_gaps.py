@@ -343,6 +343,11 @@ class TestBuildConfigPresets:
         assert cfg.min_heuristic_score == 0.1
         assert cfg.min_heuristic_score_gap == 0.0
 
+    def test_build_config_normalizes_validated_enum_values(self) -> None:
+        cfg = build_config({"date_locale": "DMY", "category_display": "Specific"}, env={})
+        assert cfg.date_locale == "dmy"
+        assert cfg.category_display == "specific"
+
     def test_build_config_batch_preset_enables_cache_and_workers(self) -> None:
         cfg = build_config({"preset": "batch"}, env={})
         assert cfg.use_cache is True

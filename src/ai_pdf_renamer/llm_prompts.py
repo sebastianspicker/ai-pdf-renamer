@@ -61,22 +61,19 @@ PROMPT_STRINGS: dict[str, dict[str, Any]] = {
         "analysis_summary_rule": "summary: 1-2 präzise Sätze, die den Dokumentinhalt und -typ beschreiben",
         "analysis_keywords_rule": "keywords: 5-7 relevante Schlüsselwörter",
         "analysis_specificity_rule": (
-            "Wenn mehrere Dokumenttypen möglich sind, wähle die "
-            "spezifischste passende Kategorie."
+            "Wenn mehrere Dokumenttypen möglich sind, wähle die spezifischste passende Kategorie."
         ),
         "analysis_generic_rule": (
             'Generische Kategorien wie "document" oder "letter" nur verwenden, '
             "wenn wirklich keine spezifischere Kategorie passt."
         ),
         "analysis_failure_mode_rule": (
-            "Vermeide generische oder ausweichende Klassifikationen "
-            "bei klar erkennbaren Dokumenttypen."
+            "Vermeide generische oder ausweichende Klassifikationen bei klar erkennbaren Dokumenttypen."
         ),
         "analysis_json_only_rule": "Keine weiteren Erklärungen, nur JSON",
         "allowed_categories_exact": "Gib genau eine dieser Kategorien oder 'unknown': {categories}",
         "allowed_categories_suggested": (
-            "Vorschläge nutzen falls passend, sonst andere Kategorie. "
-            "Vorschläge: {categories}."
+            "Vorschläge nutzen falls passend, sonst andere Kategorie. Vorschläge: {categories}."
         ),
         "allowed_categories_any": "Gib eine passende Kategorie.",
         "summary_short_variants": [
@@ -93,8 +90,7 @@ PROMPT_STRINGS: dict[str, dict[str, Any]] = {
         "summary_chunk_json_rule": 'NUR reines JSON {"summary":"..."}, keine Erklärungen.',
         "summary_combine_intro": "Hier mehrere Teilzusammenfassungen eines langen Dokuments:\n",
         "summary_combine_instruction": (
-            "Fasse sie in 1–2 prägnanten Sätzen zusammen. "
-            "Stelle sicher, dass der Dokumenttyp erkennbar bleibt."
+            "Fasse sie in 1–2 prägnanten Sätzen zusammen. Stelle sicher, dass der Dokumenttyp erkennbar bleibt."
         ),
         "summary_combine_json_rule": 'Nur reines JSON {"summary":"..."}.',
         "vision_intro": "Erzeuge einen kurzen Dateinamen (ohne Endung) für dieses gescannte Dokument.",
@@ -130,19 +126,16 @@ PROMPT_STRINGS: dict[str, dict[str, Any]] = {
         "analysis_summary_rule": "summary: 1-2 precise sentences describing the document content and type",
         "analysis_keywords_rule": "keywords: 5-7 relevant keywords",
         "analysis_specificity_rule": (
-            "If multiple document types seem possible, choose the most "
-            "specific applicable category."
+            "If multiple document types seem possible, choose the most specific applicable category."
         ),
         "analysis_generic_rule": (
-            'Do not return generic categories like "document" or "letter" '
-            "when a more specific category applies."
+            'Do not return generic categories like "document" or "letter" when a more specific category applies.'
         ),
         "analysis_failure_mode_rule": "Avoid vague fallback labels when the document type is identifiable.",
         "analysis_json_only_rule": "No additional explanations, only JSON",
         "allowed_categories_exact": "Return exactly one of these or 'unknown': {categories}",
         "allowed_categories_suggested": (
-            "Use one suggestion if appropriate, else another category. "
-            "Suggestions: {categories}."
+            "Use one suggestion if appropriate, else another category. Suggestions: {categories}."
         ),
         "allowed_categories_any": "Return any suitable category.",
         "summary_short_variants": [
@@ -159,8 +152,7 @@ PROMPT_STRINGS: dict[str, dict[str, Any]] = {
         "summary_chunk_json_rule": 'Return ONLY {"summary":"..."} in JSON, no explanations.',
         "summary_combine_intro": "Here are multiple partial summaries of a large document:\n",
         "summary_combine_instruction": (
-            "Combine them into 1–2 concise sentences. "
-            "Ensure the document type remains clear."
+            "Combine them into 1–2 concise sentences. Ensure the document type remains clear."
         ),
         "summary_combine_json_rule": 'Return ONLY {"summary":"..."} in JSON.',
         "vision_intro": "Generate a short filename (without extension) for this scanned document.",
@@ -218,11 +210,6 @@ def _escape_doc_content(text: str) -> str:
 
     # P2: Case-insensitive replacement to catch </Document_Content>, </DOCUMENT_CONTENT>, etc.
     return _re.sub(r"</document_content>", r"<\\/document_content>", text, flags=_re.IGNORECASE)
-
-
-def _analysis_few_shot_examples(language: str) -> str:
-    """Return compact few-shot examples for analysis prompts."""
-    return _analysis_examples(language)
 
 
 def _summary_prompts_short(language: str, doc_type_hint: str, text: str) -> list[str]:
@@ -306,7 +293,7 @@ def build_analysis_prompt(
         analysis_intro=cast(str, strings["analysis_intro"]),
         analysis_schema_intro=cast(str, strings["analysis_schema_intro"]),
         analysis_schema=cast(str, strings["analysis_schema"]),
-        analysis_examples=_analysis_few_shot_examples(language),
+        analysis_examples=_analysis_examples(language),
         analysis_rules_heading=cast(str, strings["analysis_rules_heading"]),
         analysis_summary_rule=cast(str, strings["analysis_summary_rule"]),
         analysis_keywords_rule=cast(str, strings["analysis_keywords_rule"]),

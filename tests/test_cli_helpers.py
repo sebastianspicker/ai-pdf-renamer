@@ -433,8 +433,11 @@ class TestRunDoctorChecks:
                 return FakePath(filename, heuristic_payload)
             return FakePath(filename, stopwords_payload)
 
+        def raise_invalid_regex(_path: Any) -> Any:
+            raise ValueError("Invalid regex")
+
         monkeypatch.setattr(cli_module, "data_path", fake_data_path)
-        monkeypatch.setattr(cli_module, "load_heuristic_rules", lambda _path: (_ for _ in ()).throw(ValueError("Invalid regex")))
+        monkeypatch.setattr(cli_module, "load_heuristic_rules", raise_invalid_regex)
         monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
 
         result = run_doctor_checks(self._make_args())

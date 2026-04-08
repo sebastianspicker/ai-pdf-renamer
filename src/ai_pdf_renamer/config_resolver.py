@@ -207,6 +207,8 @@ def _build_core_options(data: dict[str, Any]) -> dict[str, Any]:
     """Language, case, project, version, date settings, heuristic tuning, and general flags."""
     skip_llm_score = _optional_float(data.get("skip_llm_category_if_heuristic_score_ge"))
     skip_llm_gap = _optional_float(data.get("skip_llm_category_if_heuristic_gap_ge"))
+    date_locale = _str(data.get("date_locale"), "dmy").lower()
+    category_display = _str(data.get("category_display"), "specific").lower()
 
     # --- heuristic override ---
     heuristic_override_min_score = _optional_float(data.get("heuristic_override_min_score"))
@@ -229,7 +231,7 @@ def _build_core_options(data: dict[str, Any]) -> dict[str, Any]:
         "project": _str(data.get("project"), ""),
         "version": _str(data.get("version"), ""),
         "prefer_llm_category": prefer_llm_category,
-        "date_locale": _str(data.get("date_locale"), "dmy"),
+        "date_locale": date_locale,
         "date_prefer_leading_chars": _int_with_default(data.get("date_prefer_leading_chars"), 8000),
         "use_pdf_metadata_for_date": _bool(data.get("use_pdf_metadata_for_date"), True),
         "min_heuristic_score_gap": _float_with_default(data.get("min_heuristic_score_gap"), 0.0),
@@ -239,7 +241,7 @@ def _build_core_options(data: dict[str, Any]) -> dict[str, Any]:
         "max_score_per_category": _optional_float(data.get("max_score_per_category")),
         "use_keyword_overlap_for_category": _bool(data.get("use_keyword_overlap_for_category"), True),
         "use_embeddings_for_conflict": _bool(data.get("use_embeddings_for_conflict"), False),
-        "category_display": _str(data.get("category_display"), "specific"),
+        "category_display": category_display,
         "skip_llm_category_if_heuristic_score_ge": skip_llm_score,
         "skip_llm_category_if_heuristic_gap_ge": skip_llm_gap,
         "heuristic_suggestions_top_n": _int_with_default(data.get("heuristic_suggestions_top_n"), 5),
@@ -357,7 +359,7 @@ def _build_output_options(
         "max_filename_chars": _positive_int_or_none(data.get("max_filename_chars")),
         "override_category_map": data.get("override_category_map"),
         "rules_file": _normalize_path_or_none(data.get("rules_file")),
-        "post_rename_hook": post_rename_hook or None,
+        "post_rename_hook": post_rename_hook,
         "recursive": _bool(data.get("recursive"), False),
         "max_depth": _int_with_default(data.get("max_depth"), 0),
         "include_patterns": data.get("include_patterns"),
