@@ -158,8 +158,9 @@ def _write_summary_json(
 
 def _run_post_rename_hook(hook_cmd: str, old_path: Path, new_path: Path, meta: dict[str, object]) -> None:
     """Run post-rename hook command or HTTP endpoint. On failure log and continue."""
-    # Sanitize path strings: strip NUL bytes (could truncate C strings) and other
-    # C0 control characters (\x00-\x1f, \x7f) that could cause issues in env vars.
+    # Sanitize path strings: strip C0 control characters (\x00-\x1f) and DEL (\x7f)
+    # from values passed via env vars to hook commands. NUL (\x00) is especially
+    # important as it truncates C strings, but other control chars can also cause issues.
     _old = _HOOK_ENV_CONTROL_RE.sub("", str(old_path))
     _new = _HOOK_ENV_CONTROL_RE.sub("", str(new_path))
     env = {**os.environ, "AI_PDF_RENAMER_OLD_PATH": _old, "AI_PDF_RENAMER_NEW_PATH": _new}
