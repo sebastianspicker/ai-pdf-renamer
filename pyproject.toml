@@ -11,37 +11,37 @@ requires-python = ">=3.11,<3.12"
 license = { file = "LICENSE" }
 authors = [{ name = "sebastian" }]
 dependencies = [
-  "requests>=2.32.4",
-  "rich>=13.0.0",
+  "requests>=2.33.1",
+  "rich>=14.3.4",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.0.0",
-  "pytest-asyncio>=0.23.0",
-  "pytest-cov>=6.0.0",
-  "ruff>=0.6.0",
-  "mypy>=1.11.0",
-  "types-requests>=2.32.0",
-  "types-PyYAML>=6.0.0",
+  "pytest>=9.0.3",
+  "pytest-asyncio>=1.3.0",
+  "pytest-cov>=7.1.0",
+  "ruff>=0.15.10",
+  "mypy>=1.20.0",
+  "types-requests>=2.33.0.20260408",
+  "types-PyYAML>=6.0.12.20260408",
 ]
 pdf = [
-  "pymupdf>=1.23.0",
+  "pymupdf>=1.27.2.2",
 ]
 tokens = [
-  "tiktoken>=0.5.0",
+  "tiktoken>=0.12.0",
 ]
 ocr = [
-  "ocrmypdf>=14.0.0",
+  "ocrmypdf>=17.4.1",
 ]
 embeddings = [
-  "sentence-transformers>=2.0.0",
+  "sentence-transformers>=5.4.0",
 ]
 llama-cpp = [
-  "llama-cpp-python>=0.2.0",
+  "llama-cpp-python>=0.3.20",
 ]
 tui = [
-  "textual>=0.40.0",
+  "textual>=8.2.3",
 ]
 
 [project.scripts]
