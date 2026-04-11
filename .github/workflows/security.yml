@@ -93,7 +93,7 @@ jobs:
           fetch-depth: 0
       - name: Scan (PR diff)
         if: github.event_name == 'pull_request'
-        uses: trufflesecurity/trufflehog@6bd2d14f7a4bc1e569fa3550efa7ec632a4fa67b # v3.94.2
+        uses: trufflesecurity/trufflehog@47e7b7cd74f578e1e3145d48f669f22fd1330ca6 # v3.94.3
         with:
           path: ./
           base: ${{ github.event.pull_request.base.sha }}
@@ -101,7 +101,7 @@ jobs:
           extra_args: --only-verified
       - name: Scan (Push diff)
         if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
-        uses: trufflesecurity/trufflehog@6bd2d14f7a4bc1e569fa3550efa7ec632a4fa67b # v3.94.2
+        uses: trufflesecurity/trufflehog@47e7b7cd74f578e1e3145d48f669f22fd1330ca6 # v3.94.3
         with:
           path: ./
           base: ${{ github.event.before }}
@@ -109,13 +109,13 @@ jobs:
           extra_args: --only-verified
       - name: Scan (Push initial)
         if: github.event_name == 'push' && github.event.before == '0000000000000000000000000000000000000000'
-        uses: trufflesecurity/trufflehog@6bd2d14f7a4bc1e569fa3550efa7ec632a4fa67b # v3.94.2
+        uses: trufflesecurity/trufflehog@47e7b7cd74f578e1e3145d48f669f22fd1330ca6 # v3.94.3
         with:
           path: ./
           extra_args: --only-verified
       - name: Scan (Scheduled/Manual)
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        uses: trufflesecurity/trufflehog@6bd2d14f7a4bc1e569fa3550efa7ec632a4fa67b # v3.94.2
+        uses: trufflesecurity/trufflehog@47e7b7cd74f578e1e3145d48f669f22fd1330ca6 # v3.94.3
         with:
           path: ./
           extra_args: --only-verified
