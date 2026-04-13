@@ -7,6 +7,8 @@ This page keeps the current embeddings checks guidance concise after earlier rou
 ## Usage
 - Rewrote the embeddings explanation around the maintained behavior.
 
+- Earlier scratch notes were compressed into the current guidance.
+
 ## Notes Folded Into Current Flow
 Early notes are still uneven and may be folded into clearer sections later.
 
