@@ -1,44 +1,251 @@
-# ai-pdf-renamer
+# AI-PDF-Renamer
 
-A working tree for ai-pdf-renamer with an evolving implementation history.
+Local-first tool to rename PDF files by content.
 
-## Overview
-ai-pdf-renamer records the stable project shape and the work still worth checking.
+It extracts text, applies heuristic category scoring with optional local-LLM enrichment, and produces deterministic names like:
 
-## Status
-Lifecycle stage: maintenance. Earlier setup detail now lives in maintained guidance.
+```text
+YYYYMMDD-category-keywords-summary.pdf
+```
 
-## Usage
-- Made the heuristic assumptions easier to check later.
+**Coverage-gated test suite (current floor: 85%)** — see [CHANGELOG.md](CHANGELOG.md) for recent improvements.
 
-- The document now favors checked behavior over exploratory notes.
+## What it does
 
-## Features
-- Turned the first embeddings sketch into something runnable.
+- Renames PDFs from extracted document content.
+- Uses heuristics first and optional LLM for enrichment.
+- Single-call LLM mode: summary, keywords, and category in one request.
+- OCR and vision fallback/vision-first modes for scanned or low-text PDFs.
+- LLM hardware presets for Apple Silicon and dedicated GPU setups.
+- Dry-run, plan export, metadata export, and undo.
+- Runs as CLI and TUI (Textual).
 
-- The older setup fragments have been reduced to the useful parts.
+## Installation
 
-## Current Focus
-Prefer narrow maintenance work over broad rewrites.
-Keep the next pass focused on verification and smaller changes.
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e '.[dev,pdf]'
+```
 
-Use the next review to check behavior before adding surface area.
-## Development
-- Reduced surprise in the undo release checks.
+Optional extras:
 
-- The older setup fragments have been reduced to the useful parts.
+```bash
+# TUI (terminal UI)
+python -m pip install -e '.[tui]'
 
-## Reliability
-- Tightened llm where the earlier behavior was brittle.
+# In-process LLM via llama-cpp-python
+python -m pip install -e '.[llama-cpp]'
 
-- Earlier scratch detail is now represented in maintained sections.
+# Tokenization, OCR, embeddings
+python -m pip install -e '.[tokens,ocr,embeddings]'
+```
 
-## Architecture
-- Reduced the undo surface that later fixes have to touch.
+## Quick start
 
-- The older setup fragments have been reduced to the useful parts.
+Run once against a directory (uses `apple-silicon` preset by default — Qwen 2.5 3B via Ollama):
 
-## Performance
-- Reduced overhead in undo.
+```bash
+ai-pdf-renamer --dir ./input_files --dry-run
+```
 
-- The document now favors checked behavior over exploratory notes.
+If you have a dedicated GPU (e.g. RTX 4080 Super 16 GB), use the `gpu` preset for the larger model:
+
+```bash
+ai-pdf-renamer --dir ./input_files --llm-preset gpu --dry-run
+```
+
+For scanned PDFs with vision-first extraction:
+
+```bash
+ai-pdf-renamer --dir ./input_files --preset scanned --dry-run
+```
+
+Apply changes:
+
+```bash
+ai-pdf-renamer --dir ./input_files
+```
+
+Preflight diagnostics:
+
+```bash
+ai-pdf-renamer --doctor
+```
+
+TUI (Textual-based terminal UI with three tabs -- Settings, Advanced, and Run):
+
+```bash
+ai-pdf-renamer-tui
+```
+
+The TUI provides a complete graphical interface in the terminal:
+
+- **Settings tab** -- configure input folder, language, case style, date format, preset, and processing flags (dry run, use LLM, OCR, vision)
+- **Advanced tab** -- LLM backend selection (HTTP/in-process/auto), model URL, content limits, post-rename hook, rules file, worker count
+- **Run tab** -- live progress bar, scrollable log output with color-coded rename results, and Preview / Apply / Cancel buttons
+
+Keyboard shortcuts: `Ctrl+P` preview, `Ctrl+A` apply, `Ctrl+C` cancel, `Ctrl+Q` quit. Settings persist across sessions in `~/.ai_pdf_renamer_gui.json`.
+
+Undo preview from rename log:
+
+```bash
+ai-pdf-renamer-undo --rename-log rename.log --dry-run
+```
+
+### LLM hardware presets
+
+| Preset | Model | Size (Q4) | Context | Target hardware |
+|--------|-------|-----------|---------|-----------------|
+| `apple-silicon` (default) | `qwen2.5:3b` | ~2 GB | 32K | Apple Silicon M4 16 GB |
+| `gpu` | `qwen2.5:7b-instruct` | ~4.5 GB | 128K | RTX 4080 Super 16 GB |
+
+Both presets use Ollama (`http://127.0.0.1:11434`). Explicit `--llm-model`, `--llm-url`, or `--max-content-chars` override preset values.
+
+## How it works
+
+```mermaid
+flowchart TD
+A["Start: input directory + runtime config"] --> B["Preflight checks (path/config validation, rules/data loading)"]
+B -->|Fail| Z["Abort with actionable diagnostics"]
+B -->|Pass| C["Collect candidate PDF files"]
+C --> D["Extract text (native parser, OCR path when configured)"]
+D --> E["Derive metadata via heuristics/rules"]
+E --> F{"LLM enabled?"}
+F -->|No| G["Deterministic naming pipeline"]
+F -->|Yes| H["LLM request -> structured response"]
+H --> I["Validate/normalize LLM fields"]
+I --> G
+G --> J["Sanitize filename + resolve collisions"]
+J --> K{"Dry run?"}
+K -->|Yes| L["Preview proposed renames"]
+K -->|No| M["Apply rename + optional post-rename hook"]
+L --> N["Aggregate run summary"]
+M --> N
+N --> O["End"]
+```
+
+LLM is optional at every stage; the heuristic path alone produces a valid filename. Both `--dry-run` and apply mode produce summary output.
+
+## File lifecycle
+
+```mermaid
+stateDiagram-v2
+[*] --> Initialized
+Initialized --> Preflight
+Preflight --> Failed : invalid config/dependency
+Preflight --> Scanning : checks passed
+
+Scanning --> Extracting : file selected
+Extracting --> Classified : text extracted
+Extracting --> Failed : extraction error
+
+Classified --> Named : metadata resolved
+Classified --> Failed : unresolved metadata
+
+Named --> Previewed : dry-run mode
+Named --> Renaming : apply mode
+
+Renaming --> Completed : rename succeeded
+Renaming --> HookRunning : hook configured
+HookRunning --> Completed : hook succeeded
+HookRunning --> Completed : hook failed (recorded)
+
+Previewed --> Completed
+Completed --> Scanning : next file
+Failed --> Scanning : continue with next file
+Scanning --> [*] : no files remaining
+```
+
+Per-file failures are recorded and processing continues to the next file. Hook failures are non-fatal.
+
+## Configuration model
+
+Precedence is:
+
+1. CLI flags
+2. Environment defaults (for supported settings)
+3. Config file values (`--config` JSON/YAML)
+4. Built-in defaults
+
+Important defaults:
+
+- LLM URL: `http://127.0.0.1:11434/v1/completions` (Ollama, via preset; code default without preset is `http://127.0.0.1:8080/v1/completions`)
+- LLM model: `qwen2.5:3b` (apple-silicon preset) / `qwen2.5:7b-instruct` (gpu preset)
+- Extraction token default: `28000` (`DEFAULT_MAX_CONTENT_TOKENS`)
+- Log file: `~/.local/share/ai-pdf-renamer/error.log` (cwd fallback: `./error.log`)
+
+High-impact operational flags:
+
+- `--post-rename-hook CMD`
+- `--summary-json FILE`
+- `--doctor`
+- `--rules-file FILE`
+- `--max-tokens N`, `--max-content-chars N`, `--max-content-tokens N`
+- `--workers N`
+- `--preset` (`high-confidence-heuristic`, `scanned`)
+- `--llm-preset` (`apple-silicon`, `gpu`)
+- `--no-single-llm-call`, `--no-chat-api`, `--no-json-mode`
+- `--llm-backend` (`http`, `in-process`, `auto`)
+- `--require-https` (enforce HTTPS for LLM endpoint URLs)
+- `--use-vision-fallback`, `--vision-first`
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `AI_PDF_RENAMER_LLM_BACKEND` | LLM backend: `http`, `in-process`, or `auto` |
+| `AI_PDF_RENAMER_LLM_URL` | HTTP endpoint URL |
+| `AI_PDF_RENAMER_LLM_MODEL` | Model name for HTTP backend |
+| `AI_PDF_RENAMER_LLM_MODEL_PATH` | Path to GGUF model file (in-process backend) |
+| `AI_PDF_RENAMER_LLM_TIMEOUT` | LLM request timeout in seconds |
+| `AI_PDF_RENAMER_MAX_TOKENS` | PDF extraction token cap |
+| `AI_PDF_RENAMER_MAX_CONTENT_CHARS` | Cap chars of text sent to LLM |
+| `AI_PDF_RENAMER_MAX_CONTENT_TOKENS` | Cap tokens for LLM (requires tiktoken) |
+| `AI_PDF_RENAMER_DATA_DIR` | Override path for bundled JSON data files |
+| `AI_PDF_RENAMER_OCR_LANG` | OCR language override |
+| `AI_PDF_RENAMER_POST_RENAME_HOOK` | Command run after each successful rename |
+| `AI_PDF_RENAMER_LOG_FILE` | Log file path (default: `~/.local/share/ai-pdf-renamer/error.log`) |
+| `AI_PDF_RENAMER_LOG_LEVEL` | Log level (default: `INFO`) |
+| `AI_PDF_RENAMER_STRUCTURED_LOGS` | Enable structured JSON logging (`1` or `true`) |
+| `AI_PDF_RENAMER_REQUIRE_HTTPS` | Enforce HTTPS for LLM endpoint URLs (`1` or `true`) |
+| `AI_PDF_RENAMER_USE_VISION_FALLBACK` | Enable vision fallback for low-text PDFs |
+| `AI_PDF_RENAMER_VISION_FIRST` | Use vision extraction before text extraction |
+
+## Public API compatibility
+
+Stable interfaces from `ai_pdf_renamer.renamer`:
+
+- `rename_pdfs_in_directory(directory, config, files_override=None)`
+- `generate_filename(pdf_content, *, config, llm_client=None, heuristic_scorer=None, stopwords=None, ...)`
+- `RenamerConfig`
+- `CategoryCombineParams` — frozen dataclass for `combine_categories()` configuration
+
+No signature-breaking changes within the current major version.
+
+## Safety and limitations
+
+- Runs locally and talks only to local LLM endpoints by default.
+- Built-in LLM HTTP calls use `trust_env=False` to avoid proxy leakage.
+- Post-rename hooks are operator-controlled and run with current user privileges.
+- Run only one instance at a time per target directory.
+
+See [SECURITY.md](SECURITY.md) for security policy and reporting.
+
+## Troubleshooting
+
+- Run `ai-pdf-renamer --doctor` for dependency/data/LLM diagnostics.
+- If LLM endpoint is unavailable, retry with `--no-llm`.
+- For scanned PDFs, install OCR deps and use `--ocr` or `--preset scanned`.
+- For strict local validation, run `make release-check`.
+
+## Documentation
+
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [SECURITY.md](SECURITY.md)
+- [CHANGELOG.md](CHANGELOG.md)
+
+## License
+
+MIT — see [LICENSE](LICENSE).

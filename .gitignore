@@ -1,0 +1,117 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+
+# Virtualenvs
+.venv/
+venv/
+.env/
+.env
+.env.*
+!.env.example
+.direnv/
+.envrc
+
+# Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+__pypackages__/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
+.hypothesis/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+test-results/
+junit.xml
+pytest.xml
+*.sarif
+
+# Logs
+error.log
+*.log
+logs/
+
+# Debugging/refactoring artifacts
+*.tmp
+*.bak
+*.swp
+*.swo
+*.orig
+*.rej
+*~
+*.out
+*.err
+*.pid
+*.pid.lock
+*.prof
+*.pstat
+*.trace
+*.dump
+*.dmp
+tmp/
+temp/
+
+# Python version managers
+.python-version
+.tool-versions
+
+# Local folders and PDF test artifacts (may contain private PDFs)
+input_files/
+*.pdf
+
+# Secrets and credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+credentials.json
+service-account*.json
+secrets.yaml
+secrets.yml
+.secrets/
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.cursor/
+.claude/
+
+# Local process artifacts (do not commit)
+DECISIONS.md
+FINDINGS.md
+LOG.md
+REFACTOR_PLAN.md
+PHYSICS_AUDIT.md
+validation.md
+HANDOFF.md
+progress.md
+
+# Repo-agent, audit, and local harness workspace
+.agents/
+.codex/
+.github/codex/
+.github/workflows/codex.yml
+AGENTS.md
+HARNESS_PRINCIPLES.md
+code_review.md
+AGENT_AUDIT_REPORT.md
+AUDIT.md
+debug-log/
+docs/agent/
+docs/source-audit/
+scripts/topology_inventory.sh

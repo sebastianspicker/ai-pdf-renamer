@@ -1,27 +1,67 @@
-name: Main verification
+name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ["dev"]
   pull_request:
-    branches: [main]
-  workflow_dispatch:
+    branches: ["dev"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  check_1_pip_audit_sca:
-    name: "pip-audit (SCA)"
+  test:
+    name: Python 3.11 (lint + tests)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Verify checkout
-        run: git status --short
-  check_2_python_3_11_lint_tests:
-    name: "Python 3.11 (lint + tests)"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify checkout
-        run: git status --short
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4cf5cd0fca # v6.0.1
+
+      - name: Install
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev --extra pdf --extra tui
+
+      - name: Repository hygiene
+        run: |
+          set -euo pipefail
+          BAD="$(git ls-files | grep -E '(^|/)\.DS_Store$|(^|/)(__pycache__|\.pytest_cache|\.ruff_cache|\.mypy_cache)(/|$)|(^|/).*\.egg-info(/|$)|(^|/)(build|dist)(/|$)' || true)"
+          if [ -n "$BAD" ]; then
+            echo "Forbidden generated artifacts are tracked:"
+            echo "$BAD"
+            exit 1
+          fi
+
+      - name: Lint
+        run: |
+          set -euo pipefail
+          uv run ruff format --check .
+          uv run ruff check .
+
+      - name: Type check
+        run: |
+          set -euo pipefail
+          uv run mypy src/ai_pdf_renamer/
+
+      - name: Test
+        run: |
+          set -euo pipefail
+          uv run pytest --cov=ai_pdf_renamer --cov-report=term-missing --cov-fail-under=85 -q

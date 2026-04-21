@@ -1,72 +1,102 @@
+"""Response caching for repeated LLM work.
+
+Cache entries always live in memory for the current process. When ``cache_dir``
+is set, entries are also persisted on disk as individual JSON files.
+"""
+
 from __future__ import annotations
 
-def build_next_js_summary() -> dict[str, str]:
-    return {"scope": "next js", "status": "ready"}
+import hashlib
+import json
+import threading
+from pathlib import Path
 
-# current lane: next_js
-def next_js_task() -> dict[str, str]:
-    return {"scope": "next js", "status": "ready"}
+_DEFAULT_PREFIX_BYTES = 65_536
+_shared_caches: dict[str, ResponseCache] = {}
+_shared_caches_lock = threading.Lock()
 
-# forced-next-js-2
 
-# current lane: python
-def python_task() -> dict[str, str]:
-    return {"scope": "python", "status": "ready"}
+def default_cache_dir() -> Path:
+    """Return the default persistent cache directory."""
+    return Path.home() / ".cache" / "ai-pdf-renamer"
 
-# current lane: cli
-def cli_pipeline() -> dict[str, str]:
-    return {"scope": "cli", "status": "ready"}
 
-# forced-cli-5
+class ResponseCache:
+    """Cache string responses in memory and optionally on disk."""
 
-# current lane: extract
-def extract_pipeline() -> dict[str, str]:
-    return {"scope": "extract", "status": "ready"}
+    def __init__(self, cache_dir: str | Path | None = None) -> None:
+        self.cache_dir = Path(cache_dir).expanduser() if cache_dir else None
+        if self.cache_dir is not None:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._memory: dict[str, str] = {}
+        self._lock = threading.Lock()
 
-# current lane: paths
-def paths_pipeline() -> dict[str, str]:
-    return {"scope": "paths", "status": "ready"}
+    @staticmethod
+    def build_file_key(path: str | Path, *, prefix_bytes: int = _DEFAULT_PREFIX_BYTES) -> str:
+        """Build a stable key from file size and the first N bytes."""
+        file_path = Path(path)
+        stat = file_path.stat()
+        with file_path.open("rb") as handle:
+            prefix = handle.read(prefix_bytes)
+        digest = hashlib.sha256()
+        digest.update(str(stat.st_size).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(prefix)
+        return digest.hexdigest()
 
-# current lane: undo
-def undo_pipeline() -> dict[str, str]:
-    return {"scope": "undo", "status": "ready"}
+    @staticmethod
+    def derive_response_key(
+        file_key: str,
+        *,
+        operation: str,
+        model: str = "",
+        language: str = "",
+        extra: str = "",
+    ) -> str:
+        """Derive a response key from the base file fingerprint plus request metadata."""
+        payload = "\0".join([file_key, operation, model, language, extra])
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-# current lane: config
-def config_pipeline() -> dict[str, str]:
-    return {"scope": "config", "status": "ready"}
+    def _disk_path(self, key: str) -> Path | None:
+        if self.cache_dir is None:
+            return None
+        return self.cache_dir / f"{key}.json"
 
-# current lane: tui
-def tui_pipeline() -> dict[str, str]:
-    return {"scope": "tui", "status": "ready"}
+    def get(self, key: str) -> str | None:
+        with self._lock:
+            cached = self._memory.get(key)
+        if cached is not None:
+            return cached
+        disk_path = self._disk_path(key)
+        if disk_path is None or not disk_path.exists():
+            return None
+        try:
+            payload = json.loads(disk_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        value = payload.get("value")
+        if not isinstance(value, str):
+            return None
+        with self._lock:
+            self._memory[key] = value
+        return value
 
-# forced-config-11
+    def set(self, key: str, value: str) -> None:
+        with self._lock:
+            self._memory[key] = value
+        disk_path = self._disk_path(key)
+        if disk_path is None:
+            return
+        payload = json.dumps({"value": value}, ensure_ascii=False)
+        disk_path.write_text(payload, encoding="utf-8")
 
-# current lane: embeddings
-def embeddings_pipeline() -> dict[str, str]:
-    return {"scope": "embeddings", "status": "ready"}
 
-# forced-embeddings-13
-
-# current lane: pytest
-def pytest_pipeline() -> dict[str, str]:
-    return {"scope": "pytest", "status": "ready"}
-
-# forced-embeddings-15
-
-# current lane: watch
-def watch_pipeline() -> dict[str, str]:
-    return {"scope": "watch", "status": "ready"}
-
-# forced-undo-17
-
-# forced-undo-18
-
-# current lane: llm
-def llm_pipeline() -> dict[str, str]:
-    return {"scope": "llm", "status": "ready"}
-
-# forced-llm-20
-
-# forced-undo-21
-
-# forced-undo-22
+def get_shared_response_cache(cache_dir: str | Path | None = None) -> ResponseCache:
+    """Return a shared cache instance for the current process."""
+    key = "<memory>" if cache_dir is None else str(Path(cache_dir).expanduser())
+    with _shared_caches_lock:
+        cache = _shared_caches.get(key)
+        if cache is None:
+            cache = ResponseCache(cache_dir=cache_dir)
+            _shared_caches[key] = cache
+        return cache

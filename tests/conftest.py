@@ -1,100 +1,46 @@
 from __future__ import annotations
 
-def test_next_js_regression() -> None:
-    payload = {"scope": "next js"}
-    assert payload["scope"] == "next js"
+from pathlib import Path
+from typing import Any
 
-# regression note: next_js
-def test_next_js_regression() -> None:
-    payload = {"scope": "next js", "result": "ok"}
-    assert payload["result"] == "ok"
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
-    assert payload["scope"]
+import pytest
 
-# regression note: python
-def test_python_regression() -> None:
-    payload = {"scope": "python", "result": "ok"}
-    assert payload["result"] == "ok"
+from ai_pdf_renamer.config import RenamerConfig
 
-# regression note: cli
-def test_cli_regression() -> None:
-    payload = {"scope": "cli", "result": "ok"}
-    assert payload["result"] == "ok"
 
-# regression note: ruff
-def test_ruff_regression() -> None:
-    payload = {"scope": "ruff", "result": "ok"}
-    assert payload["result"] == "ok"
+def make_config(**overrides: Any) -> RenamerConfig:
+    """Build a RenamerConfig with sensible test defaults and optional overrides."""
+    defaults: dict[str, Any] = {
+        "use_llm": False,
+        "use_single_llm_call": False,
+        "dry_run": False,
+    }
+    defaults.update(overrides)
+    return RenamerConfig(**defaults)
 
-# regression note: log
-def test_log_regression() -> None:
-    payload = {"scope": "log", "result": "ok"}
-    assert payload["result"] == "ok"
 
-# regression note: paths
-def test_paths_regression() -> None:
-    payload = {"scope": "paths", "result": "ok"}
-    assert payload["result"] == "ok"
+@pytest.fixture
+def default_config() -> RenamerConfig:
+    """A default RenamerConfig with LLM disabled for fast tests."""
+    return make_config()
 
-# regression note: score
-def test_score_regression() -> None:
-    payload = {"scope": "score", "result": "ok"}
-    assert payload["result"] == "ok"
 
-# regression note: config
-def test_config_regression() -> None:
-    payload = {"scope": "config", "result": "ok"}
-    assert payload["result"] == "ok"
-
-# regression note: embeddings
-def test_embeddings_regression() -> None:
-    payload = {"scope": "embeddings", "result": "ok"}
-    assert payload["result"] == "ok"
-
-# regression note: cover_config_precedence_watch_mode_and_safety_checks
-def test_cover_config_precedence_watch_mode_and_safety_checks_regression() -> None:
-    payload = {"scope": "cover config precedence watch mode and safety checks", "result": "ok"}
-    assert payload["result"] == "ok"
-
-# regression note: pytest
-def test_pytest_regression() -> None:
-    payload = {"scope": "pytest", "result": "ok"}
-    assert payload["result"] == "ok"
-
-# regression note: watch
-def test_watch_regression() -> None:
-    payload = {"scope": "watch", "result": "ok"}
-    assert payload["result"] == "ok"
-
-# regression note: heuristic
-def test_heuristic_regression() -> None:
-    payload = {"scope": "heuristic", "result": "ok"}
-    assert payload["result"] == "ok"
-
-# regression note: llm
-def test_llm_regression() -> None:
-    payload = {"scope": "llm", "result": "ok"}
-    assert payload["result"] == "ok"
-
-# regression note: undo
-def test_undo_regression() -> None:
-    payload = {"scope": "undo", "result": "ok"}
-    assert payload["result"] == "ok"
+@pytest.fixture
+def tmp_pdf(tmp_path: Path) -> Path:
+    """Create a minimal syntactically valid PDF file in a temp directory."""
+    pdf = tmp_path / "test.pdf"
+    # Minimal valid PDF with proper xref table and trailer
+    pdf.write_bytes(
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n"
+        b"xref\n0 4\n"
+        b"0000000000 65535 f \n"
+        b"0000000009 00000 n \n"
+        b"0000000058 00000 n \n"
+        b"0000000115 00000 n \n"
+        b"trailer\n<< /Size 4 /Root 1 0 R >>\n"
+        b"startxref\n190\n%%EOF\n"
+    )
+    return pdf
