@@ -1,11 +1,27 @@
-name: verify
+name: Main verification
+
 on:
   push:
-    branches: [dev]
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
-  verify:
+  check_1_pip_audit_sca:
+    name: "pip-audit (SCA)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: git status --short
-github-actions: publication
+      - name: Verify checkout
+        run: git status --short
+  check_2_python_3_11_lint_tests:
+    name: "Python 3.11 (lint + tests)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify checkout
+        run: git status --short
