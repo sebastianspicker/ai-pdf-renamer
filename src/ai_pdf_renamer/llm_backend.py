@@ -17,6 +17,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from urllib.parse import urlsplit
 
 import requests
 
@@ -61,6 +62,7 @@ class LLMClient(Protocol):
         prompt: str,
         *,
         model: str | None = None,
+        image_mime_type: str = "image/jpeg",
         timeout_s: float = 120.0,
     ) -> str: ...
 
@@ -76,6 +78,10 @@ def _config_or_env(value: str | None, env_key: str, default: str) -> str:
     """Resolve a string from config value, then env var, then built-in default."""
     s = (value or "").strip() or (os.environ.get(env_key) or "").strip()
     return s or default
+
+
+def _env_truthy(env_key: str) -> bool:
+    return (os.environ.get(env_key, "") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _chat_url_from_completions_url(completions_url: str) -> str:
@@ -243,6 +249,7 @@ class HttpLLMBackend:
         prompt: str,
         *,
         model: str | None = None,
+        image_mime_type: str = "image/jpeg",
         timeout_s: float = 120.0,
     ) -> str:
         """Send image + text prompt to the OpenAI-compatible /v1/chat/completions endpoint."""
@@ -257,7 +264,7 @@ class HttpLLMBackend:
                         {"type": "text", "text": prompt},
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
+                            "image_url": {"url": f"data:{image_mime_type};base64,{image_b64}"},
                         },
                     ],
                 }
@@ -371,6 +378,7 @@ class InProcessLLMBackend:
         prompt: str,
         *,
         model: str | None = None,
+        image_mime_type: str = "image/jpeg",
         timeout_s: float = 120.0,
     ) -> str:
         try:
@@ -380,7 +388,10 @@ class InProcessLLMBackend:
                         "role": "user",
                         "content": [
                             {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{image_mime_type};base64,{image_b64}"},
+                            },
                         ],
                     }
                 ]
@@ -404,12 +415,10 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 def _warn_if_plaintext_remote(url: str, *, enforce: bool = False) -> None:
     """Warn or raise when PDF content will be sent to a non-loopback host over plain HTTP."""
-    stripped = (url or "").strip().lower()
-    if not stripped.startswith("http://"):
+    stripped = (url or "").strip()
+    if not stripped.lower().startswith("http://"):
         return
-    # Extract host from http://host[:port]/...
-    without_scheme = stripped[len("http://") :]
-    host = without_scheme.split("/")[0].split(":")[0]
+    host = (urlsplit(stripped).hostname or "").lower()
     if host not in _LOOPBACK_HOSTS:
         msg = (
             f"LLM endpoint uses plain HTTP with a non-loopback host ({host}). "
@@ -480,6 +489,6 @@ def create_llm_client_from_config(config: RenamerConfig) -> LLMClient:
         "AI_PDF_RENAMER_LLM_MODEL",
         _DEFAULT_LLM_MODEL,
     )
-    require_https = config.require_https or (os.environ.get("AI_PDF_RENAMER_REQUIRE_HTTPS", "") == "1")
+    require_https = config.require_https or _env_truthy("AI_PDF_RENAMER_REQUIRE_HTTPS")
     _warn_if_plaintext_remote(base_url, enforce=require_https)
     return HttpLLMBackend(base_url=base_url, model=model, timeout_s=timeout_s, use_chat=use_chat)

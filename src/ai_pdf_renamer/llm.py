@@ -184,7 +184,7 @@ def get_document_analysis(
         data = extract_and_validate_json(
             raw,
             expected_keys={"summary", "keywords", "category"},
-            lenient_keys={"summary", "category"} if lenient_json else None,
+            lenient_keys={"summary", "keywords", "category"} if lenient_json else None,
         )
     except ValueError:
         data = {}

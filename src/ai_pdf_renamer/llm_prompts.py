@@ -211,11 +211,16 @@ def _summary_doc_type_hint(language: str, suggested_doc_type: str | None) -> str
 
 
 def _escape_doc_content(text: str) -> str:
-    """Escape closing tags to prevent prompt injection."""
+    """Escape prompt block closing tags to prevent prompt injection."""
     import re as _re
 
-    # P2: Case-insensitive replacement to catch </Document_Content>, </DOCUMENT_CONTENT>, etc.
-    return _re.sub(r"</document_content>", r"<\\/document_content>", text, flags=_re.IGNORECASE)
+    # Escape every closing tag used as a prompt delimiter, case-insensitively.
+    return _re.sub(
+        r"</(document_content|partial_summaries)>",
+        lambda match: f"<\\/{match.group(1)}>",
+        text,
+        flags=_re.IGNORECASE,
+    )
 
 
 def _summary_prompts_short(language: str, doc_type_hint: str, text: str) -> list[str]:

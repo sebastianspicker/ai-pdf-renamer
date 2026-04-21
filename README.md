@@ -184,12 +184,12 @@ High-impact operational flags:
 - `--rules-file FILE`
 - `--max-tokens N`, `--max-content-chars N`, `--max-content-tokens N`
 - `--workers N`
-- `--preset` (`high-confidence-heuristic`, `scanned`)
+- `--preset` (`high-confidence-heuristic`, `scanned`, `fast`, `accurate`, `batch`)
 - `--llm-preset` (`apple-silicon`, `gpu`)
 - `--no-single-llm-call`, `--no-chat-api`, `--no-json-mode`
 - `--llm-backend` (`http`, `in-process`, `auto`)
 - `--require-https` (enforce HTTPS for LLM endpoint URLs)
-- `--use-vision-fallback`, `--vision-first`
+- `--vision-fallback`, `--vision-first`
 
 ## Environment variables
 
@@ -203,6 +203,7 @@ High-impact operational flags:
 | `AI_PDF_RENAMER_MAX_TOKENS` | PDF extraction token cap |
 | `AI_PDF_RENAMER_MAX_CONTENT_CHARS` | Cap chars of text sent to LLM |
 | `AI_PDF_RENAMER_MAX_CONTENT_TOKENS` | Cap tokens for LLM (requires tiktoken) |
+| `AI_PDF_RENAMER_CACHE_DIR` | Override the persistent cache directory for LLM responses |
 | `AI_PDF_RENAMER_DATA_DIR` | Override path for bundled JSON data files |
 | `AI_PDF_RENAMER_OCR_LANG` | OCR language override |
 | `AI_PDF_RENAMER_POST_RENAME_HOOK` | Command run after each successful rename |

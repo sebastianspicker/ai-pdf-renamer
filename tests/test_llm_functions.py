@@ -381,6 +381,24 @@ class TestGetDocumentAnalysis:
         assert "Invoice" in prompt_arg
         assert "Contract" in prompt_arg
 
+    def test_lenient_json_salvages_keywords_in_single_call(self) -> None:
+        """Lenient single-call parsing recovers keywords from malformed surrounding output."""
+        client = _make_client()
+        client.complete.return_value = (
+            '"summary":"Invoice from Amazon for electronics.",'
+            '"keywords":[" invoice ","Amazon","electronics","2024"],'
+            '"category":"Invoice"'
+        )
+        result = get_document_analysis(
+            client,
+            "A sufficiently long invoice document to trigger the analysis path. " * 4,
+            language="en",
+            lenient_json=True,
+        )
+        assert result.summary == "Invoice from Amazon for electronics."
+        assert result.keywords == ("invoice", "Amazon", "electronics", "2024")
+        assert result.category == "Invoice"
+
     def test_json_mode_passes_response_format(self) -> None:
         """json_mode=True passes response_format to complete()."""
         client = _make_client()

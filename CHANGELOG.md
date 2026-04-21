@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-04-19
 
 ### Added
 
@@ -28,6 +28,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- `renamer.py` decomposed: category override lookup → `renamer_lookup.py`, CSV/JSON output → `renamer_output.py`, progress reporting → `renamer_progress.py`.
+- `tui.py` decomposed: TUI constants, CSS, and log formatters → `tui_assets.py`.
 - Exception handlers narrowed from bare `except Exception` to specific types.
 - `build_config()` decomposed into 4 focused helper functions.
 - `rename_pdfs_in_directory()` decomposed with extracted `_write_rename_outputs()`.

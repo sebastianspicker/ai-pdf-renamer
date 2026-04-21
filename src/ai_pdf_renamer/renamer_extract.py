@@ -14,6 +14,7 @@ from .llm_prompts import build_vision_filename_prompt
 from .pdf_extract import (
     DEFAULT_MAX_CONTENT_TOKENS,
     pdf_first_page_to_image_base64,
+    pdf_first_page_to_image_payload,
     pdf_to_text,
     pdf_to_text_with_ocr,
 )
@@ -41,12 +42,20 @@ def _try_vision_extraction(
     config: RenamerConfig,
     client: LLMClient,
     *,
-    image_fn: Callable[..., str | None] = pdf_first_page_to_image_base64,
+    image_fn: Callable[..., str | dict[str, str] | None] = pdf_first_page_to_image_payload,
     prompt_fn: Callable[..., str] = build_vision_filename_prompt,
     sanitize_fn: Callable[..., str] = sanitize_filename_from_llm,
 ) -> str | None:
     """Try vision extraction on first page. Returns sanitized text or None on failure."""
-    image_b64 = image_fn(path)
+    image_data = image_fn(path)
+    if not image_data:
+        return None
+    if isinstance(image_data, dict):
+        image_b64 = image_data.get("image_b64", "")
+        image_mime_type = image_data.get("mime_type", "image/jpeg")
+    else:
+        image_b64 = image_data
+        image_mime_type = "image/jpeg"
     if not image_b64:
         return None
     model = config.vision_model or client.model
@@ -56,6 +65,7 @@ def _try_vision_extraction(
         image_b64,
         prompt,
         model=model,
+        image_mime_type=image_mime_type,
         timeout_s=max(60.0, timeout),
     )
     if vision_text:
@@ -123,7 +133,7 @@ def extract_pdf_content_with(
     path: Path,
     config: RenamerConfig,
     *,
-    pdf_first_page_to_image_base64_fn: Callable[..., str | None] = pdf_first_page_to_image_base64,
+    pdf_first_page_to_image_base64_fn: Callable[..., str | dict[str, str] | None] = pdf_first_page_to_image_payload,
     pdf_to_text_fn: Callable[..., str] = pdf_to_text,
     pdf_to_text_with_ocr_fn: Callable[..., str] = pdf_to_text_with_ocr,
     llm_client: LLMClient | None = None,
@@ -139,10 +149,12 @@ def extract_pdf_content_with(
     `used_vision` is `True` when any vision-based extraction path was selected,
     including both `vision_first` and `vision_fallback`.
     """
-    client = llm_client or create_llm_client_from_config(config)
+    client = llm_client
     tried_vision = False
 
     if config.vision_first:
+        if client is None:
+            client = create_llm_client_from_config(config)
         tried_vision = True
         _log_extraction_strategy(path, "vision_first", outcome="attempt")
         result = _try_vision_extraction(
@@ -165,6 +177,8 @@ def extract_pdf_content_with(
 
     content_length = len(content.strip())
     if not tried_vision and config.use_vision_fallback and content_length < config.vision_fallback_min_text_len:
+        if client is None:
+            client = create_llm_client_from_config(config)
         _log_extraction_strategy(
             path,
             "vision_fallback",

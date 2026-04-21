@@ -71,6 +71,56 @@ def test_generate_filename_camel_case(monkeypatch) -> None:
     assert "MyCategory" in name
 
 
+def test_generate_filename_invalidates_cache_when_same_size_source_tail_changes(tmp_path) -> None:
+    class FakeClient:
+        model = "fake-model"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(
+            self, prompt: str, *, temperature: float = 0.0, max_tokens: int | None = None, response_format=None
+        ):
+            self.calls += 1
+            return f"tail_sensitive_name_{self.calls}"
+
+    source_path = tmp_path / "doc.pdf"
+    source_path.write_bytes(b"A" * 65_536 + b"B" * 65_536 + b"C" * 1_024)
+
+    config = RenamerConfig(
+        language="en",
+        simple_naming_mode=True,
+        cache_dir=tmp_path / "cache",
+    )
+    client = FakeClient()
+
+    first_name, _ = generate_filename(
+        "Invoice dated 2024-01-09",
+        config=config,
+        llm_client=client,
+        heuristic_scorer=HeuristicScorer(rules=[]),
+        stopwords=Stopwords(words=set()),
+        today=REFERENCE_TODAY,
+        source_path=source_path,
+    )
+
+    source_path.write_bytes(b"A" * 65_536 + b"B" * 65_536 + b"D" * 1_024)
+
+    second_name, _ = generate_filename(
+        "Invoice dated 2024-01-09",
+        config=config,
+        llm_client=client,
+        heuristic_scorer=HeuristicScorer(rules=[]),
+        stopwords=Stopwords(words=set()),
+        today=REFERENCE_TODAY,
+        source_path=source_path,
+    )
+
+    assert first_name == "20240109-tail_sensitive_name_1"
+    assert second_name == "20240109-tail_sensitive_name_2"
+    assert client.calls == 2
+
+
 def test_rename_skips_empty_pdf(monkeypatch, tmp_path) -> None:
     import ai_pdf_renamer.renamer as renamer_mod
 

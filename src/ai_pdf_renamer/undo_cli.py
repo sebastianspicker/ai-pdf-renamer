@@ -28,13 +28,12 @@ def run_undo(log_path: Path, dry_run: bool) -> None:
     trusted_root = log_path.resolve().parent
     pairs: list[tuple[str, str]] = []
     for line in log_path.read_text(encoding="utf-8").splitlines():
-        s = line.strip()
-        if not s:
+        if line == "" or line.isspace():
             continue
-        parts = s.split("\t", 1)
+        parts = line.split("\t", 1)
         if len(parts) != 2:
             continue
-        old_path, new_path = parts[0].strip(), parts[1].strip()
+        old_path, new_path = parts
         if old_path and new_path:
             pairs.append((old_path, new_path))
     if not pairs:

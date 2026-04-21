@@ -37,18 +37,23 @@ Key source modules under `src/ai_pdf_renamer/`:
 | `cli.py` / `cli_parser.py` | CLI entry point and argument parsing |
 | `config.py` / `config_resolver.py` | Config dataclass and normalization |
 | `renamer.py` | Main orchestration pipeline |
+| `renamer_files.py` | PDF file collection |
+| `renamer_extract.py` | Extraction helpers |
+| `renamer_lookup.py` | Category override lookup helpers |
+| `renamer_output.py` | CSV / JSON output and CSV injection sanitization |
+| `renamer_progress.py` | Rich / null progress reporter abstraction |
 | `llm_backend.py` | LLM backend abstraction (HTTP / in-process) |
 | `llm.py` | LLM helper functions (summary, category, keywords) |
 | `llm_prompts.py` / `llm_parsing.py` | Prompt templates and JSON parsing |
 | `filename.py` | Filename generation pipeline |
 | `heuristics.py` | Heuristic scoring engine |
 | `pdf_extract.py` | PDF text / image extraction |
-| `renamer_extract.py` | Extraction helpers |
 | `rules.py` | Processing rules engine |
 | `tui.py` | Terminal UI (textual) |
+| `tui_assets.py` | TUI constants, CSS, and log-line formatters |
 | `data/` | Bundled JSON data files |
 
-Data flow: `cli.py` builds a `RenamerConfig` → `renamer.py` iterates PDFs → `renamer_extract.py` extracts text → `filename.py` generates a filename (using heuristics + optional LLM) → `rename_ops.py` performs the rename.
+Data flow: `cli.py` builds a `RenamerConfig` → `renamer.py` iterates PDFs (collecting via `renamer_files.py`) → `renamer_extract.py` extracts text → `filename.py` generates a filename (using heuristics + optional LLM) → `rename_ops.py` performs the rename. Progress is reported via `renamer_progress.py`, output written via `renamer_output.py`, and category overrides resolved via `renamer_lookup.py`.
 
 ## Scope and alignment
 

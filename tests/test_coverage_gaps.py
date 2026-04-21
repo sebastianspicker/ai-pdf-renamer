@@ -759,3 +759,107 @@ def test_write_pdf_metadata_atomic_save(tmp_path):
     mock_doc.close.assert_called_once()
     mock_os_close.assert_called_once_with(99)
     mock_os_replace.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# RenamerConfig — uncovered branches
+# ---------------------------------------------------------------------------
+
+
+from ai_pdf_renamer.config import (  # noqa: E402
+    LLMConfig,
+    build_config_from_flat_dict,
+)
+
+
+class TestRenamerConfigValidation:
+    def test_unknown_kwarg_raises_type_error(self) -> None:
+        """Unknown flat kwarg raises TypeError with the offending name."""
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            RenamerConfig(nonexistent_field="oops")
+
+    def test_invalid_desired_case_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="Invalid --case"):
+            RenamerConfig(desired_case="PascalCase")
+
+    def test_invalid_date_locale_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="Invalid --date-format"):
+            RenamerConfig(date_locale="iso")
+
+    def test_invalid_category_display_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="Invalid --category-display"):
+            RenamerConfig(category_display="unknown_display")
+
+
+class TestRenamerConfigMerge:
+    def test_flat_kwargs_merge_with_sub_config(self) -> None:
+        """Flat kwargs override values in an explicitly provided sub-config."""
+        base_llm = LLMConfig(use_llm=False)
+        cfg = RenamerConfig(llm=base_llm, use_llm=True)
+        assert cfg.use_llm is True
+
+    def test_sub_config_only_no_flat_overrides(self) -> None:
+        """Sub-config without flat overrides is used as-is."""
+        llm = LLMConfig(use_llm=False)
+        cfg = RenamerConfig(llm=llm)
+        assert cfg.use_llm is False
+
+
+class TestRenamerConfigDunder:
+    def test_repr_contains_sub_configs(self) -> None:
+        cfg = RenamerConfig()
+        r = repr(cfg)
+        assert "RenamerConfig(" in r
+        assert "llm=" in r
+        assert "heuristic=" in r
+        assert "extraction=" in r
+        assert "output=" in r
+
+    def test_eq_same_defaults(self) -> None:
+        assert RenamerConfig() == RenamerConfig()
+
+    def test_eq_different_value(self) -> None:
+        assert RenamerConfig(use_llm=True) != RenamerConfig(use_llm=False)
+
+    def test_eq_non_renamer_config(self) -> None:
+        assert RenamerConfig() != "not-a-config"
+        assert RenamerConfig() != 42
+
+    def test_hash_consistent(self) -> None:
+        cfg = RenamerConfig()
+        assert hash(cfg) == hash(cfg)
+
+    def test_hash_equal_objects_same_hash(self) -> None:
+        assert hash(RenamerConfig()) == hash(RenamerConfig())
+
+    def test_setattr_immutable(self) -> None:
+        cfg = RenamerConfig()
+        with pytest.raises(AttributeError):
+            cfg.language = "en"  # type: ignore[misc]
+
+    def test_delattr_immutable(self) -> None:
+        cfg = RenamerConfig()
+        with pytest.raises(AttributeError):
+            del cfg.language  # type: ignore[misc]
+
+    def test_getattr_unknown_raises_attribute_error(self) -> None:
+        cfg = RenamerConfig()
+        with pytest.raises(AttributeError):
+            _ = cfg.this_does_not_exist  # type: ignore[attr-defined]
+
+
+class TestBuildConfigFromFlatDict:
+    def test_known_fields_are_applied(self) -> None:
+        cfg = build_config_from_flat_dict({"language": "en", "dry_run": True})
+        assert cfg.language == "en"
+        assert cfg.dry_run is True
+
+    def test_unknown_fields_are_silently_ignored(self) -> None:
+        """Unknown keys are filtered out before building."""
+        cfg = build_config_from_flat_dict({"language": "en", "unknown_garbage": "x"})
+        assert cfg.language == "en"
+
+    def test_empty_dict_returns_defaults(self) -> None:
+        cfg = build_config_from_flat_dict({})
+        assert isinstance(cfg, RenamerConfig)
+        assert cfg.language == "de"

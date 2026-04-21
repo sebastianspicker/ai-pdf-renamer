@@ -33,15 +33,22 @@ class ResponseCache:
 
     @staticmethod
     def build_file_key(path: str | Path, *, prefix_bytes: int = _DEFAULT_PREFIX_BYTES) -> str:
-        """Build a stable key from file size and the first N bytes."""
+        """Build a stable key from file size plus leading and trailing bytes."""
         file_path = Path(path)
         stat = file_path.stat()
         with file_path.open("rb") as handle:
             prefix = handle.read(prefix_bytes)
+            tail = b""
+            if stat.st_size > len(prefix):
+                tail_bytes = min(prefix_bytes, stat.st_size)
+                handle.seek(stat.st_size - tail_bytes)
+                tail = handle.read(tail_bytes)
         digest = hashlib.sha256()
         digest.update(str(stat.st_size).encode("ascii"))
         digest.update(b"\0")
         digest.update(prefix)
+        digest.update(b"\0")
+        digest.update(tail)
         return digest.hexdigest()
 
     @staticmethod

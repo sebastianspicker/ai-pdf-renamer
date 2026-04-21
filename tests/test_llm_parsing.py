@@ -127,6 +127,22 @@ class TestLenientExtractKeyValue:
         assert result is not None
         assert "hi" in result
 
+    def test_known_array_key_returns_strings(self) -> None:
+        text = 'noise "keywords": [" invoice ", "Amazon", " ", "2024"] trailing'
+        assert _lenient_extract_key_value(text, "keywords") == ["invoice", "Amazon", "2024"]
+
+    def test_known_final_summary_tokens_array_returns_strings(self) -> None:
+        text = '{"final_summary_tokens": ["  invoice", "Amazon  "]'
+        assert _lenient_extract_key_value(text, "final_summary_tokens") == ["invoice", "Amazon"]
+
+    def test_unknown_array_key_is_not_salvaged(self) -> None:
+        text = 'noise "other_list": ["a", "b"] trailing'
+        assert _lenient_extract_key_value(text, "other_list") is None
+
+    def test_known_array_rejects_non_string_items(self) -> None:
+        text = 'noise "keywords": ["invoice", 42] trailing'
+        assert _lenient_extract_key_value(text, "keywords") is None
+
     def test_no_quotes_at_all(self) -> None:
         text = "just plain text"
         assert _lenient_extract_key_value(text, "summary") is None
@@ -175,6 +191,18 @@ class TestParseJsonField:
     def test_lenient_no_match(self) -> None:
         assert parse_json_field("No JSON here", key="summary", lenient=True) is None
 
+    def test_lenient_known_array_value(self) -> None:
+        resp = '"keywords":[" invoice ","Amazon"," ","2024"]'
+        assert parse_json_field(resp, key="keywords", lenient=True) == ["invoice", "Amazon", "2024"]
+
+    def test_lenient_final_summary_tokens_array_value(self) -> None:
+        resp = 'prefix "final_summary_tokens":[" invoice ","Amazon"] suffix'
+        assert parse_json_field(resp, key="final_summary_tokens", lenient=True) == ["invoice", "Amazon"]
+
+    def test_lenient_unknown_array_key_stays_none(self) -> None:
+        resp = '"other_list":["A","B"]'
+        assert parse_json_field(resp, key="other_list", lenient=True) is None
+
     def test_invalid_json_returns_none(self) -> None:
         assert parse_json_field("not json", key="summary") is None
 
@@ -204,6 +232,22 @@ class TestExtractAndValidateJson:
     def test_extract_and_validate_json_lenient_fallback(self) -> None:
         result = extract_and_validate_json('"summary":"fallback"', expected_keys={"summary"}, lenient_keys={"summary"})
         assert result["summary"] == "fallback"
+
+    def test_extract_and_validate_json_lenient_array_fallback(self) -> None:
+        result = extract_and_validate_json(
+            '"keywords":[" invoice ","Amazon","2024"]',
+            expected_keys={"keywords"},
+            lenient_keys={"keywords"},
+        )
+        assert result["keywords"] == ["invoice", "Amazon", "2024"]
+
+    def test_extract_and_validate_json_lenient_final_summary_tokens_array(self) -> None:
+        result = extract_and_validate_json(
+            'prefix "final_summary_tokens":[" invoice ","Amazon"] suffix',
+            expected_keys={"final_summary_tokens"},
+            lenient_keys={"final_summary_tokens"},
+        )
+        assert result["final_summary_tokens"] == ["invoice", "Amazon"]
 
     def test_extract_and_validate_json_reports_context(self) -> None:
         try:

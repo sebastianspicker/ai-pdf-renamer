@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ai_pdf_renamer.config import RenamerConfig
+from ai_pdf_renamer.config_resolver import build_config
 from ai_pdf_renamer.llm_backend import (
     HttpLLMBackend,
     InProcessLLMBackend,
@@ -176,6 +177,16 @@ def test_http_complete_vision_success():
     assert any(part["type"] == "text" for part in user_msg["content"])
 
 
+def test_http_complete_vision_uses_png_data_url_mime() -> None:
+    backend = HttpLLMBackend()
+    with patch.object(backend._session, "post", return_value=_make_chat_response("ok")) as mock_post:
+        backend.complete_vision("pngdata", "describe this", image_mime_type="image/png")
+
+    payload = mock_post.call_args[1]["json"]
+    image_part = next(part for part in payload["messages"][0]["content"] if part["type"] == "image_url")
+    assert image_part["image_url"]["url"] == "data:image/png;base64,pngdata"
+
+
 def test_http_complete_vision_failure_returns_empty():
     """Mock requests.Session.post to raise requests.ConnectionError. Verify returns ''."""
     import requests as req_mod
@@ -287,6 +298,52 @@ def test_factory_http_backend_model_from_env(monkeypatch):
     config = RenamerConfig(use_llm=True)
     client = create_llm_client_from_config(config)
     assert client.model == "mistral"
+
+
+def test_factory_build_config_env_overrides_preset_defaults() -> None:
+    env = {
+        "AI_PDF_RENAMER_LLM_URL": "http://envserver:1234/v1/completions",
+        "AI_PDF_RENAMER_LLM_MODEL": "env-model",
+    }
+    config = build_config({"llm_preset": "gpu"}, env=env)
+    client = create_llm_client_from_config(config)
+    assert isinstance(client, HttpLLMBackend)
+    assert client.base_url == "http://envserver:1234/v1/completions"
+    assert client.model == "env-model"
+
+
+def test_factory_build_config_explicit_values_beat_env() -> None:
+    env = {
+        "AI_PDF_RENAMER_LLM_URL": "http://envserver:1234/v1/completions",
+        "AI_PDF_RENAMER_LLM_MODEL": "env-model",
+    }
+    config = build_config(
+        {
+            "llm_preset": "gpu",
+            "llm_base_url": "http://cli:9999/v1/completions",
+            "llm_model": "cli-model",
+        },
+        env=env,
+    )
+    client = create_llm_client_from_config(config)
+    assert isinstance(client, HttpLLMBackend)
+    assert client.base_url == "http://cli:9999/v1/completions"
+    assert client.model == "cli-model"
+
+
+def test_build_config_env_beats_config_file_for_preset_derived_values() -> None:
+    config = build_config(
+        {},
+        file_defaults={
+            "llm_preset": "gpu",
+        },
+        env={
+            "AI_PDF_RENAMER_LLM_URL": "http://envserver:1234/v1/completions",
+            "AI_PDF_RENAMER_LLM_MODEL": "env-model",
+        },
+    )
+    assert config.llm_base_url == "http://envserver:1234/v1/completions"
+    assert config.llm_model == "env-model"
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +463,23 @@ def test_in_process_backend_complete_vision(mock_llama_cpp: tuple[MagicMock, Mag
     assert any(part["type"] == "image_url" for part in user_msg["content"])
 
 
+def test_in_process_backend_complete_vision_uses_png_data_url_mime(
+    mock_llama_cpp: tuple[MagicMock, MagicMock],
+) -> None:
+    _mock_module, mock_instance = mock_llama_cpp
+    mock_instance.create_chat_completion.return_value = {
+        "choices": [{"message": {"content": "I see a document"}}],
+    }
+
+    backend = InProcessLLMBackend("/tmp/model.gguf")
+    backend.complete_vision("aW1hZ2VkYXRh", "Describe this image", image_mime_type="image/png")
+
+    call_kwargs = mock_instance.create_chat_completion.call_args
+    messages = call_kwargs[1].get("messages") or call_kwargs[0][0]
+    image_part = next(part for part in messages[0]["content"] if part["type"] == "image_url")
+    assert image_part["image_url"]["url"] == "data:image/png;base64,aW1hZ2VkYXRh"
+
+
 def test_in_process_backend_close(mock_llama_cpp: tuple[MagicMock, MagicMock]) -> None:
     """Verify del self._llama called."""
     _mock_module, _mock_instance = mock_llama_cpp
@@ -446,6 +520,11 @@ def test_warn_plaintext_remote_http_localhost_ok() -> None:
     _warn_if_plaintext_remote("http://127.0.0.1:8080/v1/completions", enforce=True)
 
 
+def test_warn_plaintext_remote_http_ipv6_loopback_ok() -> None:
+    """Bracketed IPv6 loopback URLs are treated as local."""
+    _warn_if_plaintext_remote("http://[::1]:8080/v1/completions", enforce=True)
+
+
 def test_warn_plaintext_remote_https_ok() -> None:
     """https:// does not warn or raise."""
     _warn_if_plaintext_remote("https://example.com/v1/completions", enforce=True)
@@ -468,6 +547,13 @@ def test_factory_timeout_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     client = create_llm_client_from_config(config)
     assert isinstance(client, HttpLLMBackend)
     assert client.timeout_s == 42.5
+
+
+def test_factory_require_https_accepts_true_env_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PDF_RENAMER_REQUIRE_HTTPS", "true")
+    config = RenamerConfig(use_llm=True, llm_base_url="http://example.com/v1/completions")
+    with pytest.raises(ValueError, match="plain HTTP"):
+        create_llm_client_from_config(config)
 
 
 def test_factory_in_process_fallback_to_http(

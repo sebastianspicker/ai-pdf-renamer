@@ -160,6 +160,18 @@ def pdf_first_page_to_image_base64(
     Returns None if rendering fails (no fitz, encrypted, or error).
     Used by the optional vision fallback when text extraction is empty or very short.
     """
+    image_payload = pdf_first_page_to_image_payload(filepath, dpi=dpi)
+    if image_payload is None:
+        return None
+    return image_payload["image_b64"]
+
+
+def pdf_first_page_to_image_payload(
+    filepath: str | Path | None,
+    *,
+    dpi: int = VISION_FALLBACK_DPI,
+) -> dict[str, str] | None:
+    """Render the first page and preserve the actual MIME type for vision requests."""
     if filepath is None:
         return None
     try:
@@ -181,22 +193,30 @@ def pdf_first_page_to_image_base64(
             return None
         page = doc.load_page(0)
         pix = page.get_pixmap(dpi=dpi, alpha=False)
-        # Prefer JPEG for smaller payload; Pixmap.tobytes(output=...) in PyMuPDF 1.23+.
+        # Prefer JPEG for smaller payload, but keep the real MIME type on fallback paths.
         image_bytes: bytes
+        mime_type: str
         if hasattr(pix, "tobytes"):
             try:
                 image_bytes = pix.tobytes(output="jpeg", jpg_quality=85)
+                mime_type = "image/jpeg"
             except (TypeError, ValueError):
                 image_bytes = pix.tobytes(output="png")
+                mime_type = "image/png"
         elif hasattr(pix, "getImageData"):
             image_bytes = pix.getImageData("jpeg")
+            mime_type = "image/jpeg"
         elif hasattr(pix, "getPNGData"):
             image_bytes = pix.getPNGData()
+            mime_type = "image/png"
         else:
             return None
         if not image_bytes:
             return None
-        return base64.b64encode(image_bytes).decode("ascii")
+        return {
+            "image_b64": base64.b64encode(image_bytes).decode("ascii"),
+            "mime_type": mime_type,
+        }
     except (RuntimeError, OSError, ValueError) as exc:
         logger.debug("Vision render failed for %s: %s", path.name, exc)
         return None

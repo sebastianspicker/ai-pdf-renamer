@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import csv
 import json
 import logging
 import os
@@ -14,7 +13,6 @@ import time
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
-from typing import Any
 
 import requests
 
@@ -30,6 +28,9 @@ from .rename_ops import (
 )
 from .renamer_extract import extract_pdf_content_with as _extract_pdf_content_with
 from .renamer_files import collect_pdf_files as _collect_pdf_files
+from .renamer_lookup import _lookup_override_category
+from .renamer_output import _append_export_row, _sanitize_csv_cell, _write_json_or_csv, _write_summary_json
+from .renamer_progress import _create_progress_reporter, _NullProgressReporter, _RichProgressReporter
 from .rules import (
     ProcessingRules,
     force_category_for_basename,
@@ -37,64 +38,7 @@ from .rules import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class _NullProgressReporter:
-    def __enter__(self) -> _NullProgressReporter:
-        return self
-
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        return None
-
-    def update(self, current: int, total: int, file_path: Path) -> None:
-        return None
-
-
-class _RichProgressReporter:
-    def __init__(self, total: int, *, quiet: bool) -> None:
-        from rich.console import Console
-        from rich.progress import BarColumn, Progress, ProgressColumn, TextColumn, TimeElapsedColumn
-
-        columns: list[ProgressColumn] = []
-        if quiet:
-            columns.extend(
-                [
-                    TextColumn("{task.percentage:>3.0f}%"),
-                    TextColumn("{task.completed}/{task.total}"),
-                ]
-            )
-        else:
-            columns.extend(
-                [
-                    TextColumn("{task.completed}/{task.total}"),
-                    BarColumn(bar_width=None),
-                    TextColumn("{task.percentage:>3.0f}%"),
-                ]
-            )
-        columns.extend([TextColumn("{task.fields[filename]}"), TimeElapsedColumn()])
-        self._progress = Progress(*columns, console=Console(stderr=True), transient=True)
-        self._task_id = self._progress.add_task("Processing PDFs", total=total, filename="")
-
-    def __enter__(self) -> _RichProgressReporter:
-        self._progress.start()
-        return self
-
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        self._progress.stop()
-
-    def update(self, current: int, total: int, file_path: Path) -> None:
-        self._progress.update(self._task_id, total=total, completed=current, filename=file_path.name)
-
-
-def _create_progress_reporter(total: int, config: RenamerConfig) -> _NullProgressReporter | _RichProgressReporter:
-    """Create an opt-in progress reporter without affecting default CLI output."""
-    if not (config.progress or config.quiet_progress):
-        return _NullProgressReporter()
-    try:
-        return _RichProgressReporter(total, quiet=bool(config.quiet_progress))
-    except ImportError:
-        logger.warning("Rich progress unavailable; continuing without progress UI.")
-        return _NullProgressReporter()
+_compat_aliases = (_NullProgressReporter, _RichProgressReporter, _sanitize_csv_cell)
 
 
 def _stop_requested(config: RenamerConfig) -> bool:
@@ -104,7 +48,6 @@ def _stop_requested(config: RenamerConfig) -> bool:
 
 def _extract_pdf_content(path: Path, config: RenamerConfig) -> tuple[str, bool]:
     """Compatibility shim for the extraction pipeline.
-
     The strategy logic lives in renamer_extract.py; this wrapper keeps the
     renamer-level patch points stable for tests and local overrides.
     """
@@ -158,76 +101,8 @@ def _write_pdf_title_metadata(pdf_path: Path, title: str) -> None:
         logger.warning("Could not write PDF metadata for %s: %s", pdf_path, exc)
 
 
-_CSV_FORMULA_TRIGGERS = frozenset("=+-@|")
-_CSV_CONTROL_CHARS_RE = re.compile(r"[\t\r\n]")
 # C0 control chars (incl. NUL) must be stripped from env-var values passed to hook commands.
 _HOOK_ENV_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
-
-
-def _sanitize_csv_cell(value: object) -> object:
-    """Prevent CSV formula injection in spreadsheet apps (OWASP).
-
-    Handles: leading formula triggers after whitespace stripping,
-    inline control chars (tab/CR/LF) that enable cell injection.
-    """
-    if not isinstance(value, str) or not value:
-        return value
-    # Replace control chars that enable cell injection within the value.
-    cleaned = _CSV_CONTROL_CHARS_RE.sub(" ", value)
-    # Check first non-whitespace character for formula triggers.
-    stripped = cleaned.lstrip()
-    if stripped and stripped[0] in _CSV_FORMULA_TRIGGERS:
-        return "'" + cleaned
-    return cleaned
-
-
-def _write_json_or_csv(
-    path: Path,
-    rows: list[Any],
-    csv_fieldnames: list[str] | None,
-) -> None:
-    """Write rows to path as CSV (if csv_fieldnames and .csv suffix) or JSON. Creates parent dirs."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.suffix.lower() == ".csv" and csv_fieldnames:
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=csv_fieldnames)
-            writer.writeheader()
-            writer.writerows({k: _sanitize_csv_cell(v) for k, v in row.items()} for row in rows)
-    else:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(rows, f, ensure_ascii=False, indent=2)
-
-
-def _write_summary_json(
-    summary_path: str | Path | None,
-    *,
-    directory: Path,
-    processed: int,
-    renamed: int,
-    skipped: int,
-    failed: int,
-    dry_run: bool,
-    failures: list[dict[str, str]],
-) -> None:
-    """Write run summary JSON as a single object. Best-effort: logs warning on write failure."""
-    if not summary_path:
-        return
-    summary = {
-        "directory": str(directory),
-        "processed": processed,
-        "renamed": renamed,
-        "skipped": skipped,
-        "failed": failed,
-        "dry_run": dry_run,
-        "failures": failures,
-    }
-    target = Path(summary_path)
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    except OSError as exc:
-        logger.warning("Could not write summary JSON %s: %s", target, exc)
 
 
 def _run_post_rename_hook(hook_cmd: str, old_path: Path, new_path: Path, meta: dict[str, object]) -> None:
@@ -304,6 +179,8 @@ def _apply_post_rename_actions(
     export_rows: list[dict[str, object]],
 ) -> None:
     """Write rename log, PDF metadata, and export row after a successful rename. Mutates export_rows."""
+    if config.export_metadata_path:
+        _append_export_row(export_rows, file_path=file_path, target=target, meta=meta)
     if config.rename_log_path:
         file_path_str = str(file_path)
         target_str = str(target)
@@ -327,22 +204,6 @@ def _apply_post_rename_actions(
                 f.write(f"{file_path_str}\t{target}\n")
     if config.write_pdf_metadata:
         _write_pdf_title_metadata(target, current_base)
-    if config.export_metadata_path:
-        export_rows.append(
-            {
-                "path": str(file_path),
-                "new_name": target.name,
-                "category": meta.get("category", ""),
-                "summary": meta.get("summary", ""),
-                "keywords": meta.get("keywords", ""),
-                "category_source": meta.get("category_source", ""),
-                "llm_failed": meta.get("llm_failed", False),
-                "used_vision_fallback": meta.get("used_vision_fallback", False),
-                "invoice_id": meta.get("invoice_id", ""),
-                "amount": meta.get("amount", ""),
-                "company": meta.get("company", ""),
-            }
-        )
     hook_cmd = (config.post_rename_hook or "").strip() or (
         os.environ.get("AI_PDF_RENAMER_POST_RENAME_HOOK") or ""
     ).strip()
@@ -362,9 +223,9 @@ def _process_content_to_result(
     Caller must ensure content is non-empty if expecting a non-skip result.
     """
     try:
-        override_cat = (config.override_category_map or {}).get(file_path.name) or force_category_for_basename(
-            rules, file_path.name
-        )
+        override_cat = _lookup_override_category(
+            file_path, config.override_category_map
+        ) or force_category_for_basename(rules, file_path.name)
         pdf_meta = get_pdf_metadata(file_path) if config.use_pdf_metadata_for_date else None
         filename_str, meta = generate_filename(
             content,
@@ -788,6 +649,7 @@ def rename_pdfs_in_directory(
             ) -> None:
                 _apply_post_rename_actions(config, _fp, _target, _current_base, _meta, _rows)
 
+            rows_before = len(export_rows)
             success, target = apply_single_rename(
                 file_path,
                 base,
@@ -813,6 +675,8 @@ def rename_pdfs_in_directory(
                 )
             else:
                 if config.dry_run:
+                    if config.export_metadata_path and len(export_rows) == rows_before:
+                        _append_export_row(export_rows, file_path=file_path, target=target, meta=meta)
                     logger.info(
                         "Dry-run: would rename '%s' to '%s'",
                         file_path.name,

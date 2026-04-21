@@ -10,6 +10,8 @@ import re
 
 logger = logging.getLogger(__name__)
 
+_LENIENT_ARRAY_KEYS = frozenset({"keywords", "final_summary_tokens"})
+
 # Fallback context limits (128K model); overridden by llm_preset.
 CONTEXT_128K_MAX_CHARS_SINGLE = 480_000  # ~120K tokens at ~4 chars/token
 CONTEXT_128K_CHUNK_SIZE = 100_000
@@ -162,9 +164,8 @@ def _sanitize_json_string_value(response: str, *, key: str) -> str:
     return sanitized[: first_quote + 1] + fixed_value + sanitized[last_quote:]
 
 
-def _lenient_extract_key_value(text: str, key: str) -> str | None:
+def _lenient_extract_string_value(text: str, key: str) -> str | None:
     """Best-effort extraction of a string value for key from text that may not be valid JSON."""
-    # Match "key":"value" with value possibly containing escaped quotes.
     pattern = re.compile(
         r'"' + re.escape(key) + r'"\s*:\s*"((?:[^"\\]|\\.)*)"',
         re.DOTALL,
@@ -175,9 +176,61 @@ def _lenient_extract_key_value(text: str, key: str) -> str | None:
     raw = m.group(1)
     if not raw:
         return None
-    # Unescape only \" inside the value so we don't corrupt normal text.
     unescaped = raw.replace('\\"', '"').replace("\\\\", "\\").strip()
     return unescaped or None
+
+
+def _lenient_extract_known_string_array(text: str, key: str) -> list[str] | None:
+    """Recover a JSON string array for the repo's known array-valued fields only."""
+    if key not in _LENIENT_ARRAY_KEYS:
+        return None
+
+    key_match = re.search(r'"' + re.escape(key) + r'"\s*:\s*\[', text)
+    if key_match is None:
+        return None
+
+    array_start = text.find("[", key_match.start())
+    if array_start == -1:
+        return None
+
+    depth = 0
+    i = array_start
+    while i < len(text):
+        char = text[i]
+        if char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                candidate = text[array_start : i + 1]
+                try:
+                    parsed = json.loads(candidate)
+                except json.JSONDecodeError:
+                    return None
+                if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+                    return None
+                cleaned = [item.strip() for item in parsed if item.strip()]
+                return cleaned or None
+        elif char == '"':
+            i += 1
+            while i < len(text):
+                if text[i] == "\\" and i + 1 < len(text):
+                    i += 2
+                    continue
+                if text[i] == '"':
+                    break
+                i += 1
+        i += 1
+
+    return None
+
+
+def _lenient_extract_key_value(text: str, key: str) -> str | list[str] | None:
+    """Best-effort extraction for repo-defined scalar and string-array fields."""
+    array_value = _lenient_extract_known_string_array(text, key)
+    if array_value is not None:
+        return array_value
+    return _lenient_extract_string_value(text, key)
 
 
 def extract_and_validate_json(

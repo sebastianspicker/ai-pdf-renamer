@@ -63,8 +63,9 @@ logs/
 tmp/
 temp/
 
-# Python version managers
-.python-version
+# Python version managers (untrack with: git rm --cached .python-version)
+# .python-version is currently tracked to pin the dev Python version for pyenv/mise users.
+# .python-version
 .tool-versions
 
 # Local folders and PDF test artifacts (may contain private PDFs)
@@ -90,6 +91,7 @@ secrets.yml
 Thumbs.db
 .cursor/
 .claude/
+.kilo/
 
 # Local process artifacts (do not commit)
 DECISIONS.md
@@ -114,4 +116,7 @@ AUDIT.md
 debug-log/
 docs/agent/
 docs/source-audit/
+docs/deprecated/
+docs/audit-*/
+docs/repo-core-and-function-index.md
 scripts/topology_inventory.sh

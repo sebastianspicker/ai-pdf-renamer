@@ -147,6 +147,23 @@ def test_undo_whitespace_only_lines_ignored(tmp_path, capsys) -> None:
     assert not new.exists()
 
 
+def test_undo_preserves_leading_and_trailing_spaces_in_logged_paths(tmp_path, capsys) -> None:
+    """Undo parsing keeps exact tab-delimited path payloads, including filename edge spaces."""
+    old = tmp_path / " original .pdf "
+    new = tmp_path / " renamed .pdf "
+    new.write_text("data", encoding="utf-8")
+
+    log = tmp_path / "rename.log"
+    log.write_text(f"{old}\t{new}\n", encoding="utf-8")
+
+    main(["--rename-log", str(log)])
+
+    assert old.exists()
+    assert not new.exists()
+    captured = capsys.readouterr()
+    assert "Reverted" in captured.out
+
+
 def test_undo_malformed_line_skipped(tmp_path, capsys) -> None:
     """Lines without a tab separator are silently skipped."""
     old = tmp_path / "a.pdf"

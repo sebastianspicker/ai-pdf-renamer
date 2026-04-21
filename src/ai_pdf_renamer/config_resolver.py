@@ -139,11 +139,13 @@ def _resolve_precedence(*values: Any) -> Any:
     return None
 
 
-def _resolve_presets(raw_data: Mapping[str, Any]) -> _PresetResolution:
+def _resolve_presets(raw_data: Mapping[str, Any], file_cfg: Mapping[str, Any]) -> _PresetResolution:
     """Apply named preset defaults once and return resolved LLM hardware defaults."""
     data = dict(raw_data)
 
-    preset = _str(data.get("preset"), "")
+    preset = _str(_resolve_precedence(data.get("preset"), file_cfg.get("preset")), "")
+    if preset:
+        data.setdefault("preset", preset)
     if preset == "scanned":
         data["use_vision_fallback"] = True
         data["simple_naming_mode"] = True
@@ -173,7 +175,9 @@ def _resolve_presets(raw_data: Mapping[str, Any]) -> _PresetResolution:
         if data.get("cache_dir") in (None, ""):
             data["cache_dir"] = str(default_cache_dir())
 
-    llm_preset = _normalize_str_or_none(data.get("llm_preset"))
+    llm_preset = _normalize_str_or_none(_resolve_precedence(data.get("llm_preset"), file_cfg.get("llm_preset")))
+    if llm_preset is not None:
+        data.setdefault("llm_preset", llm_preset)
     effective_preset = llm_preset if llm_preset in _LLM_PRESET_DEFAULTS else "apple-silicon"
     if llm_preset is not None and llm_preset != effective_preset:
         logger.warning("Unknown llm_preset=%r; falling back to %r", llm_preset, effective_preset)
@@ -269,31 +273,71 @@ def _build_llm_options(
     data: dict[str, Any],
     preset_defaults: dict[str, object],
     env_map: Mapping[str, str],
+    file_cfg: Mapping[str, Any],
 ) -> dict[str, Any]:
     """LLM backend, URL, model, timeout, chat API, JSON mode, and preset."""
     llm_preset = _normalize_str_or_none(data.get("llm_preset"))
 
-    # Apply preset defaults only where user didn't set a value
-    user_llm_model = _str(data.get("llm_model"), "") or None
-    user_llm_base_url = _normalize_str_or_none(data.get("llm_base_url"))
-    user_max_context_chars = _positive_int_or_none(data.get("max_context_chars"))
-
-    resolved_llm_model = user_llm_model or preset_defaults["llm_model"]
-    resolved_llm_base_url = user_llm_base_url or preset_defaults["llm_base_url"]
-    resolved_max_context_chars = user_max_context_chars or preset_defaults["max_context_chars"]
-
     return {
-        "llm_backend": _str(data.get("llm_backend"), "http"),
-        "llm_base_url": resolved_llm_base_url,
-        "llm_model": resolved_llm_model,
-        "llm_timeout_s": _optional_float(data.get("llm_timeout_s")),
-        "llm_model_path": _normalize_str_or_none(data.get("llm_model_path")),
-        "require_https": _bool(data.get("require_https"), False),
+        "llm_backend": _str(
+            _resolve_precedence(
+                data.get("llm_backend"),
+                env_map.get("AI_PDF_RENAMER_LLM_BACKEND"),
+                file_cfg.get("llm_backend"),
+                "http",
+            ),
+            "http",
+        ),
+        "llm_base_url": _normalize_str_or_none(
+            _resolve_precedence(
+                data.get("llm_base_url"),
+                env_map.get("AI_PDF_RENAMER_LLM_URL"),
+                file_cfg.get("llm_base_url"),
+                preset_defaults["llm_base_url"],
+            )
+        ),
+        "llm_model": _normalize_str_or_none(
+            _resolve_precedence(
+                data.get("llm_model"),
+                env_map.get("AI_PDF_RENAMER_LLM_MODEL"),
+                file_cfg.get("llm_model"),
+                preset_defaults["llm_model"],
+            )
+        ),
+        "llm_timeout_s": _optional_float(
+            _resolve_precedence(
+                data.get("llm_timeout_s"),
+                env_map.get("AI_PDF_RENAMER_LLM_TIMEOUT"),
+                file_cfg.get("llm_timeout_s"),
+            )
+        ),
+        "llm_model_path": _normalize_str_or_none(
+            _resolve_precedence(
+                data.get("llm_model_path"),
+                env_map.get("AI_PDF_RENAMER_LLM_MODEL_PATH"),
+                file_cfg.get("llm_model_path"),
+            )
+        ),
+        "require_https": _bool(
+            _resolve_precedence(
+                data.get("require_https"),
+                env_map.get("AI_PDF_RENAMER_REQUIRE_HTTPS"),
+                file_cfg.get("require_https"),
+            ),
+            False,
+        ),
         "use_single_llm_call": _bool(data.get("use_single_llm_call"), True),
         "llm_use_chat_api": _bool(data.get("llm_use_chat_api"), True),
         "llm_json_mode": _bool(data.get("llm_json_mode"), True),
         "llm_preset": llm_preset,
-        "max_context_chars": resolved_max_context_chars,
+        "max_context_chars": _positive_int_or_none(
+            _resolve_precedence(
+                data.get("max_context_chars"),
+                env_map.get("AI_PDF_RENAMER_MAX_CONTENT_CHARS"),
+                file_cfg.get("max_context_chars"),
+                preset_defaults["max_context_chars"],
+            )
+        ),
         "use_cache": _bool(data.get("use_cache"), True),
         "cache_dir": _normalize_path_or_none(
             _resolve_precedence(data.get("cache_dir"), env_map.get("AI_PDF_RENAMER_CACHE_DIR"))
@@ -304,6 +348,7 @@ def _build_llm_options(
 def _build_extraction_options(
     data: dict[str, Any],
     env_map: Mapping[str, str],
+    file_cfg: Mapping[str, Any],
 ) -> dict[str, Any]:
     """OCR, vision, tokens, workers, and max content settings."""
     use_vision_fallback = _bool(data.get("use_vision_fallback"), False) or _env_true(
@@ -315,12 +360,14 @@ def _build_extraction_options(
         _resolve_precedence(
             data.get("max_content_chars"),
             env_map.get("AI_PDF_RENAMER_MAX_CONTENT_CHARS"),
+            file_cfg.get("max_content_chars"),
         )
     )
     max_content_tokens = _positive_int_or_none(
         _resolve_precedence(
             data.get("max_content_tokens"),
             env_map.get("AI_PDF_RENAMER_MAX_CONTENT_TOKENS"),
+            file_cfg.get("max_content_tokens"),
         )
     )
 
@@ -387,14 +434,14 @@ def build_config(
 
     # Precedence inside this resolver is explicit:
     # raw/CLI input > environment > config file defaults > hardcoded defaults.
-    preset_resolution = _resolve_presets(raw)
+    preset_resolution = _resolve_presets(raw, defaults)
     data = preset_resolution.data
     preset_defaults = preset_resolution.llm_defaults
 
     # --- Build partial dicts from helpers ---
-    extraction = _build_extraction_options(data, env_map)
+    extraction = _build_extraction_options(data, env_map, defaults)
     core = _build_core_options(data)
-    llm = _build_llm_options(data, preset_defaults, env_map)
+    llm = _build_llm_options(data, preset_defaults, env_map, defaults)
     output = _build_output_options(data, defaults, env_map)
 
     # --- Merge into one dict (detect accidental key overlaps) ---

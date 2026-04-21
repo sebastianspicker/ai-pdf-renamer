@@ -66,12 +66,15 @@ def test_vision_extraction_success() -> None:
     )
 
     assert result == "Invoice_2024_Telekom"
-    client.complete_vision.assert_called_once_with(
-        "base64data",
-        "describe this",
-        model="test-model",
-        timeout_s=60.0,
-    )
+    client.complete_vision.assert_called_once()
+    args = client.complete_vision.call_args.args
+    kwargs = client.complete_vision.call_args.kwargs
+    assert args == ("base64data", "describe this")
+    assert kwargs == {
+        "model": "test-model",
+        "image_mime_type": "image/jpeg",
+        "timeout_s": 60.0,
+    }
 
 
 def test_vision_extraction_no_image() -> None:
@@ -147,6 +150,33 @@ def test_extract_text_only() -> None:
     assert used_vision is False
 
 
+def test_extract_text_only_does_not_create_llm_client_when_vision_unused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Text-only extraction should not require an unavailable vision backend."""
+    config = RenamerConfig(
+        use_ocr=False,
+        vision_first=False,
+        use_vision_fallback=False,
+        llm_backend="in-process",
+        llm_model_path="/missing/model.gguf",
+        max_tokens_for_extraction=1000,
+    )
+
+    def fail_if_called(_config: RenamerConfig) -> MagicMock:
+        raise AssertionError("LLM client should not be created for text-only extraction")
+
+    monkeypatch.setattr("ai_pdf_renamer.renamer_extract.create_llm_client_from_config", fail_if_called)
+
+    content, used_vision = extract_pdf_content_with(
+        Path("/fake/doc.pdf"),
+        config,
+        pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "Hello world from PDF",
+        pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+    )
+
+    assert content == "Hello world from PDF"
+    assert used_vision is False
+
+
 def test_extract_vision_first() -> None:
     """config.vision_first=True: vision tried before text extraction."""
     client = MagicMock()
@@ -208,6 +238,47 @@ def test_extract_vision_fallback() -> None:
     # sanitize_filename_from_llm replaces spaces with underscores
     assert content == "Vision_fallback_result"
     assert used_vision is True
+
+
+def test_extract_vision_fallback_preserves_png_mime_type() -> None:
+    """PNG image fallbacks should preserve image/png in the vision request."""
+    client = MagicMock()
+    client.model = "test-model"
+    client.complete_vision.return_value = "Vision fallback result"
+
+    config = RenamerConfig(
+        vision_first=False,
+        use_vision_fallback=True,
+        vision_fallback_min_text_len=100,
+        use_ocr=False,
+        llm_timeout_s=30.0,
+        max_tokens_for_extraction=1000,
+    )
+
+    content, used_vision = extract_pdf_content_with(
+        Path("/fake/doc.pdf"),
+        config,
+        pdf_first_page_to_image_base64_fn=lambda _p: {
+            "image_b64": "pngbase64",
+            "mime_type": "image/png",
+        },
+        pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "short",
+        pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        llm_client=client,
+    )
+
+    assert content == "Vision_fallback_result"
+    assert used_vision is True
+    client.complete_vision.assert_called_once()
+    args = client.complete_vision.call_args.args
+    kwargs = client.complete_vision.call_args.kwargs
+    assert args[0] == "pngbase64"
+    assert "Dateinamen" in args[1]
+    assert kwargs == {
+        "model": "test-model",
+        "image_mime_type": "image/png",
+        "timeout_s": 60.0,
+    }
 
 
 def test_extract_vision_first_does_not_retry_vision_fallback() -> None:

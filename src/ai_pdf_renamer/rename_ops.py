@@ -155,22 +155,13 @@ def apply_single_rename(
                         # Fallback to os.rename if link is not supported or cross-FS (EXDEV).
                         if isinstance(e, OSError) and e.errno == errno.EEXIST:
                             raise FileExistsError from e
-                        # P1: Use O_CREAT|O_EXCL to atomically check target doesn't exist
-                        _created_placeholder = False
-                        try:
-                            fd = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                            os.close(fd)
-                            _created_placeholder = True
-                        except FileExistsError:
+                        # os.link unsupported (e.g. EPERM on some filesystems).
+                        # os.rename is atomic and will overwrite on Unix, so guard with
+                        # an existence check first. A narrow TOCTOU window remains, but
+                        # the old O_CREAT/unlink/rename sequence had the same window and
+                        # created a visible placeholder file as a side-effect.
+                        if target.exists():
                             raise FileExistsError(f"Target already exists: {target}")
-                        except OSError:
-                            # O_EXCL not supported; best-effort exists check
-                            if target.exists():
-                                raise FileExistsError(f"Target already exists: {target}")
-                        # Remove placeholder before rename (os.rename will overwrite on Unix)
-                        if _created_placeholder:
-                            with contextlib.suppress(OSError):
-                                target.unlink()
                         os.rename(file_path, target)
                 else:
                     os.rename(file_path, target)
