@@ -348,6 +348,102 @@ def test_post_rename_hook_supports_http_endpoint(monkeypatch, tmp_path: Path) ->
     assert calls["trust_env_at_post"] is False
 
 
+def test_post_rename_hook_http_payload_sanitizes_control_chars(monkeypatch, tmp_path: Path) -> None:
+    import ai_pdf_renamer.renamer as renamer
+
+    calls: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.trust_env = True
+
+        def __enter__(self) -> FakeSession:
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url, json, timeout):
+            calls["payload"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(renamer.requests, "Session", FakeSession)
+
+    old_path = Path(str(tmp_path / "old.pdf") + "\n")
+    new_path = Path(str(tmp_path / "new.pdf") + "\t")
+    renamer._run_post_rename_hook("https://example.invalid/hook", old_path, new_path, {"x": 1})
+
+    payload = calls["payload"]
+    assert "\n" not in payload["old_path"]
+    assert "\t" not in payload["new_path"]
+
+
+def test_post_rename_hook_http_payload_coerces_non_json_meta(monkeypatch, tmp_path: Path) -> None:
+    import ai_pdf_renamer.renamer as renamer
+
+    calls: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.trust_env = True
+
+        def __enter__(self) -> FakeSession:
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url, json, timeout):
+            calls["payload"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(renamer.requests, "Session", FakeSession)
+
+    old_path = tmp_path / "old.pdf"
+    new_path = tmp_path / "new.pdf"
+    renamer._run_post_rename_hook("https://example.invalid/hook", old_path, new_path, {"x": Path("/tmp/value")})
+
+    payload = calls["payload"]
+    assert payload["meta"]["x"] == "/tmp/value"
+
+
+def test_post_rename_hook_respects_require_https_for_remote_http(monkeypatch, tmp_path: Path) -> None:
+    import ai_pdf_renamer.renamer as renamer
+
+    called = {"post_called": False}
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.trust_env = True
+
+        def __enter__(self) -> FakeSession:
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url, json, timeout):
+            called["post_called"] = True
+            raise AssertionError("post should not be called when HTTPS is required for remote hooks")
+
+    monkeypatch.setenv("AI_PDF_RENAMER_REQUIRE_HTTPS", "1")
+    monkeypatch.setattr(renamer.requests, "Session", FakeSession)
+
+    old_path = tmp_path / "old.pdf"
+    new_path = tmp_path / "new.pdf"
+    renamer._run_post_rename_hook("http://example.invalid/hook", old_path, new_path, {"x": 1})
+
+    assert called["post_called"] is False
+
+
 def test_doctor_checks_fail_on_invalid_llm_probe_response(monkeypatch, tmp_path: Path) -> None:
     import ai_pdf_renamer.cli as cli
 

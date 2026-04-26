@@ -46,3 +46,26 @@ def test_response_cache_file_key_is_stable_for_unchanged_file(tmp_path: Path) ->
     key_after = ResponseCache.build_file_key(pdf_path, prefix_bytes=64)
 
     assert key_before == key_after
+
+
+def test_response_cache_set_disk_failure_keeps_memory(monkeypatch, tmp_path: Path) -> None:
+    cache = ResponseCache(cache_dir=tmp_path / "cache")
+    cache_path = tmp_path / "cache" / "k.json"
+
+    def _raise_oserror(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_text", _raise_oserror)
+    cache.set("k", "v")
+
+    assert cache.get("k") == "v"
+    assert not cache_path.exists()
+
+
+def test_response_cache_corrupt_disk_entry_is_cleaned_up(tmp_path: Path) -> None:
+    cache = ResponseCache(cache_dir=tmp_path / "cache")
+    disk_path = tmp_path / "cache" / "bad-key.json"
+    disk_path.write_text("{not valid json", encoding="utf-8")
+
+    assert cache.get("bad-key") is None
+    assert not disk_path.exists()

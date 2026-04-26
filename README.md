@@ -250,3 +250,7 @@ See [SECURITY.md](SECURITY.md) for security policy and reporting.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Repository audits
+
+- [Repository Audit (2026-04-26)](docs/repo_deep_audit_2026_04_26.md)

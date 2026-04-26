@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 
@@ -103,6 +104,7 @@ def _write_pdf_title_metadata(pdf_path: Path, title: str) -> None:
 
 # C0 control chars (incl. NUL) must be stripped from env-var values passed to hook commands.
 _HOOK_ENV_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+_TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
 
 def _run_post_rename_hook(hook_cmd: str, old_path: Path, new_path: Path, meta: dict[str, object]) -> None:
@@ -115,8 +117,10 @@ def _run_post_rename_hook(hook_cmd: str, old_path: Path, new_path: Path, meta: d
     env = {**os.environ, "AI_PDF_RENAMER_OLD_PATH": _old, "AI_PDF_RENAMER_NEW_PATH": _new}
     try:
         meta_json = json.dumps(meta, default=str)
+        safe_meta = json.loads(meta_json)
     except (TypeError, ValueError):
         meta_json = "{}"
+        safe_meta = {}
     env["AI_PDF_RENAMER_META"] = meta_json
     cmd = (hook_cmd or "").strip()
     if not cmd:
@@ -124,18 +128,27 @@ def _run_post_rename_hook(hook_cmd: str, old_path: Path, new_path: Path, meta: d
     try:
         cmd_lower = cmd.lower()
         if cmd_lower.startswith("http://") or cmd_lower.startswith("https://"):
+            parsed = urlsplit(cmd)
+            hook_host = (parsed.hostname or "").lower()
+            is_loopback = hook_host in {"127.0.0.1", "::1", "localhost"}
+            require_https = (os.environ.get("AI_PDF_RENAMER_REQUIRE_HTTPS") or "").strip().lower() in _TRUTHY_VALUES
             if cmd_lower.startswith("http://"):
-                _host = cmd_lower[len("http://") :].split("/")[0].split(":")[0]
-                if _host not in {"127.0.0.1", "::1", "localhost"}:
+                if require_https and not is_loopback:
+                    logger.warning(
+                        "Blocking non-loopback HTTP post-rename hook due to AI_PDF_RENAMER_REQUIRE_HTTPS=1: %s",
+                        cmd,
+                    )
+                    return
+                if not is_loopback:
                     logger.warning(
                         "Post-rename hook uses plain HTTP with a non-loopback host (%s). "
                         "Document metadata will be transmitted unencrypted. Use HTTPS for remote endpoints.",
-                        _host,
+                        hook_host or "<unknown>",
                     )
             payload = {
-                "old_path": str(old_path),
-                "new_path": str(new_path),
-                "meta": meta,
+                "old_path": _old,
+                "new_path": _new,
+                "meta": safe_meta,
             }
             with requests.Session() as session:
                 session.trust_env = False
