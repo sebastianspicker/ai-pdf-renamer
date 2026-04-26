@@ -6,14 +6,19 @@ is set, entries are also persisted on disk as individual JSON files.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import logging
+import os
+import tempfile
 import threading
 from pathlib import Path
 
 _DEFAULT_PREFIX_BYTES = 65_536
 _shared_caches: dict[str, ResponseCache] = {}
 _shared_caches_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 def default_cache_dir() -> Path:
@@ -80,6 +85,9 @@ class ResponseCache:
         try:
             payload = json.loads(disk_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            # Corrupt/stale cache file: best effort cleanup to avoid repeated parse attempts.
+            with contextlib.suppress(OSError):
+                disk_path.unlink()
             return None
         value = payload.get("value")
         if not isinstance(value, str):
@@ -95,7 +103,18 @@ class ResponseCache:
         if disk_path is None:
             return
         payload = json.dumps({"value": value}, ensure_ascii=False)
-        disk_path.write_text(payload, encoding="utf-8")
+        tmp_path: Path | None = None
+        try:
+            fd, tmp_name = tempfile.mkstemp(prefix=f"{disk_path.stem}.", suffix=".tmp", dir=str(disk_path.parent))
+            os.close(fd)
+            tmp_path = Path(tmp_name)
+            tmp_path.write_text(payload, encoding="utf-8")
+            os.replace(tmp_path, disk_path)
+        except OSError as exc:
+            logger.warning("Could not persist response cache entry %s: %s", disk_path, exc)
+            if tmp_path is not None:
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink()
 
 
 def get_shared_response_cache(cache_dir: str | Path | None = None) -> ResponseCache:
