@@ -78,7 +78,7 @@ def test_category_aliases_path_ignores_directory_override(monkeypatch, tmp_path)
 
 
 def test_collect_files_override(tmp_path: Path) -> None:
-    """files_override list is returned as-is (no directory scan)."""
+    """files_override list uses explicit files without a directory scan."""
     # Create files in tmp_path but pass explicit override list
     real_pdf = tmp_path / "override.pdf"
     real_pdf.write_bytes(b"%PDF-1.4 dummy")
@@ -91,6 +91,22 @@ def test_collect_files_override(tmp_path: Path) -> None:
     )
     # Only the .pdf file survives the suffix filter
     assert result == [real_pdf]
+
+
+def test_collect_files_override_rejects_paths_outside_root(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    inside_pdf = root / "inside.pdf"
+    inside_pdf.write_bytes(b"%PDF")
+    outside_pdf = tmp_path / "outside.pdf"
+    outside_pdf.write_bytes(b"%PDF")
+
+    result = collect_pdf_files(
+        root,
+        files_override=[inside_pdf, outside_pdf],
+    )
+
+    assert result == [inside_pdf]
 
 
 def test_collect_skip_already_named(tmp_path: Path) -> None:

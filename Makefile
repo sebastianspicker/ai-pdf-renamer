@@ -1,6 +1,6 @@
 UV ?= uv
 
-.PHONY: install-dev lint format typecheck test cov clean hygiene-check release-check ci
+.PHONY: install-dev lint format typecheck test e2e cov clean hygiene-check release-check ci
 
 install-dev:
 	$(UV) sync --extra dev --extra pdf --extra tui
@@ -17,6 +17,9 @@ typecheck:
 
 test:
 	$(UV) run pytest -q
+
+e2e:
+	$(UV) run pytest -q tests/e2e
 
 cov:
 	$(UV) run pytest --cov=ai_pdf_renamer --cov-report=term-missing --cov-fail-under=85 -q

@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
+from contextlib import suppress
 from pathlib import Path
 
 _DEFAULT_PREFIX_BYTES = 65_536
+_OWNER_ONLY_DIR_MODE = 0o700
+_OWNER_ONLY_FILE_MODE = 0o600
 _shared_caches: dict[str, ResponseCache] = {}
 _shared_caches_lock = threading.Lock()
 
@@ -21,13 +25,30 @@ def default_cache_dir() -> Path:
     return Path.home() / ".cache" / "ai-pdf-renamer"
 
 
+def _set_owner_only_permissions(path: Path, mode: int) -> None:
+    """Best-effort chmod for local document-derived cache data."""
+    with suppress(OSError, NotImplementedError):
+        path.chmod(mode)
+
+
+def _write_private_text(path: Path, text: str) -> None:
+    if os.name == "posix":
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _OWNER_ONLY_FILE_MODE)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    else:
+        path.write_text(text, encoding="utf-8")
+    _set_owner_only_permissions(path, _OWNER_ONLY_FILE_MODE)
+
+
 class ResponseCache:
     """Cache string responses in memory and optionally on disk."""
 
     def __init__(self, cache_dir: str | Path | None = None) -> None:
         self.cache_dir = Path(cache_dir).expanduser() if cache_dir else None
         if self.cache_dir is not None:
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            self.cache_dir.mkdir(parents=True, mode=_OWNER_ONLY_DIR_MODE, exist_ok=True)
+            _set_owner_only_permissions(self.cache_dir, _OWNER_ONLY_DIR_MODE)
         self._memory: dict[str, str] = {}
         self._lock = threading.Lock()
 
@@ -95,7 +116,7 @@ class ResponseCache:
         if disk_path is None:
             return
         payload = json.dumps({"value": value}, ensure_ascii=False)
-        disk_path.write_text(payload, encoding="utf-8")
+        _write_private_text(disk_path, payload)
 
 
 def get_shared_response_cache(cache_dir: str | Path | None = None) -> ResponseCache:

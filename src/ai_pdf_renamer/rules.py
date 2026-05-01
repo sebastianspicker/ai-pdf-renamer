@@ -82,7 +82,7 @@ def force_category_for_basename(rules: ProcessingRules | None, basename: str) ->
     """If rules have force_category_by_pattern and basename matches the first matching pattern, return that category."""
     if not rules or not rules.force_category_by_pattern:
         return None
-    # P2: Use case-insensitive matching with lowered inputs
+    # Rule globs are operator-authored, so match basename casing leniently.
     basename_lower = basename.lower()
     for entry in rules.force_category_by_pattern:
         pattern = entry.get("pattern") or ""
@@ -96,6 +96,6 @@ def should_skip_file_by_rules(rules: ProcessingRules | None, basename: str) -> b
     """True if rules have skip_files_by_pattern and basename matches any pattern."""
     if not rules or not rules.skip_files_by_pattern:
         return False
-    # P2: Use case-insensitive matching with lowered inputs
+    # Rule globs are operator-authored, so match basename casing leniently.
     basename_lower = basename.lower()
     return any(fnmatch.fnmatchcase(basename_lower, p.lower()) for p in rules.skip_files_by_pattern)

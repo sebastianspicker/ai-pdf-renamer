@@ -12,7 +12,7 @@ from .rules import ProcessingRules, should_skip_file_by_rules
 
 def matches_patterns(name: str, include: list[str] | None, exclude: list[str] | None) -> bool:
     """True if basename matches include (if set) and does not match any exclude."""
-    # P2: Use case-insensitive matching with lowered inputs
+    # Operators write file globs by eye; matching should not depend on PDF name casing.
     name_lower = name.lower()
     if include is not None and include and not any(fnmatch.fnmatchcase(name_lower, p.lower()) for p in include):
         return False
@@ -39,13 +39,15 @@ def collect_pdf_files(
 ) -> list[Path]:
     """Collect PDFs from directory (or files_override). Rules skip_files_by_pattern filters out matches."""
     if files_override is not None:
-        candidates = [p for p in files_override if p.is_file() and p.suffix.lower() == ".pdf"]
+        candidates = [
+            p for p in files_override if p.is_file() and p.suffix.lower() == ".pdf" and is_path_within(p, directory)
+        ]
     elif recursive:
         candidates = []
         for p in directory.rglob("*"):
             if not p.is_file() or p.suffix.lower() != ".pdf" or p.name.startswith("."):
                 continue
-            # P2: Skip symlinks pointing outside the directory tree
+            # A recursive scan must not follow symlinked PDFs outside the selected root.
             if not _is_safe_path(p, directory):
                 continue
             if max_depth > 0:

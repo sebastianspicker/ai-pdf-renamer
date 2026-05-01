@@ -67,6 +67,15 @@ def test_help_text_documents_runtime_llm_and_log_defaults() -> None:
     assert "~/.local/share/ai-pdf-renamer/error.log" in help_text
 
 
+def test_help_text_warns_explain_logs_document_derived_sensitive_output() -> None:
+    from ai_pdf_renamer.cli_parser import build_parser
+
+    help_text = build_parser().format_help()
+    assert "--explain" in help_text
+    assert "document-derived" in help_text
+    assert "sensitive" in help_text
+
+
 def test_validate_config_mode_exits_before_processing(monkeypatch, tmp_path: Path) -> None:
     import ai_pdf_renamer.cli as cli
 

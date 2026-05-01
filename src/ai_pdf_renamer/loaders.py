@@ -39,7 +39,7 @@ def _file_mtime(path_str: str) -> float:
         return 0.0
 
 
-# P2: Include mtime in cache key so cache is invalidated when file changes (watch mode)
+# Include mtime in the cache key so local data-file edits are visible to watch mode.
 @lru_cache(maxsize=32)
 def _stopwords_cached(path_str: str, _mtime: float = 0.0) -> Stopwords:
     return load_meta_stopwords(Path(path_str))

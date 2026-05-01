@@ -31,6 +31,7 @@ __pypackages__/
 .coverage
 .coverage.*
 coverage.xml
+coverage/
 htmlcov/
 .tox/
 test-results/
@@ -62,6 +63,8 @@ logs/
 *.dmp
 tmp/
 temp/
+reports/
+scratch/
 
 # Python version managers (untrack with: git rm --cached .python-version)
 # .python-version is currently tracked to pin the dev Python version for pyenv/mise users.

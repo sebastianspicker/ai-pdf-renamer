@@ -80,7 +80,8 @@ def validate_llm_document_result(parsed: dict[str, object]) -> DocumentAnalysisR
         try:
             jsonschema.validate(instance=parsed, schema=schema)
         except jsonschema.ValidationError as e:
-            # P3: Log at info level so schema mismatches are visible
+            # Schema mismatches are recoverable because callers still apply
+            # local normalization/defaults, but they are useful diagnostics.
             logger.info("LLM response did not match schema: %s", getattr(e, "message", str(e)))
 
     summary = parsed.get("summary")

@@ -541,6 +541,45 @@ def test_apply_single_rename_link_eperm_target_exists_collision(
     assert target.read_text(encoding="utf-8") == "content"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Unix-only branch")
+def test_apply_single_rename_link_fallback_reserves_target_before_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hard-link fallback reserves the target before Unix rename can overwrite."""
+    src = tmp_path / "doc.pdf"
+    src.write_text("content", encoding="utf-8")
+
+    original_rename = os.rename
+    saw_reserved_target = False
+
+    def _link_eperm(s: object, d: object) -> None:
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    def _rename_observes_placeholder(s: object, d: object) -> None:
+        nonlocal saw_reserved_target
+        saw_reserved_target = Path(str(d)).exists()
+        original_rename(s, d)
+
+    monkeypatch.setattr(os, "link", _link_eperm)
+    monkeypatch.setattr(os, "rename", _rename_observes_placeholder)
+
+    ok, target = apply_single_rename(
+        src,
+        "result",
+        plan_file_path=None,
+        plan_entries=[],
+        dry_run=False,
+        backup_dir=None,
+        on_success=None,
+        max_filename_chars=None,
+    )
+
+    assert ok is True
+    assert saw_reserved_target is True
+    assert target.name == "result.pdf"
+    assert target.read_text(encoding="utf-8") == "content"
+
+
 # ---------------------------------------------------------------------------
 # apply_single_rename — max_filename_chars truncation during collision
 # ---------------------------------------------------------------------------

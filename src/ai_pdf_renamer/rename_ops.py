@@ -156,13 +156,19 @@ def apply_single_rename(
                         if isinstance(e, OSError) and e.errno == errno.EEXIST:
                             raise FileExistsError from e
                         # os.link unsupported (e.g. EPERM on some filesystems).
-                        # os.rename is atomic and will overwrite on Unix, so guard with
-                        # an existence check first. A narrow TOCTOU window remains, but
-                        # the old O_CREAT/unlink/rename sequence had the same window and
-                        # created a visible placeholder file as a side-effect.
-                        if target.exists():
-                            raise FileExistsError(f"Target already exists: {target}")
-                        os.rename(file_path, target)
+                        # Reserve the target with O_EXCL before using Unix rename,
+                        # which otherwise overwrites existing targets.
+                        try:
+                            fd = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                            os.close(fd)
+                        except FileExistsError:
+                            raise FileExistsError(f"Target already exists: {target}") from e
+                        try:
+                            os.rename(file_path, target)
+                        except OSError:
+                            with contextlib.suppress(OSError):
+                                target.unlink()
+                            raise
                 else:
                     os.rename(file_path, target)
 

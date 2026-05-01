@@ -65,7 +65,7 @@ def run_undo(log_path: Path, dry_run: bool) -> None:
             print(f"Would revert: {new_p} -> {old_p}")
             continue
         try:
-            # P2: Use shutil.move instead of Path.rename to handle cross-filesystem
+            # Rename logs may point across mount points; shutil.move handles that case.
             shutil.move(str(new_p), str(old_p))
             print(f"Reverted: {new_p} -> {old_p}")
         except OSError as e:

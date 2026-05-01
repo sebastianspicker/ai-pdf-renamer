@@ -1,3 +1,5 @@
+"""Deterministic category scoring and heuristic/LLM category reconciliation."""
+
 from __future__ import annotations
 
 import json
@@ -392,8 +394,7 @@ def normalize_llm_category(cat_llm: str | None, *, _aliases: dict[str, str] | No
     """Map LLM category to heuristic vocabulary to reduce false conflicts."""
     if not cat_llm or not isinstance(cat_llm, str):
         return ""
-    # P2: Preserve slashes (split on them) and meaningful punctuation
-    # Replace slashes with underscores to preserve hierarchical categories
+    # Preserve hierarchy markers as token separators instead of deleting them.
     cleaned = cat_llm.replace("/", "_")
     key = re.sub(r"[^\w\s-]", "", cleaned).strip().lower().replace(" ", "_")
     if not key or key in {"document", "unknown", "na"}:
@@ -512,7 +513,7 @@ def _combine_agreement_or_parent(
     heur_parent = category_parent_map.get(cat_heuristic)
     llm_parent = category_parent_map.get(cat_llm_norm)
     if heur_parent == cat_llm_norm:
-        # P2: Heuristic is more specific (has cat_llm_norm as parent), return heuristic
+        # Prefer the more specific child category when one side names the parent.
         logger.info(
             "LLM %s and heuristic %s agree (parent match). Using more specific: heuristic.",
             cat_llm_norm,
@@ -520,7 +521,7 @@ def _combine_agreement_or_parent(
         )
         return cat_heuristic
     if llm_parent == cat_heuristic:
-        # P2: LLM is more specific (has cat_heuristic as parent), return LLM
+        # Prefer the more specific child category when one side names the parent.
         logger.info(
             "LLM %s and heuristic %s agree (parent match). Using more specific: LLM.",
             cat_llm_norm,
@@ -678,7 +679,8 @@ def combine_categories(
         valid = cat_llm_norm not in {"document", "unknown", "na", ""}
         return cat_llm_norm if valid else cat_heur
     if heuristic_score is not None and heuristic_score < params.min_heuristic_score:
-        # P1: Only prefer LLM category if it is actually valid
+        # Low heuristic confidence can hand control to the LLM, but not to
+        # placeholder categories such as "document" or "unknown".
         llm_valid = cat_llm_norm not in {"document", "unknown", "na", ""}
         if llm_valid:
             logger.info(

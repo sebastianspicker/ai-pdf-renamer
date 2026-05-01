@@ -91,7 +91,8 @@ def _extract_json_from_response(response: str) -> str:
                     break
                 i += 1
         elif text[i] == "'":
-            # P2: Skip single-quoted string content (non-standard JSON but common in LLM output)
+            # LLMs often emit single-quoted pseudo-JSON; skip over it while
+            # searching for balanced real JSON braces.
             i += 1
             while i < len(text):
                 if text[i] == "\\" and i + 1 < len(text):
@@ -110,9 +111,8 @@ def _sanitize_json_string_value(response: str, *, key: str) -> str:
     Attempts to escape unescaped quotes inside a JSON string value for `key`.
     This is a best-effort fix for common LLM formatting issues.
     """
-    # P2: Use greedy match with proper boundary detection for values with embedded quotes.
-    # The non-greedy (.*?) pattern truncates values at the first embedded quote.
-    # Instead, match from the key's opening quote to the last quote before a closing brace or comma.
+    # Match from the key's opening quote to the last quote before a closing
+    # delimiter so embedded quotes inside the value can be escaped.
     pattern = r'("' + re.escape(key) + r'":\s*")(.*?)("\s*[,}\]])'
 
     def replacer(match: re.Match[str]) -> str:

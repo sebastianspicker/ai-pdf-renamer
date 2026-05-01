@@ -1,3 +1,5 @@
+"""Text normalization helpers for dates, tokens, filenames, and template fields."""
+
 from __future__ import annotations
 
 import re
@@ -512,7 +514,7 @@ def clean_token(text: str) -> str:
         .replace("ö", "oe")
         .replace("ü", "ue")
         .replace("ß", "ss")
-        .replace("ẞ", "SS")  # P3: Uppercase Eszett (U+1E9E)
+        .replace("ẞ", "SS")
     )
     text = re.sub(r'[\\/:*?"<>|]', "", text)
     text = re.sub(r"\s+", "_", text)
@@ -589,13 +591,13 @@ _AMOUNT_PATTERNS = [
         r"([\d.,]+)\s*(?:€|EUR|eur)?\b",
         re.IGNORECASE,
     ),
-    # P2: Removed \s from character class to prevent overly broad matching
+    # Require the currency symbol to stay near the numeric amount.
     re.compile(r"\b([\d.,]{3,})\s*€\b"),
     re.compile(r"\b(?:EUR|eur)\s*([\d.,]+)\b"),
 ]
 # Company: same line after label or next non-empty line (simplified: first line after "Rechnung von" etc.)
 _COMPANY_PATTERNS = [
-    # P2: Limit capture group to prevent greedy matching to end of line
+    # Keep label-based company captures on the same short line.
     re.compile(
         r"\b(?:rechnung\s*von|von\s*[:.]|an\s*[:.]|from\s*[:.]|seller\s*[:.]|lieferant\s*[:.])\s*([^\n\r]{2,50}?)(?:\n|$)",
         re.IGNORECASE,

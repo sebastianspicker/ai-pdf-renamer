@@ -87,8 +87,8 @@ def _env_truthy(env_key: str) -> bool:
 def _chat_url_from_completions_url(completions_url: str) -> str:
     """Derive /v1/chat/completions URL from /v1/completions URL."""
     base = (completions_url or "").strip().rstrip("/")
-    # P2: Use endswith and suffix replacement instead of str.replace to avoid
-    # replacing /v1/completions if it appears in the hostname or path prefix
+    # Rewrite only the terminal API suffix; the same text can legitimately
+    # appear earlier in a proxy path or hostname.
     if base.endswith("/v1/completions"):
         return base[: -len("/v1/completions")] + "/v1/chat/completions"
     if base.endswith("/v1/chat/completions"):
@@ -224,10 +224,9 @@ class HttpLLMBackend:
             return ""
         except requests.HTTPError as exc:
             logger.warning(
-                "LLM HTTP error: %s (status=%s, body=%s)",
+                "LLM HTTP error: %s (status=%s; response body redacted)",
                 exc,
                 getattr(exc.response, "status_code", None),
-                (getattr(exc.response, "text", None) or "")[:500],
             )
             return ""
         except requests.RequestException as exc:

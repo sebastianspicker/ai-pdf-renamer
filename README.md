@@ -1,5 +1,7 @@
 # AI-PDF-Renamer
 
+[![CI](https://github.com/sebastianspicker/AI-PDF-Renamer/actions/workflows/ci.yml/badge.svg)](https://github.com/sebastianspicker/AI-PDF-Renamer/actions/workflows/ci.yml)
+
 Local-first tool to rename PDF files by content.
 
 It extracts text, applies heuristic category scoring with optional local-LLM enrichment, and produces deterministic names like:
@@ -169,6 +171,9 @@ Precedence is:
 3. Config file values (`--config` JSON/YAML)
 4. Built-in defaults
 
+CLI options with parser defaults are treated as unset when the user omitted the flag, so a config file can still set
+values such as `dry_run`, `workers`, or `use_llm`. Explicit CLI values always win.
+
 Important defaults:
 
 - LLM URL: `http://127.0.0.1:11434/v1/completions` (Ollama, via preset; code default without preset is `http://127.0.0.1:8080/v1/completions`)
@@ -233,6 +238,35 @@ No signature-breaking changes within the current major version.
 - Run only one instance at a time per target directory.
 
 See [SECURITY.md](SECURITY.md) for security policy and reporting.
+
+## Development
+
+Install the contributor environment:
+
+```bash
+uv sync --extra dev --extra pdf --extra tui
+```
+
+Run the same local gate used before release handoff:
+
+```bash
+make release-check
+```
+
+Run the process-level CLI end-to-end tests:
+
+```bash
+make e2e
+```
+
+The E2E suite creates temporary PDFs, runs the real CLI entry points with `--no-llm`, and does not require external
+services or secrets.
+
+Smoke-test the CLI without processing files:
+
+```bash
+uv run ai-pdf-renamer --validate-config --dir . --no-llm --dry-run
+```
 
 ## Troubleshooting
 
