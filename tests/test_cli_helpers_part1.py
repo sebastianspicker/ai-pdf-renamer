@@ -567,10 +567,9 @@ class TestRunDoctorChecks:
         monkeypatch.setattr(
             cli_module,
             "_probe_llm_endpoint",
-            lambda url, model, *, label, fail_is_warn=False, use_chat_api=True: captured_calls.append(
-                (url, label, fail_is_warn)
-            )
-            or True,
+            lambda url, model, *, label, fail_is_warn=False, use_chat_api=True: (
+                captured_calls.append((url, label, fail_is_warn)) or True
+            ),
         )
 
         result = run_doctor_checks(self._make_args(use_llm=True))
