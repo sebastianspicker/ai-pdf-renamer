@@ -51,9 +51,13 @@ def _run_cli(
 
 
 def _write_pdf(path: Path, text: str) -> None:
+    fitz = None
     try:
         import fitz
     except ImportError:
+        pytest.skip("PyMuPDF is required for CLI E2E tests; install with the [pdf] extra.")
+
+    if fitz is None:
         pytest.skip("PyMuPDF is required for CLI E2E tests; install with the [pdf] extra.")
 
     doc = fitz.open()
