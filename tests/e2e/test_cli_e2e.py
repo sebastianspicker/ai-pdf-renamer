@@ -30,6 +30,7 @@ def _entrypoint(name: str) -> list[str]:
     if name == "ai-pdf-renamer-undo":
         return [sys.executable, "-c", "from ai_pdf_renamer.undo_cli import main; main()"]
     pytest.fail(f"Missing CLI entry point: {name}")
+    raise AssertionError(f"Unreachable: missing CLI entry point: {name}")
 
 
 def _run_cli(
