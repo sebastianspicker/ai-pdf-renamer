@@ -161,8 +161,8 @@ def apply_single_rename(
                         try:
                             fd = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                             os.close(fd)
-                        except FileExistsError:
-                            raise FileExistsError(f"Target already exists: {target}") from e
+                        except FileExistsError as open_exc:
+                            raise FileExistsError(f"Target already exists: {target}") from open_exc
                         try:
                             os.rename(file_path, target)
                         except OSError:
