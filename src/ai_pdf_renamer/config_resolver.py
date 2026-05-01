@@ -1,7 +1,7 @@
-"""Shared config normalization for CLI and GUI.
+"""Shared config normalization for CLI and TUI.
 
-This module centralizes preset/default/env-driven normalization so CLI and GUI
-produce consistent RenamerConfig values.
+This module centralizes preset, config-file, environment, and built-in defaults
+so every entry point produces consistent RenamerConfig values.
 """
 
 from __future__ import annotations
@@ -130,8 +130,10 @@ def _normalize_str_or_none(value: Any) -> str | None:
 def _resolve_precedence(*values: Any) -> Any:
     """Return the first value that is explicitly set.
 
-    Precedence is caller-defined, but build_config uses:
-    CLI/raw input > environment > config file > hardcoded defaults.
+    Precedence is caller-defined. build_config uses raw input, then environment,
+    then config-file defaults, then hardcoded/preset defaults. The CLI prepares
+    its raw input by replacing omitted argparse defaults with matching config
+    file values before calling this resolver.
     """
     for value in values:
         if value not in (None, ""):

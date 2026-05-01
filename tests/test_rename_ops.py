@@ -541,6 +541,83 @@ def test_apply_single_rename_link_eperm_target_exists_collision(
     assert target.read_text(encoding="utf-8") == "content"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Unix-only branch")
+def test_apply_single_rename_link_fallback_reserves_target_before_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hard-link fallback reserves the target before Unix rename can overwrite."""
+    src = tmp_path / "doc.pdf"
+    src.write_text("content", encoding="utf-8")
+
+    original_rename = os.rename
+    saw_reserved_target = False
+
+    def _link_eperm(s: object, d: object) -> None:
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    def _rename_observes_placeholder(s: object, d: object) -> None:
+        nonlocal saw_reserved_target
+        saw_reserved_target = Path(str(d)).exists()
+        original_rename(s, d)
+
+    monkeypatch.setattr(os, "link", _link_eperm)
+    monkeypatch.setattr(os, "rename", _rename_observes_placeholder)
+
+    ok, target = apply_single_rename(
+        src,
+        "result",
+        plan_file_path=None,
+        plan_entries=[],
+        dry_run=False,
+        backup_dir=None,
+        on_success=None,
+        max_filename_chars=None,
+    )
+
+    assert ok is True
+    assert saw_reserved_target is True
+    assert target.name == "result.pdf"
+    assert target.read_text(encoding="utf-8") == "content"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Unix-only branch")
+def test_apply_single_rename_link_fallback_propagates_reservation_permission_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Permission failures while reserving the target must not be treated as collisions."""
+    src = tmp_path / "doc.pdf"
+    src.write_text("content", encoding="utf-8")
+
+    def _link_eperm(s: object, d: object) -> None:
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    def _open_eacces(path: object, flags: int, mode: int = 0o777) -> int:
+        raise PermissionError(errno.EACCES, "Permission denied", str(path))
+
+    def _rename_should_not_run(s: object, d: object) -> None:
+        raise AssertionError("rename should not run after reservation permission failure")
+
+    monkeypatch.setattr(os, "link", _link_eperm)
+    monkeypatch.setattr(os, "open", _open_eacces)
+    monkeypatch.setattr(os, "rename", _rename_should_not_run)
+
+    with pytest.raises(PermissionError):
+        apply_single_rename(
+            src,
+            "result",
+            plan_file_path=None,
+            plan_entries=[],
+            dry_run=False,
+            backup_dir=None,
+            on_success=None,
+            max_filename_chars=None,
+        )
+
+    assert src.exists()
+    assert not (tmp_path / "result.pdf").exists()
+    assert not (tmp_path / "result_1.pdf").exists()
+
+
 # ---------------------------------------------------------------------------
 # apply_single_rename — max_filename_chars truncation during collision
 # ---------------------------------------------------------------------------

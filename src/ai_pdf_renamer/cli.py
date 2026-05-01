@@ -1,3 +1,9 @@
+"""Command-line entry point, diagnostics, and dispatch for ai-pdf-renamer.
+
+The CLI owns user input and operator-facing errors. Shared normalization lives in
+config_resolver so CLI and TUI runs produce the same RenamerConfig shape.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -218,7 +224,8 @@ def _probe_llm_endpoint(
 ) -> bool:
     """Probe an LLM completions endpoint. Returns True if reachable."""
     con = Console()
-    # P2: Use the correct API path based on the chat API setting
+    # Probe the same API family the run will use so --doctor does not fail
+    # against servers that expose only chat completions or only text completions.
     if use_chat_api:
         from .llm_backend import _chat_url_from_completions_url
 
@@ -324,7 +331,8 @@ def run_doctor_checks(args: argparse.Namespace) -> int:
     if use_llm:
         from .llm_backend import create_llm_client_from_config
 
-        # P2: Use build_config for consistent normalization instead of raw RenamerConfig
+        # Use the shared resolver here so --doctor sees the same preset/env defaults
+        # as a real rename run.
         probe_raw = vars(args).copy()
         probe_raw["use_llm"] = True
         try:
@@ -374,7 +382,8 @@ def run_doctor_checks(args: argparse.Namespace) -> int:
 
 def _resolve_dirs(args: argparse.Namespace) -> tuple[list[str], str | None]:
     """Resolve directory list and optional single-file path from args. Raises SystemExit on error."""
-    # P2: Check mutual exclusion of --file and --manual
+    # Manual mode is an interactive single-file flow; allowing --file as well
+    # would make it ambiguous which single-file contract should own prompts.
     has_file = bool(getattr(args, "single_file", None))
     has_manual = bool(getattr(args, "manual_file", None))
     if has_file and has_manual:

@@ -6,11 +6,21 @@ The built-in LLM client sends requests only to the URL you configure. In the mai
 
 **If you use a custom HTTP client or run scripts that might inherit proxy settings:** set `NO_PROXY=127.0.0.1,localhost` (or `no_proxy` on some systems) so that requests to the local LLM endpoint are never sent via a proxy. Otherwise prompt content could leave your machine.
 
+LLM HTTP error logs intentionally record status and error context without response bodies. Some OpenAI-compatible servers echo request prompts in error responses, so logging response bodies can persist PDF-derived text in local log files.
+
 The in-process backend (`--llm-backend in-process`) loads a GGUF model directly into the process using `llama-cpp-python` and makes no network requests at all.
 
 **If you configure a non-loopback LLM endpoint** (anything other than `127.0.0.1`, `::1`, or `localhost`), use HTTPS (`https://`) to protect PDF content in transit. Plain HTTP to a remote host will transmit document text unencrypted; the tool logs a WARNING in this case but does not block the request.
 
 **If you configure a non-loopback post-rename hook URL**, the same applies: use HTTPS to protect the metadata payload (old path, new path, category, summary) in transit.
+
+## Logs and local caches
+
+Treat log files, persistent LLM cache files, metadata exports, summary JSON, and rename logs as document-adjacent data. They can include filenames, categories, summaries, keywords, paths, or model responses derived from private PDFs.
+
+Persistent LLM cache values remain plaintext local JSON. The tool creates cache directories and files with owner-only permissions where the platform supports POSIX-style permissions, but backups, sync tools, or a custom cache location can still copy the data elsewhere.
+
+Use `--no-cache` for sensitive one-off runs, or keep `--cache-dir` on a private local filesystem. Avoid `--explain` on sensitive documents unless you intend to keep detailed classification reasoning, including document-derived summaries or keywords, in the configured log sink.
 
 ## Post-rename hook
 
@@ -20,7 +30,7 @@ The optional post-rename hook (`AI_PDF_RENAMER_POST_RENAME_HOOK` or config) runs
 - `AI_PDF_RENAMER_NEW_PATH`
 - `AI_PDF_RENAMER_META`
 
-If shell metacharacters are detected in the configured command string, the tool explicitly invokes your local shell executable as a subprocess argument (`/bin/sh -lc ...` on Unix, `cmd.exe /c ...` on Windows), still using `shell=False` for process creation.
+If shell metacharacters are detected in the configured command string, the tool explicitly invokes your local shell executable as a subprocess argument (`/bin/sh -c ...` on Unix, `cmd.exe /c ...` on Windows), still using `shell=False` for process creation.
 
 **Do not** embed PDF content, filenames, or other untrusted input into the hook command string itself (in config or env). Use the provided environment variables inside your script when you need paths or metadata. Keep hook configuration under your control; if config/env is attacker-controlled, arbitrary command execution is possible.
 

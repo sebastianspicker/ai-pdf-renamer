@@ -30,6 +30,14 @@ Run `make typecheck` alone to run `mypy` in isolation. Fix any reported issues l
 
 ## Architecture overview
 
+Suggested first code pass for a new maintainer:
+
+1. `README.md` for user-facing behavior and operational defaults.
+2. `pyproject.toml`, `Makefile`, and `.github/workflows/ci.yml` for packaging and verification.
+3. `src/ai_pdf_renamer/cli.py` and `src/ai_pdf_renamer/config_resolver.py` for runtime input normalization.
+4. `src/ai_pdf_renamer/renamer.py`, `src/ai_pdf_renamer/filename.py`, and `src/ai_pdf_renamer/rename_ops.py` for the main side-effect path.
+5. `tests/test_repo_contracts.py` for documentation contracts that must stay aligned with behavior.
+
 Key source modules under `src/ai_pdf_renamer/`:
 
 | Module | Purpose |

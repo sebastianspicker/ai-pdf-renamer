@@ -1,7 +1,8 @@
-"""
-Filename generation pipeline: date, category, keywords, summary, template, truncation.
+"""Filename generation pipeline: date, category, keywords, summary, template, truncation.
 
-Uses config, heuristics, LLM, text_utils, rules, loaders; re-export generate_filename from renamer.
+This module keeps naming deterministic around optional LLM enrichment: heuristics
+provide a valid baseline, LLM output is normalized/validated, and the final
+string is sanitized before any filesystem operation sees it.
 """
 
 from __future__ import annotations
@@ -599,7 +600,8 @@ def _apply_filename_template(
         return filename
     if filename.lower().endswith(".pdf"):
         filename = filename[:-4]
-    # P1: Always call sanitize_filename_base, even when filename is empty
+    # Template output still goes through the same sanitizer as generated names,
+    # including empty output, so fallback handling stays centralized.
     return sanitize_filename_base(filename)
 
 
@@ -607,8 +609,9 @@ def _truncate_filename_to_max_chars(filename: str, config: RenamerConfig) -> str
     """Truncate filename to config.max_filename_chars (at separator if possible)."""
     if not config.max_filename_chars or config.max_filename_chars <= 0 or len(filename) <= config.max_filename_chars:
         return filename
-    # P2: Ensure minimum length floor to avoid near-empty filenames
-    _MIN_FILENAME_LENGTH = 8  # At least YYYYMMDD
+    # Preserve at least a date-sized prefix; shorter truncation limits make
+    # filenames hard to audit and can collapse many documents to the same stem.
+    _MIN_FILENAME_LENGTH = 8
     effective_max = max(config.max_filename_chars, _MIN_FILENAME_LENGTH)
     sep = _filename_sep(config)
     while len(filename) > effective_max and sep in filename:

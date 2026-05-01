@@ -1,3 +1,10 @@
+"""Batch rename orchestration and side-effect boundary.
+
+This module coordinates discovery, extraction, filename generation, output
+artifacts, optional hooks, and watch mode. Pure naming decisions live in
+filename.py; filesystem mutation is delegated to rename_ops.py.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -81,7 +88,7 @@ def _write_pdf_title_metadata(pdf_path: Path, title: str) -> None:
             try:
                 doc.save(str(tmp), incremental=False, encryption=fitz.PDF_ENCRYPT_KEEP)
             except TypeError:
-                # P2: PDF_ENCRYPT_KEEP may not exist in old PyMuPDF
+                # Older PyMuPDF builds do not expose PDF_ENCRYPT_KEEP.
                 doc.save(str(tmp), incremental=False)
             except Exception:
                 with contextlib.suppress(OSError):
@@ -89,7 +96,7 @@ def _write_pdf_title_metadata(pdf_path: Path, title: str) -> None:
                 raise
         finally:
             doc.close()
-        # P1: Verify tmp file is valid (non-zero size) before replacing original
+        # Do not replace a valid PDF with an empty temp file after a partial write.
         tmp_size = tmp.stat().st_size
         if tmp_size == 0:
             with contextlib.suppress(OSError):
@@ -152,7 +159,7 @@ def _run_post_rename_hook(hook_cmd: str, old_path: Path, new_path: Path, meta: d
                 args = [shell_exe, "/c", cmd]
             else:
                 shell_exe = os.environ.get("SHELL", "/bin/sh")
-                # P2: Use -c instead of -lc to avoid login shell behavior
+                # Avoid login-shell startup files; hooks should run only the operator-provided command.
                 args = [shell_exe, "-c", cmd]
         else:
             args = shlex.split(cmd, posix=(os.name != "nt"))
@@ -381,7 +388,8 @@ def _produce_rename_results(
                     try:
                         result = future.result()
                     except BaseException as exc:
-                        # P2: Catch BaseException to handle KeyboardInterrupt properly
+                        # Future.result() can surface KeyboardInterrupt/SystemExit from workers;
+                        # treat them as stop signals, not per-file failures.
                         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                             stop_early = True
                             break
@@ -600,8 +608,8 @@ def rename_pdfs_in_directory(
         processed_count += 1
         logger.info("Processing %s/%s: %s", i + 1, len(files), file_path)
         if exc is not None:
-            # Data-file/config errors (e.g. invalid JSON) should propagate so CLI can exit with clear message.
-            # P2: Use exception type checking where possible, with string check as fallback
+            # Data-file/config errors should propagate so the CLI can exit with a clear message.
+            # Some legacy helpers still wrap JSON failures as ValueError with a stable message.
             if isinstance(exc, (json.JSONDecodeError,)):
                 raise exc
             if isinstance(exc, ValueError) and "Invalid JSON in data file" in str(exc):
@@ -724,7 +732,8 @@ def run_watch_loop(
         logger.info("Watch mode: received signal %s, stopping...", sig)
         stop_requested = True
 
-    # P2: Only set signal handlers from the main thread (signal.signal raises ValueError otherwise)
+    # signal.signal() is only legal on the main thread; embedded/TUI callers may
+    # run watch mode from a worker thread.
     import threading as _threading
 
     _is_main_thread = _threading.current_thread() is _threading.main_thread()
@@ -735,7 +744,7 @@ def run_watch_loop(
         original_sigint = signal.signal(signal.SIGINT, handle_stop)
 
     seen: dict[Path, float] = {}
-    # P1: Track renamed target paths to prevent reprocessing
+    # Track successful rename targets so watch mode does not process its own outputs.
     renamed_targets: set[Path] = set()
     logger.info("Watch mode: scanning %s every %.1fs (Ctrl+C or SIGTERM to stop)", path, interval_seconds)
     try:
@@ -761,7 +770,7 @@ def run_watch_loop(
                 )
                 to_process: list[Path] = []
                 for p in files:
-                    # P1: Skip files that are known rename targets
+                    # Skip files that were just created by this watcher.
                     if p in renamed_targets:
                         continue
                     try:
@@ -794,7 +803,7 @@ def run_watch_loop(
                     logger.exception("Watch iteration failed: %s", exc)
                     time.sleep(interval_seconds)
     finally:
-        # Restore original handlers (P2: only if we set them)
+        # Restore only the signal handlers this invocation installed.
         if _is_main_thread and original_sigterm is not None:
             signal.signal(signal.SIGTERM, original_sigterm)
         if _is_main_thread and original_sigint is not None:

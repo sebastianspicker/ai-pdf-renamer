@@ -216,7 +216,8 @@ def get_document_summary(
     if len(text) < 50:
         return "na"
 
-    # P1: Compare original text length before truncation to decide chunking
+    # Chunking depends on the original document size, not the truncated prompt
+    # size, otherwise large documents would be misclassified as single-prompt.
     original_text_length = len(text)
     effective_max = max_chars_single
     if max_content_chars is not None:

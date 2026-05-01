@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -129,6 +130,27 @@ def test_http_backend_complete_bad_json():
     with patch.object(backend._session, "post", return_value=resp):
         result = backend.complete("test prompt")
     assert result == ""
+
+
+def test_http_backend_http_error_does_not_log_response_body(caplog: pytest.LogCaptureFixture) -> None:
+    import requests
+
+    backend = HttpLLMBackend()
+    sentinel = "PDF_SECRET_SENTINEL_SHOULD_NOT_REACH_LOGS"
+    response = MagicMock()
+    response.status_code = 500
+    response.text = f"server echoed prompt fragment: {sentinel}"
+    response.raise_for_status.side_effect = requests.HTTPError("500 Server Error", response=response)
+
+    with (
+        patch.object(backend._session, "post", return_value=response),
+        caplog.at_level(logging.WARNING, logger="ai_pdf_renamer.llm_backend"),
+    ):
+        result = backend.complete(f"Summarize this PDF text: {sentinel}")
+
+    assert result == ""
+    assert "status=500" in caplog.text
+    assert sentinel not in caplog.text
 
 
 # ---------------------------------------------------------------------------

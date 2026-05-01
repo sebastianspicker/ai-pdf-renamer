@@ -1,3 +1,9 @@
+"""Low-level PDF extraction adapters.
+
+Higher-level modules decide when OCR or vision should run; this module handles
+PyMuPDF text/metadata access, optional OCR fallback, and first-page rendering.
+"""
+
 from __future__ import annotations
 
 import base64
@@ -75,7 +81,8 @@ def _shrink_to_token_limit(text: str, *, max_tokens: int) -> str:
     if target_char_count < len(text):
         text = text[:target_char_count]
 
-    # Final fine-tuning (P2: add max iteration guard to prevent expensive loops)
+    # Keep shrinking bounded; pathological tokenizers should not turn this into
+    # an expensive loop.
     _MAX_SHRINK_ITERATIONS = 50
     for _ in range(_MAX_SHRINK_ITERATIONS):
         if _token_count(text) <= max_tokens or len(text) <= _MIN_SHRINK_TEXT_LEN:
@@ -368,7 +375,7 @@ def _extract_pages(doc: _fitz_mod.Document, path: Path, *, max_pages: int = 0) -
     limit = min(doc.page_count, max_pages) if max_pages > 0 else doc.page_count
     for page_number in range(limit):
         try:
-            # P3: Use load_page() instead of deprecated doc[] indexing
+            # load_page() is stable across supported PyMuPDF versions.
             page = doc.load_page(page_number)
         except (IndexError, RuntimeError, OSError, ValueError) as exc:
             msg = f"Error accessing page {page_number} in {path.name}: {exc}"

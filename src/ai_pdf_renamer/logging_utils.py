@@ -85,7 +85,8 @@ def setup_logging(*, log_file: str | Path = "error.log", level: int = logging.IN
         setattr(file_handler, _MANAGED_HANDLER_ATTR, True)
         root.addHandler(file_handler)
     except OSError as exc:
-        # P2: Log to stderr as fallback instead of swallowing silently
+        # Logging setup may run before the normal console is configured; stderr
+        # keeps the failure visible without aborting the CLI.
         import sys
 
         print(f"Warning: Could not create file handler for {log_file}: {exc}", file=sys.stderr)
