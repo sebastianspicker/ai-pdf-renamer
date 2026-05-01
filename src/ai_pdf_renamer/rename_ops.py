@@ -161,8 +161,10 @@ def apply_single_rename(
                         try:
                             fd = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                             os.close(fd)
-                        except FileExistsError as open_exc:
-                            raise FileExistsError(f"Target already exists: {target}") from open_exc
+                        except OSError as open_exc:
+                            if open_exc.errno == errno.EEXIST:
+                                raise FileExistsError(f"Target already exists: {target}") from open_exc
+                            raise
                         try:
                             os.rename(file_path, target)
                         except OSError:
@@ -181,7 +183,8 @@ def apply_single_rename(
             # Catch FileExistsError (direct or from link/rename on some platforms)
             # or OSError with EEXIST/EACCES (Windows rename often raises EACCES for existing targets).
             is_exists = isinstance(e, FileExistsError) or (
-                isinstance(e, OSError) and e.errno in (errno.EEXIST, getattr(errno, "EACCES", None))
+                isinstance(e, OSError)
+                and (e.errno == errno.EEXIST or (os.name == "nt" and e.errno == getattr(errno, "EACCES", None)))
             )
 
             if is_exists:

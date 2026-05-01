@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import threading
 from contextlib import suppress
@@ -16,6 +17,7 @@ from pathlib import Path
 _DEFAULT_PREFIX_BYTES = 65_536
 _OWNER_ONLY_DIR_MODE = 0o700
 _OWNER_ONLY_FILE_MODE = 0o600
+logger = logging.getLogger(__name__)
 _shared_caches: dict[str, ResponseCache] = {}
 _shared_caches_lock = threading.Lock()
 
@@ -25,30 +27,52 @@ def default_cache_dir() -> Path:
     return Path.home() / ".cache" / "ai-pdf-renamer"
 
 
+class CachePermissionError(RuntimeError):
+    """Raised when a persistent cache path cannot be restricted to the owner."""
+
+    def __init__(self, path: Path, mode: int, original: BaseException) -> None:
+        self.path = path
+        self.mode = mode
+        super().__init__(f"Could not set owner-only permissions {mode:o} on {path}: {original}")
+
+
 def _set_owner_only_permissions(path: Path, mode: int) -> None:
-    """Best-effort chmod for local document-derived cache data."""
-    with suppress(OSError, NotImplementedError):
+    """Restrict local document-derived cache data to the current owner."""
+    try:
         path.chmod(mode)
+    except (OSError, NotImplementedError) as exc:
+        raise CachePermissionError(path, mode, exc) from exc
 
 
 def _write_private_text(path: Path, text: str) -> None:
-    if os.name == "posix":
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _OWNER_ONLY_FILE_MODE)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-    else:
-        path.write_text(text, encoding="utf-8")
-    _set_owner_only_permissions(path, _OWNER_ONLY_FILE_MODE)
+    try:
+        if os.name == "posix":
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _OWNER_ONLY_FILE_MODE)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        else:
+            path.write_text(text, encoding="utf-8")
+        _set_owner_only_permissions(path, _OWNER_ONLY_FILE_MODE)
+    except (OSError, CachePermissionError):
+        with suppress(OSError):
+            path.unlink()
+        raise
 
 
 class ResponseCache:
     """Cache string responses in memory and optionally on disk."""
 
     def __init__(self, cache_dir: str | Path | None = None) -> None:
-        self.cache_dir = Path(cache_dir).expanduser() if cache_dir else None
-        if self.cache_dir is not None:
-            self.cache_dir.mkdir(parents=True, mode=_OWNER_ONLY_DIR_MODE, exist_ok=True)
-            _set_owner_only_permissions(self.cache_dir, _OWNER_ONLY_DIR_MODE)
+        requested_cache_dir = Path(cache_dir).expanduser() if cache_dir else None
+        self.cache_dir = None
+        if requested_cache_dir is not None:
+            try:
+                requested_cache_dir.mkdir(parents=True, mode=_OWNER_ONLY_DIR_MODE, exist_ok=True)
+                _set_owner_only_permissions(requested_cache_dir, _OWNER_ONLY_DIR_MODE)
+            except (OSError, CachePermissionError) as exc:
+                logger.warning("Persistent LLM cache disabled: %s", exc)
+            else:
+                self.cache_dir = requested_cache_dir
         self._memory: dict[str, str] = {}
         self._lock = threading.Lock()
 
@@ -116,7 +140,11 @@ class ResponseCache:
         if disk_path is None:
             return
         payload = json.dumps({"value": value}, ensure_ascii=False)
-        _write_private_text(disk_path, payload)
+        try:
+            _write_private_text(disk_path, payload)
+        except (OSError, CachePermissionError) as exc:
+            logger.warning("Persistent LLM cache disabled: %s", exc)
+            self.cache_dir = None
 
 
 def get_shared_response_cache(cache_dir: str | Path | None = None) -> ResponseCache:

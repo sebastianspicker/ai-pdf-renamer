@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import ai_pdf_renamer.cache as cache_mod
 from ai_pdf_renamer.cache import ResponseCache
 
 
@@ -40,6 +41,24 @@ def test_response_cache_persistent_paths_are_owner_only_on_posix(tmp_path: Path)
     assert _permission_bits(cache_dir) == 0o700
     assert _permission_bits(existing_cache_file) == 0o600
     assert _permission_bits(cache_dir / "new-key.json") == 0o600
+
+
+def test_response_cache_disables_disk_cache_when_permissions_cannot_be_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache_dir = tmp_path / "cache"
+    cache = ResponseCache(cache_dir=cache_dir)
+
+    def deny_chmod(path: Path, mode: int) -> None:
+        raise cache_mod.CachePermissionError(path, mode, RuntimeError("chmod unavailable"))
+
+    monkeypatch.setattr(cache_mod, "_set_owner_only_permissions", deny_chmod)
+
+    cache.set("unsafe-key", '{"summary":"private"}')
+
+    assert cache.get("unsafe-key") == '{"summary":"private"}'
+    assert cache.cache_dir is None
+    assert not (cache_dir / "unsafe-key.json").exists()
 
 
 def test_response_cache_file_key_changes_when_tail_changes_with_same_size(tmp_path: Path) -> None:

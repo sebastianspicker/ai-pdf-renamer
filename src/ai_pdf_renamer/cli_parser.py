@@ -661,7 +661,8 @@ def _add_output_and_ux_args(p: argparse._ActionsContainer) -> None:
         action="store_true",
         help=(
             "Log detailed classification reasoning: heuristic scores, LLM outputs, and conflict resolution. "
-            "May include sensitive document-derived summaries or keywords in the configured log sink."
+            "May include sensitive raw LLM outputs, document excerpts, summaries, or keywords in the "
+            "configured log sink."
         ),
     )
 

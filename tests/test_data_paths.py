@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -93,7 +94,7 @@ def test_collect_files_override(tmp_path: Path) -> None:
     assert result == [real_pdf]
 
 
-def test_collect_files_override_rejects_paths_outside_root(tmp_path: Path) -> None:
+def test_collect_files_override_rejects_paths_outside_root(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     root = tmp_path / "root"
     root.mkdir()
     inside_pdf = root / "inside.pdf"
@@ -101,12 +102,15 @@ def test_collect_files_override_rejects_paths_outside_root(tmp_path: Path) -> No
     outside_pdf = tmp_path / "outside.pdf"
     outside_pdf.write_bytes(b"%PDF")
 
-    result = collect_pdf_files(
-        root,
-        files_override=[inside_pdf, outside_pdf],
-    )
+    with caplog.at_level(logging.WARNING, logger="ai_pdf_renamer.renamer_files"):
+        result = collect_pdf_files(
+            root,
+            files_override=[inside_pdf, outside_pdf],
+        )
 
     assert result == [inside_pdf]
+    assert "outside selected directory" in caplog.text
+    assert str(outside_pdf) in caplog.text
 
 
 def test_collect_skip_already_named(tmp_path: Path) -> None:

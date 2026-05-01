@@ -72,7 +72,8 @@ def test_help_text_warns_explain_logs_document_derived_sensitive_output() -> Non
 
     help_text = build_parser().format_help()
     assert "--explain" in help_text
-    assert "document-derived" in help_text
+    assert "document excerpts" in help_text
+    assert "raw LLM outputs" in help_text
     assert "sensitive" in help_text
 
 
