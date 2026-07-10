@@ -1,2 +1,8 @@
-blank_issues_enabled: true
-contact_links: []
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/sebastianspicker/AI-PDF-Renamer/security/policy
+    about: Report vulnerabilities privately instead of opening a public issue.
+  - name: Usage and setup questions
+    url: https://github.com/sebastianspicker/AI-PDF-Renamer#readme
+    about: Start with the README and open a bug or feature issue if the documented workflow does not cover it.

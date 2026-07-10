@@ -1,6 +1,8 @@
 # AI-PDF-Renamer
 
 [![CI](https://github.com/sebastianspicker/AI-PDF-Renamer/actions/workflows/ci.yml/badge.svg)](https://github.com/sebastianspicker/AI-PDF-Renamer/actions/workflows/ci.yml)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
 Local-first tool to rename PDF files by content.
 
@@ -10,7 +12,18 @@ It extracts text, applies heuristic category scoring with optional local-LLM enr
 YYYYMMDD-category-keywords-summary.pdf
 ```
 
-**Coverage-gated test suite (current floor: 85%)** — see [CHANGELOG.md](CHANGELOG.md) for recent improvements.
+The release gate includes a coverage threshold, static checks, repository
+hygiene, and built-distribution verification.
+
+## Project status
+
+- Active public surface: CLI, TUI, undo CLI, local-first defaults, and documented Python API compatibility.
+- Current verification gate: `make release-check`, including Ruff format/lint, mypy, and coverage-gated tests.
+- Public docs index: [docs/README.md](docs/README.md).
+
+Internal audit, remediation, archive, status, ledger, and superseded planning
+packets are local-only working artifacts and are not part of the public
+documentation set.
 
 ## What it does
 
@@ -37,16 +50,25 @@ Optional extras:
 # TUI (terminal UI)
 python -m pip install -e '.[tui]'
 
-# In-process LLM via llama-cpp-python
-python -m pip install -e '.[llama-cpp]'
-
-# Tokenization, OCR, embeddings
-python -m pip install -e '.[tokens,ocr,embeddings]'
+# Tokenization and OCR
+python -m pip install -e '.[tokens,ocr]'
 ```
+
+The in-process LLM backend still supports `llama-cpp-python` when you install
+that package yourself. It is not bundled as a project extra, so review that
+package's native build and dependency chain before adding it to your
+environment.
+
+Embedding-assisted category conflict resolution likewise remains available
+when `sentence-transformers` is installed manually; it is not bundled as a
+project extra because its transitive native dependency set requires separate
+security review.
 
 ## Quick start
 
-Run once against a directory (uses `apple-silicon` preset by default — Qwen 2.5 3B via Ollama):
+Run once against a directory. The default `apple-silicon` preset expects a
+running Ollama-compatible endpoint with `qwen2.5:3b`; use `--no-llm` for a
+heuristics-only run when that service or model is unavailable.
 
 ```bash
 ai-pdf-renamer --dir ./input_files --dry-run
@@ -82,6 +104,9 @@ TUI (Textual-based terminal UI with three tabs -- Settings, Advanced, and Run):
 ai-pdf-renamer-tui
 ```
 
+`ai-pdf-renamer-gui` is a compatibility alias for this same terminal UI; it
+does not launch a separate desktop application.
+
 The TUI provides a complete graphical interface in the terminal:
 
 - **Settings tab** -- configure input folder, language, case style, date format, preset, and processing flags (dry run, use LLM, OCR, vision)
@@ -99,7 +124,7 @@ ai-pdf-renamer-undo --rename-log rename.log --dry-run
 ### LLM hardware presets
 
 | Preset | Model | Size (Q4) | Context | Target hardware |
-|--------|-------|-----------|---------|-----------------|
+| --- | --- | --- | --- | --- |
 | `apple-silicon` (default) | `qwen2.5:3b` | ~2 GB | 32K | Apple Silicon M4 16 GB |
 | `gpu` | `qwen2.5:7b-instruct` | ~4.5 GB | 128K | RTX 4080 Super 16 GB |
 
@@ -107,58 +132,24 @@ Both presets use Ollama (`http://127.0.0.1:11434`). Explicit `--llm-model`, `--l
 
 ## How it works
 
-```mermaid
-flowchart TD
-A["Start: input directory + runtime config"] --> B["Preflight checks (path/config validation, rules/data loading)"]
-B -->|Fail| Z["Abort with actionable diagnostics"]
-B -->|Pass| C["Collect candidate PDF files"]
-C --> D["Extract text (native parser, OCR path when configured)"]
-D --> E["Derive metadata via heuristics/rules"]
-E --> F{"LLM enabled?"}
-F -->|No| G["Deterministic naming pipeline"]
-F -->|Yes| H["LLM request -> structured response"]
-H --> I["Validate/normalize LLM fields"]
-I --> G
-G --> J["Sanitize filename + resolve collisions"]
-J --> K{"Dry run?"}
-K -->|Yes| L["Preview proposed renames"]
-K -->|No| M["Apply rename + optional post-rename hook"]
-L --> N["Aggregate run summary"]
-M --> N
-N --> O["End"]
-```
+1. Validate the input path and runtime configuration, then load rules and data.
+2. Collect candidate PDFs and extract text, using OCR when configured.
+3. Derive metadata with rules and heuristics. When enabled, the LLM enriches a
+   structured response that is validated before use.
+4. Build and sanitize the filename, resolve collisions, and either preview or
+   apply the rename.
+5. After an applied rename, call the optional HTTP(S) hook and aggregate the
+   run summary.
 
 LLM is optional at every stage; the heuristic path alone produces a valid filename. Both `--dry-run` and apply mode produce summary output.
 
 ## File lifecycle
 
-```mermaid
-stateDiagram-v2
-[*] --> Initialized
-Initialized --> Preflight
-Preflight --> Failed : invalid config/dependency
-Preflight --> Scanning : checks passed
-
-Scanning --> Extracting : file selected
-Extracting --> Classified : text extracted
-Extracting --> Failed : extraction error
-
-Classified --> Named : metadata resolved
-Classified --> Failed : unresolved metadata
-
-Named --> Previewed : dry-run mode
-Named --> Renaming : apply mode
-
-Renaming --> Completed : rename succeeded
-Renaming --> HookRunning : hook configured
-HookRunning --> Completed : hook succeeded
-HookRunning --> Completed : hook failed (recorded)
-
-Previewed --> Completed
-Completed --> Scanning : next file
-Failed --> Scanning : continue with next file
-Scanning --> [*] : no files remaining
-```
+Each file moves through scanning, extraction, classification, naming, and then
+either preview or rename. Extraction and metadata failures are recorded before
+processing continues with the next file. A configured post-rename hook runs
+only after a successful rename; hook failures are recorded but remain
+non-fatal. Processing ends when no candidate files remain.
 
 Per-file failures are recorded and processing continues to the next file. Hook failures are non-fatal.
 
@@ -183,7 +174,7 @@ Important defaults:
 
 High-impact operational flags:
 
-- `--post-rename-hook CMD`
+- `--post-rename-hook URL`
 - `--summary-json FILE`
 - `--doctor`
 - `--rules-file FILE`
@@ -199,7 +190,7 @@ High-impact operational flags:
 ## Environment variables
 
 | Variable | Description |
-|----------|-------------|
+| --- | --- |
 | `AI_PDF_RENAMER_LLM_BACKEND` | LLM backend: `http`, `in-process`, or `auto` |
 | `AI_PDF_RENAMER_LLM_URL` | HTTP endpoint URL |
 | `AI_PDF_RENAMER_LLM_MODEL` | Model name for HTTP backend |
@@ -211,7 +202,7 @@ High-impact operational flags:
 | `AI_PDF_RENAMER_CACHE_DIR` | Override the persistent cache directory for LLM responses |
 | `AI_PDF_RENAMER_DATA_DIR` | Override path for bundled JSON data files |
 | `AI_PDF_RENAMER_OCR_LANG` | OCR language override |
-| `AI_PDF_RENAMER_POST_RENAME_HOOK` | Command run after each successful rename |
+| `AI_PDF_RENAMER_POST_RENAME_HOOK` | HTTP(S) endpoint called after each successful rename |
 | `AI_PDF_RENAMER_LOG_FILE` | Log file path (default: `~/.local/share/ai-pdf-renamer/error.log`) |
 | `AI_PDF_RENAMER_LOG_LEVEL` | Log level (default: `INFO`) |
 | `AI_PDF_RENAMER_STRUCTURED_LOGS` | Enable structured JSON logging (`1` or `true`) |
@@ -224,7 +215,9 @@ High-impact operational flags:
 Stable interfaces from `ai_pdf_renamer.renamer`:
 
 - `rename_pdfs_in_directory(directory, config, files_override=None)`
-- `generate_filename(pdf_content, *, config, llm_client=None, heuristic_scorer=None, stopwords=None, ...)`
+- `generate_filename(pdf_content, FilenameGenerationRequest(config=...))`; the
+  current major version still accepts the legacy keyword form
+  `generate_filename(pdf_content, config=..., ...)`
 - `RenamerConfig`
 - `CategoryCombineParams` — frozen dataclass for `combine_categories()` configuration
 
@@ -234,7 +227,8 @@ No signature-breaking changes within the current major version.
 
 - Runs locally and talks only to local LLM endpoints by default.
 - Built-in LLM HTTP calls use `trust_env=False` to avoid proxy leakage.
-- Post-rename hooks are operator-controlled and run with current user privileges.
+- Post-rename hooks support HTTP(S) endpoints only. Local command hooks are not
+  executed.
 - Run only one instance at a time per target directory.
 
 See [SECURITY.md](SECURITY.md) for security policy and reporting.
@@ -277,6 +271,7 @@ uv run ai-pdf-renamer --validate-config --dir . --no-llm --dry-run
 
 ## Documentation
 
+- [docs/README.md](docs/README.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [SECURITY.md](SECURITY.md)
 - [CHANGELOG.md](CHANGELOG.md)

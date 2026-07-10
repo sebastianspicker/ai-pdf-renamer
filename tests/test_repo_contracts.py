@@ -22,7 +22,8 @@ def test_readme_documents_current_defaults_and_precedence() -> None:
     readme = _read_repo_file("README.md")
 
     assert "88% coverage" not in readme
-    assert "current floor: 85%" in readme
+    assert "85%" not in readme
+    assert "Current release:" not in readme
     assert "1. CLI flags" in readme
     assert "2. Environment defaults (for supported settings)" in readme
     assert "3. Config file values (`--config` JSON/YAML)" in readme
@@ -35,12 +36,12 @@ def test_readme_documents_current_defaults_and_precedence() -> None:
 def test_readme_and_tui_match_current_cli_preset_surface() -> None:
     readme = _read_repo_file("README.md")
     cli_parser = _read_repo_file("src/ai_pdf_renamer/cli_parser.py")
-    tui_source = _read_repo_file("src/ai_pdf_renamer/tui.py")
+    tui_assets_source = _read_repo_file("src/ai_pdf_renamer/tui_assets.py")
 
     cli_presets = _extract_literal_choices(cli_parser, flag="--preset")
     assert "`--preset` (`high-confidence-heuristic`, `scanned`, `fast`, `accurate`, `batch`)" in readme
 
-    tui_match = re.search(r"_PRESETS\s*=\s*(\[[^\]]*\])", tui_source, re.DOTALL)
+    tui_match = re.search(r"_PRESETS\s*=\s*(\[[^\]]*\])", tui_assets_source, re.DOTALL)
     assert tui_match is not None
     tui_presets = [value for _label, value in ast.literal_eval(tui_match.group(1)) if value]
 
@@ -54,11 +55,21 @@ def test_contributing_matches_current_ci_job_shape() -> None:
     assert "single Python 3.11 job" in contributing
 
 
-def test_changelog_tracks_current_coverage_gate() -> None:
+def test_changelog_tracks_current_package_version() -> None:
     changelog = _read_repo_file("CHANGELOG.md")
+    init_source = _read_repo_file("src/ai_pdf_renamer/__init__.py")
 
-    assert "88% coverage" not in changelog
-    assert "Coverage threshold raised from 50% to 85%." in changelog
+    version_match = re.search(r'^__version__ = "([^"]+)"$', init_source, re.MULTILINE)
+    assert version_match is not None
+    assert "## [Unreleased]" in changelog
+    assert f"## [{version_match.group(1)}]" in changelog
+
+
+def test_public_docs_do_not_duplicate_version_or_coverage_floor() -> None:
+    docs_index = _read_repo_file("docs/README.md")
+
+    assert "Current release:" not in docs_index
+    assert "coverage floor" not in docs_index.lower()
 
 
 def test_security_documents_cli_and_backend_llm_defaults() -> None:

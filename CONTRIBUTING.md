@@ -8,7 +8,10 @@ Thank you for your interest in contributing. This document covers local setup, c
 uv sync --extra dev --extra pdf --extra tui
 ```
 
-Optional extras beyond the default contributor setup: `--extra tokens` for token counting, `--extra ocr` for OCR support, `--extra llama-cpp` for the in-process LLM backend.
+Optional extras beyond the default contributor setup: `--extra tokens` for token
+counting and `--extra ocr` for OCR support. The in-process LLM backend can use
+`llama-cpp-python` when installed manually, but the project does not bundle it as
+an optional extra.
 
 ## Run checks
 
@@ -41,27 +44,37 @@ Suggested first code pass for a new maintainer:
 Key source modules under `src/ai_pdf_renamer/`:
 
 | Module | Purpose |
-|---|---|
-| `cli.py` / `cli_parser.py` | CLI entry point and argument parsing |
+| --- | --- |
+| `cli.py` / `cli_runtime.py` / `cli_parser.py` / `cli_parser_sections.py` | CLI entry point, runtime dispatch, and argument parsing |
 | `config.py` / `config_resolver.py` | Config dataclass and normalization |
-| `renamer.py` | Main orchestration pipeline |
+| `renamer.py` | Public orchestration surface and compatibility imports |
 | `renamer_files.py` | PDF file collection |
+| `renamer_discovery.py` | Directory discovery helpers |
 | `renamer_extract.py` | Extraction helpers |
+| `renamer_hooks.py` | HTTP(S) post-rename hook handling |
 | `renamer_lookup.py` | Category override lookup helpers |
 | `renamer_output.py` | CSV / JSON output and CSV injection sanitization |
 | `renamer_progress.py` | Rich / null progress reporter abstraction |
+| `renamer_watch.py` | Watch-mode loop helpers |
 | `llm_backend.py` | LLM backend abstraction (HTTP / in-process) |
 | `llm.py` | LLM helper functions (summary, category, keywords) |
 | `llm_prompts.py` / `llm_parsing.py` | Prompt templates and JSON parsing |
-| `filename.py` | Filename generation pipeline |
-| `heuristics.py` | Heuristic scoring engine |
+| `filename.py` / `filename_builders.py` / `filename_metadata.py` / `filename_llm_metadata.py` / `filename_models.py` | Filename generation pipeline, metadata extraction, LLM metadata normalization, and request/result models |
+| `heuristics.py` / `heuristic_scoring.py` | Heuristic scoring engine |
 | `pdf_extract.py` | PDF text / image extraction |
 | `rules.py` | Processing rules engine |
-| `tui.py` | Terminal UI (textual) |
+| `text_utils.py` / `text_dates.py` / `text_tokens.py` / `text_structured.py` | Text normalization, date extraction, token/case helpers, and structured-field extraction |
+| `tui.py` / `tui_forms.py` | Terminal UI (Textual) and form composition |
 | `tui_assets.py` | TUI constants, CSS, and log-line formatters |
 | `data/` | Bundled JSON data files |
 
-Data flow: `cli.py` builds a `RenamerConfig` → `renamer.py` iterates PDFs (collecting via `renamer_files.py`) → `renamer_extract.py` extracts text → `filename.py` generates a filename (using heuristics + optional LLM) → `rename_ops.py` performs the rename. Progress is reported via `renamer_progress.py`, output written via `renamer_output.py`, and category overrides resolved via `renamer_lookup.py`.
+Data flow: `cli.py` builds a `RenamerConfig` -> `renamer.py` iterates PDFs
+(collecting via `renamer_files.py`) -> `renamer_extract.py` extracts text ->
+`filename.py` generates a filename (using heuristics plus optional LLM) ->
+`rename_ops.py` performs the rename. Progress is reported via
+`renamer_progress.py`, output is written via `renamer_output.py`, HTTP(S)
+post-rename hooks are handled via `renamer_hooks.py`, and category overrides are
+resolved via `renamer_lookup.py`.
 
 ## Scope and alignment
 
@@ -86,6 +99,8 @@ Data flow: `cli.py` builds a `RenamerConfig` → `renamer.py` iterates PDFs (col
 - Use the pull request template; describe what changed and why.
 - Keep PRs focused. For large changes, consider splitting into smaller steps.
 - Ensure all checks pass and the branch is up to date with the target branch.
+- Do not include PDFs, extracted document text, prompts/responses, local logs,
+  caches, rename ledgers, or agent working files in a PR.
 
 ## Questions
 
