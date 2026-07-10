@@ -1,29 +1,16 @@
-# ruff: noqa: F401
-
 """Tests for cli.py helper functions: config loading, override maps, and doctor checks."""
 
 from __future__ import annotations
 
-import argparse
-import importlib.util
 import json
-import logging
-import queue
 import re
 import tempfile
-import types
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from ai_pdf_renamer.cli import (
-    ConfigLoadError,
-    _load_config_file,
-    _load_override_category_map,
-    run_doctor_checks,
-)
 from ai_pdf_renamer.heuristics import (
     HeuristicRule,
     HeuristicScorer,
@@ -32,26 +19,12 @@ from ai_pdf_renamer.heuristics import (
     load_heuristic_rules,
     normalize_llm_category,
 )
-from ai_pdf_renamer.tui import _CSS, SETTINGS_PATH, AIRenamerTUI, _load_settings, _QueueHandler, _save_settings
+from ai_pdf_renamer.tui import AIRenamerTUI
+from tests.conftest import make_tui_app as _make_app
 
 
 def _raise_os_error(*args: Any, **kwargs: Any) -> Any:
     raise OSError("Simulated read error")
-
-
-_PATCHED_CSS = _CSS.replace("flex-wrap: wrap;", "")
-
-
-def _make_app(settings: dict[str, object] | None = None) -> AIRenamerTUI:
-    """Create an AIRenamerTUI with patched CSS and optional pre-loaded settings."""
-    if settings is not None:
-        with patch("ai_pdf_renamer.tui._load_settings", return_value=settings):
-            app = AIRenamerTUI()
-    else:
-        with patch("ai_pdf_renamer.tui._load_settings", return_value={}):
-            app = AIRenamerTUI()
-    app.CSS = _PATCHED_CSS  # type: ignore[assignment]
-    return app
 
 
 class TestLoadHeuristicRules:
@@ -329,7 +302,7 @@ async def test_get_str_returns_value() -> None:
     app = _make_app()
     async with app.run_test(size=(120, 40)) as _pilot:
         app.query_one("#directory", Input).value = "/tmp/pdfs"
-        assert app._get_str("directory") == "/tmp/pdfs"
+        assert app.get_str("directory") == "/tmp/pdfs"
 
 
 async def test_get_bool_returns_value() -> None:
@@ -340,19 +313,19 @@ async def test_get_bool_returns_value() -> None:
     async with app.run_test(size=(120, 40)) as _pilot:
         cb = app.query_one("#dry_run", Checkbox)
         cb.value = False
-        assert app._get_bool("dry_run") is False
+        assert app.get_bool("dry_run") is False
         cb.value = True
-        assert app._get_bool("dry_run") is True
+        assert app.get_bool("dry_run") is True
 
 
 async def test_get_select_returns_value() -> None:
     """_get_select reads the current value of a Select widget."""
     app = _make_app()
     async with app.run_test(size=(120, 40)) as _pilot:
-        val = app._get_select("language")
+        val = app.get_select("language")
         assert val == "de"
 
-        val = app._get_select("case")
+        val = app.get_select("case")
         assert val == "kebabCase"
 
 
@@ -360,15 +333,15 @@ async def test_get_str_missing_widget() -> None:
     """_get_str returns the default when the widget ID doesn't exist."""
     app = _make_app()
     async with app.run_test(size=(120, 40)) as _pilot:
-        assert app._get_str("nonexistent_widget", "fallback") == "fallback"
-        assert app._get_str("nonexistent_widget") == ""
+        assert app.get_str("nonexistent_widget", "fallback") == "fallback"
+        assert app.get_str("nonexistent_widget") == ""
 
 
 async def test_snapshot_returns_dict() -> None:
     """_snapshot returns a dict containing all expected top-level keys."""
     app = _make_app()
     async with app.run_test(size=(120, 40)) as _pilot:
-        snap = app._snapshot()
+        snap = app.snapshot()
         assert isinstance(snap, dict)
         expected_keys = {
             "directory",
@@ -415,7 +388,7 @@ async def test_snapshot_has_language_field() -> None:
     """_snapshot includes 'language' with the widget's current value."""
     app = _make_app()
     async with app.run_test(size=(120, 40)) as _pilot:
-        snap = app._snapshot()
+        snap = app.snapshot()
         assert "language" in snap
         assert snap["language"] == "de"
 
@@ -440,7 +413,7 @@ async def test_load_settings_populates_widgets() -> None:
     try:
         with patch("ai_pdf_renamer.tui.SETTINGS_PATH", tf_path):
             app = AIRenamerTUI()
-            app.CSS = _PATCHED_CSS  # type: ignore[assignment]
+            app.CSS = AIRenamerTUI.CSS.replace("flex-wrap: wrap;", "")  # type: ignore[assignment]
             async with app.run_test(size=(120, 40)) as _pilot:
                 assert app.query_one("#directory", Input).value == "/home/user/docs"
                 assert app.query_one("#language", Select).value == "en"
@@ -457,22 +430,22 @@ async def test_cancel_sets_stop_event() -> None:
     app = _make_app()
     async with app.run_test(size=(120, 40)) as _pilot:
         # Simulate an in-progress run
-        app._running = True
-        app._stop_event.clear()
+        app.run_active = True
+        app.clear_stop_request()
 
         # Invoke the cancel handler directly (button may not be visible on active tab)
         app.on_cancel()
 
-        assert app._stop_event.is_set()
+        assert app.stop_requested
 
 
 async def test_cancel_noop_when_not_running() -> None:
     """Cancel does nothing when no run is in progress."""
     app = _make_app()
     async with app.run_test(size=(120, 40)) as _pilot:
-        app._running = False
-        app._stop_event.clear()
+        app.run_active = False
+        app.clear_stop_request()
 
-        app._cancel()
+        app.cancel_run()
 
-        assert not app._stop_event.is_set()
+        assert not app.stop_requested

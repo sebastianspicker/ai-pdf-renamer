@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import sys
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from ai_pdf_renamer.llm_parsing import (
     TRUNCATION_SUFFIX,
@@ -353,6 +356,17 @@ class TestParseJsonFieldSalvageChain:
             warning_call = mock_logger.warning.call_args
             assert warning_call is not None
             assert "LLM response could not be parsed as JSON; using fallback" in warning_call.args[0]
+
+    def test_parse_json_field_warning_redacts_malformed_response(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Malformed LLM responses may echo PDF text and must not be logged."""
+        sensitive_marker = "PRIVATE_PDF_SNIPPET_1234567890"
+
+        with caplog.at_level(logging.WARNING, logger="ai_pdf_renamer.llm_parsing"):
+            result = parse_json_field(f"not json {sensitive_marker}", key="summary")
+
+        assert result is None
+        assert "LLM response could not be parsed as JSON; using fallback" in caplog.text
+        assert sensitive_marker not in caplog.text
 
 
 # ---------------------------------------------------------------------------

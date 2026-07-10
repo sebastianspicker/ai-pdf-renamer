@@ -4,12 +4,36 @@ import csv
 import json
 import logging
 import re
+import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 _CSV_FORMULA_TRIGGERS = frozenset("=+-@|")
 _CSV_CONTROL_CHARS_RE = re.compile(r"[\t\r\n]")
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RenameOutputData:
+    export_rows: list[dict[str, object]] = field(default_factory=list)
+    plan_entries: list[dict[str, str]] = field(default_factory=list)
+    processed_count: int = 0
+    renamed_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
+    failure_details: list[dict[str, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RenameSummaryData:
+    directory: Path
+    processed: int
+    renamed: int
+    skipped: int
+    failed: int
+    dry_run: bool
+    failures: list[dict[str, str]]
 
 
 def _sanitize_csv_cell(value: object) -> object:
@@ -39,26 +63,19 @@ def _write_json_or_csv(path: Path, rows: list[Any], csv_fieldnames: list[str] | 
 
 def _write_summary_json(
     summary_path: str | Path | None,
-    *,
-    directory: Path,
-    processed: int,
-    renamed: int,
-    skipped: int,
-    failed: int,
-    dry_run: bool,
-    failures: list[dict[str, str]],
+    summary_data: RenameSummaryData,
 ) -> None:
     """Write summary JSON; best-effort logging on I/O errors."""
     if not summary_path:
         return
     summary = {
-        "directory": str(directory),
-        "processed": processed,
-        "renamed": renamed,
-        "skipped": skipped,
-        "failed": failed,
-        "dry_run": dry_run,
-        "failures": failures,
+        "directory": str(summary_data.directory),
+        "processed": summary_data.processed,
+        "renamed": summary_data.renamed,
+        "skipped": summary_data.skipped,
+        "failed": summary_data.failed,
+        "dry_run": summary_data.dry_run,
+        "failures": summary_data.failures,
     }
     target = Path(summary_path)
     try:
@@ -90,3 +107,97 @@ def _append_export_row(
             "company": meta.get("company", ""),
         }
     )
+
+
+def _write_export_metadata(config: Any, output: RenameOutputData) -> None:
+    if config.export_metadata_path and output.export_rows:
+        _write_json_or_csv(
+            Path(config.export_metadata_path),
+            output.export_rows,
+            [
+                "path",
+                "new_name",
+                "category",
+                "summary",
+                "keywords",
+                "category_source",
+                "llm_failed",
+                "used_vision_fallback",
+                "invoice_id",
+                "amount",
+                "company",
+            ],
+        )
+
+
+def _write_plan_file(config: Any, output: RenameOutputData) -> None:
+    if config.plan_file_path and output.plan_entries:
+        plan_path = Path(config.plan_file_path)
+        _write_json_or_csv(plan_path, output.plan_entries, ["old", "new"])
+        logger.info("Wrote rename plan (%s entries) to %s", len(output.plan_entries), plan_path)
+
+
+def _log_summary(output: RenameOutputData) -> None:
+    logger.info(
+        "Summary: %s file(s) processed, %s renamed, %s skipped, %s failed",
+        output.processed_count,
+        output.renamed_count,
+        output.skipped_count,
+        output.failed_count,
+    )
+
+
+def _print_rich_summary(output: RenameOutputData) -> None:
+    from rich.console import Console
+
+    _con = Console(stderr=True)
+    _con.print()
+    parts = [f"[bold]{output.processed_count}[/bold] processed"]
+    if output.renamed_count:
+        parts.append(f"[green]{output.renamed_count} renamed[/green]")
+    else:
+        parts.append(f"{output.renamed_count} renamed")
+    if output.skipped_count:
+        parts.append(f"[yellow]{output.skipped_count} skipped[/yellow]")
+    else:
+        parts.append(f"{output.skipped_count} skipped")
+    if output.failed_count:
+        parts.append(f"[red]{output.failed_count} failed[/red]")
+    else:
+        parts.append(f"{output.failed_count} failed")
+    _con.print("[bold]Summary:[/bold] " + ", ".join(parts))
+
+
+def _print_plain_summary(output: RenameOutputData) -> None:
+    print(
+        f"Summary: {output.processed_count} processed, {output.renamed_count} renamed, "
+        f"{output.skipped_count} skipped, {output.failed_count} failed.",
+        file=sys.stderr,
+    )
+
+
+def _print_summary(output: RenameOutputData) -> None:
+    try:
+        _print_rich_summary(output)
+    except ImportError:
+        _print_plain_summary(output)
+
+
+def _write_rename_outputs(config: Any, directory: Path, output: RenameOutputData) -> None:
+    """Write export metadata, plan file, and summary JSON after rename loop completes."""
+    _write_export_metadata(config, output)
+    _write_plan_file(config, output)
+    _write_summary_json(
+        config.summary_json_path,
+        RenameSummaryData(
+            directory=directory,
+            processed=output.processed_count,
+            renamed=output.renamed_count,
+            skipped=output.skipped_count,
+            failed=output.failed_count,
+            dry_run=bool(config.dry_run),
+            failures=output.failure_details,
+        ),
+    )
+    _log_summary(output)
+    _print_summary(output)

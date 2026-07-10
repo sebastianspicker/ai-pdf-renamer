@@ -7,24 +7,28 @@ config_resolver so CLI and TUI runs produce the same RenamerConfig shape.
 from __future__ import annotations
 
 import argparse
-import csv
 import importlib.util
 import json
 import logging
 import os
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, NoReturn
 
 import requests
 from rich.console import Console
 from rich.markup import escape
 
+from .cli_config import ConfigLoadError, _load_config_file, _load_override_category_map, load_config_file
 from .cli_parser import build_parser
+from .cli_runtime import read_prompt_value, resolve_dirs
 from .config_resolver import build_config
 from .data_paths import data_path
 from .heuristics import load_heuristic_rules
 from .logging_utils import setup_logging
+from .recoverable_errors import COMMON_RECOVERABLE_EXCEPTIONS
 from .renamer import (
     RenamerConfig,
     rename_pdfs_in_directory,
@@ -32,86 +36,18 @@ from .renamer import (
 )
 from .text_utils import VALID_CASE_CHOICES
 
+__all__ = [
+    "ConfigLoadError",
+    "_load_config_file",
+    "_load_override_category_map",
+    "load_config_file",
+    "main",
+    "run_doctor_checks",
+]
+
 logger = logging.getLogger(__name__)
 _console = Console(stderr=True)
-
-
-class ConfigLoadError(ValueError):
-    """Raised when an explicitly requested config file cannot be loaded safely."""
-
-
-def _load_config_file(path: str | Path, *, raise_on_error: bool = False) -> dict[str, object]:
-    """Load JSON or YAML config file. Returns a dict unless raise_on_error is enabled."""
-
-    def _fail(message: str, *details: str) -> dict[str, object]:
-        _console.print(message)
-        for detail in details:
-            _console.print(detail)
-        if raise_on_error:
-            raise ConfigLoadError(str(path))
-        return {}
-
-    p = Path(path)
-    if not p.exists():
-        return _fail(
-            f"[yellow]Config file not found:[/yellow] {p}",
-            "[dim]Create one with JSON or YAML format, or omit --config.[/dim]",
-        )
-    try:
-        raw = p.read_text(encoding="utf-8")
-    except OSError as exc:
-        return _fail(f"[red]Cannot read config file[/red] {p}: {exc}")
-    suf = p.suffix.lower()
-    if suf == ".json":
-        try:
-            data = json.loads(raw)
-            if not isinstance(data, dict):
-                dtype = type(data).__name__
-                return _fail(f"[yellow]Config file must contain a JSON object (got {dtype}):[/yellow] {p}")
-            return data
-        except json.JSONDecodeError as exc:
-            return _fail(
-                f"[red]Invalid JSON in config file[/red] {p}",
-                f"[dim]  Line {exc.lineno}, col {exc.colno}: {exc.msg}[/dim]",
-            )
-    if suf in (".yaml", ".yml"):
-        try:
-            import yaml
-
-            data = yaml.safe_load(raw)
-            if not isinstance(data, dict):
-                dtype = type(data).__name__
-                return _fail(f"[yellow]Config file must contain a YAML mapping (got {dtype}):[/yellow] {p}")
-            return data
-        except ImportError:
-            return _fail(
-                "[red]Cannot parse YAML config:[/red] PyYAML not installed.",
-                "[dim]  Install with: pip install pyyaml[/dim]",
-            )
-        except Exception as exc:
-            return _fail(f"[red]Invalid YAML in config file[/red] {p}: {exc}")
-    return _fail(
-        f"[yellow]Unsupported config file format:[/yellow] {p.suffix}",
-        "[dim]Supported formats: .json, .yaml, .yml[/dim]",
-    )
-
-
-def _load_override_category_map(path: str | Path) -> dict[str, str]:
-    """Load CSV with columns filename,category (or path,category). Returns dict filename -> category."""
-    result: dict[str, str] = {}
-    p = Path(path)
-    if not p.exists():
-        return result
-    try:
-        with open(p, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                name = (row.get("filename") or row.get("path") or row.get("file") or "").strip()
-                cat = (row.get("category") or "").strip()
-                if name and cat:
-                    result[name] = cat
-    except OSError as e:
-        logger.warning("Could not read override-category file %s: %s. Proceeding with no overrides.", p, e)
-    return result
+_RECOVERABLE_CLI_EXCEPTIONS = COMMON_RECOVERABLE_EXCEPTIONS
 
 
 def _is_interactive() -> bool:
@@ -119,48 +55,108 @@ def _is_interactive() -> bool:
     return sys.stdin.isatty()
 
 
+@dataclass(frozen=True)
+class OptionPromptSpec:
+    choice_prompt: str | None = None
+    choices: list[str] | None = None
+    choice_normalize: Callable[[str], str] | None = None
+    free_prompt: str | None = None
+
+
+@dataclass(frozen=True)
+class OptionResolutionRequest:
+    attr: str
+    file_defaults: dict[str, object]
+    file_key: str
+    default: str
+    prompt: OptionPromptSpec = field(default_factory=OptionPromptSpec)
+
+
+def _option_request_from_legacy(
+    legacy_args: tuple[Any, ...],
+    legacy_kwargs: dict[str, Any],
+) -> OptionResolutionRequest:
+    attr, file_defaults, file_key, default = legacy_args
+    return OptionResolutionRequest(
+        attr=attr,
+        file_defaults=file_defaults,
+        file_key=file_key,
+        default=default,
+        prompt=OptionPromptSpec(
+            choice_prompt=legacy_kwargs.get("choice_prompt"),
+            choices=legacy_kwargs.get("choices"),
+            choice_normalize=legacy_kwargs.get("choice_normalize"),
+            free_prompt=legacy_kwargs.get("free_prompt"),
+        ),
+    )
+
+
 def _resolve_option(
     args: argparse.Namespace,
-    attr: str,
-    file_defaults: dict[str, object],
-    file_key: str,
-    default: str,
-    *,
-    choice_prompt: str | None = None,
-    choices: list[str] | None = None,
-    choice_normalize: Callable[[str], str] | None = None,
-    free_prompt: str | None = None,
+    *legacy_args: Any,
+    request: OptionResolutionRequest | None = None,
+    **legacy_kwargs: Any,
 ) -> str:
     """Resolve option: getattr(args) -> file_defaults -> interactive prompt (if TTY) -> default."""
-    value = getattr(args, attr, None)
+    request = request or _option_request_from_legacy(legacy_args, legacy_kwargs)
+    value = getattr(args, request.attr, None)
     if value is None:
-        value = file_defaults.get(file_key)
+        value = request.file_defaults.get(request.file_key)
     # Treat empty string as unset when choices are defined (avoid invalid "" for language/case)
-    if value == "" and choices is not None:
+    if value == "" and request.prompt.choices is not None:
         value = None
     if value is None:
-        if _is_interactive():
-            if choice_prompt is not None and choices is not None:
-                value = _prompt_choice(
-                    choice_prompt,
-                    choices=choices,
-                    default=default,
-                    normalize=choice_normalize,
-                )
-            elif free_prompt is not None:
-                try:
-                    value = input(free_prompt).strip() or default
-                except EOFError:
-                    print("Error: stdin closed.", file=sys.stderr)
-                    sys.exit(1)
-                except KeyboardInterrupt:
-                    print("Interrupted.", file=sys.stderr)
-                    sys.exit(130)
-            else:
-                value = default
-        else:
-            value = default
-    return str(value) if value is not None else default
+        value = _resolve_missing_option(
+            request.default,
+            choice_prompt=request.prompt.choice_prompt,
+            choices=request.prompt.choices,
+            choice_normalize=request.prompt.choice_normalize,
+            free_prompt=request.prompt.free_prompt,
+        )
+    return str(value) if value is not None else request.default
+
+
+def _read_free_prompt(free_prompt: str, default: str) -> str:
+    return read_prompt_value(free_prompt) or default
+
+
+def _resolve_missing_option(
+    default: str,
+    *,
+    choice_prompt: str | None,
+    choices: list[str] | None,
+    choice_normalize: Callable[[str], str] | None,
+    free_prompt: str | None,
+) -> str:
+    if not _is_interactive():
+        return default
+    if choice_prompt is not None and choices is not None:
+        return _prompt_choice(
+            choice_prompt,
+            choices=choices,
+            default=default,
+            normalize=choice_normalize,
+        )
+    if free_prompt is not None:
+        return _read_free_prompt(free_prompt, default)
+    return default
+
+
+def _choice_mapping(
+    choices: list[str],
+    default: str,
+    normalize: Callable[[str], str] | None,
+) -> tuple[dict[str, str], str]:
+    # First occurrence wins when normalized keys collide (e.g. different casing).
+    mapping: dict[str, str] = {}
+    for choice in choices:
+        key = normalize(choice) if normalize else choice
+        if key not in mapping:
+            mapping[key] = choice
+    default_key = normalize(default) if normalize else default
+    if default_key not in mapping:
+        mapping[default_key] = default
+    return (mapping, default_key)
 
 
 def _prompt_choice(
@@ -170,25 +166,10 @@ def _prompt_choice(
     default: str,
     normalize: Callable[[str], str] | None = None,
 ) -> str:
-    # First occurrence wins when normalized keys collide (e.g. different casing).
-    mapping: dict[str, str] = {}
-    for c in choices:
-        key = normalize(c) if normalize else c
-        if key not in mapping:
-            mapping[key] = c
-    default_key = normalize(default) if normalize else default
-    if default_key not in mapping:
-        mapping[default_key] = default
+    mapping, default_key = _choice_mapping(choices, default, normalize)
 
     while True:
-        try:
-            value = input(prompt).strip()
-        except EOFError:
-            print("Error: stdin closed.", file=sys.stderr)
-            sys.exit(1)
-        except KeyboardInterrupt:
-            print("Interrupted.", file=sys.stderr)
-            sys.exit(130)
+        value = read_prompt_value(prompt)
         if not value:
             return mapping[default_key]
         key = normalize(value) if normalize else value
@@ -257,19 +238,8 @@ def _probe_llm_endpoint(
         return False
 
 
-def run_doctor_checks(args: argparse.Namespace) -> int:
-    """Run preflight diagnostics for local environment and dependencies."""
+def _run_doctor_data_checks(con: Console) -> bool:
     ok = True
-    con = Console()
-    pdf_hint = escape("-- pip install -e '.[pdf]'")
-    tui_hint = escape("-- needed for ai-pdf-renamer-tui / ai-pdf-renamer-gui; install with pip install -e '.[tui]'")
-
-    con.print()
-    con.print("[bold]AI-PDF-Renamer Doctor[/bold]")
-    con.print("[dim]Checking data files, dependencies, TUI readiness, and LLM connectivity...[/dim]")
-    con.print()
-
-    # --- Data files ---
     con.print("[bold]Data Files[/bold]")
     for filename in ("heuristic_scores.json", "meta_stopwords.json"):
         try:
@@ -295,8 +265,13 @@ def run_doctor_checks(args: argparse.Namespace) -> int:
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             ok = False
             con.print(f"  [red]FAIL[/red] {filename}: {exc}")
+    return ok
 
-    # --- Dependencies ---
+
+def _run_doctor_dependency_checks(con: Console) -> None:
+    pdf_hint = escape("-- pip install -e '.[pdf]'")
+    tui_hint = escape("-- needed for ai-pdf-renamer-tui / ai-pdf-renamer-gui; install with pip install -e '.[tui]'")
+
     con.print()
     con.print("[bold]Dependencies[/bold]")
     if importlib.util.find_spec("fitz") is not None:
@@ -324,53 +299,70 @@ def run_doctor_checks(args: argparse.Namespace) -> int:
     else:
         con.print(f"  [yellow]WARN[/yellow] textual [dim]{tui_hint}[/dim]")
 
-    # --- LLM connectivity ---
+
+def _build_doctor_probe_config(args: argparse.Namespace) -> RenamerConfig:
+    probe_raw = vars(args).copy()
+    probe_raw["use_llm"] = True
+    try:
+        return build_config(probe_raw)
+    except (ValueError, TypeError):
+        return RenamerConfig(
+            llm_base_url=getattr(args, "llm_base_url", None) or None,
+            llm_model=getattr(args, "llm_model", None) or None,
+            llm_timeout_s=getattr(args, "llm_timeout_s", None),
+            llm_backend=getattr(args, "llm_backend", None) or "http",
+            llm_model_path=getattr(args, "llm_model_path", None) or None,
+            use_llm=True,
+        )
+
+
+def _run_doctor_llm_checks(args: argparse.Namespace, con: Console) -> bool:
     con.print()
     con.print("[bold]LLM Connectivity[/bold]")
     use_llm = getattr(args, "use_llm", True)
-    if use_llm:
-        from .llm_backend import create_llm_client_from_config
-
-        # Use the shared resolver here so --doctor sees the same preset/env defaults
-        # as a real rename run.
-        probe_raw = vars(args).copy()
-        probe_raw["use_llm"] = True
-        try:
-            probe_cfg = build_config(probe_raw)
-        except (ValueError, TypeError):
-            probe_cfg = RenamerConfig(
-                llm_base_url=getattr(args, "llm_base_url", None) or None,
-                llm_model=getattr(args, "llm_model", None) or None,
-                llm_timeout_s=getattr(args, "llm_timeout_s", None),
-                llm_backend=getattr(args, "llm_backend", None) or "http",
-                llm_model_path=getattr(args, "llm_model_path", None) or None,
-                use_llm=True,
-            )
-        client = create_llm_client_from_config(probe_cfg)
-        con.print(f"  [dim]Backend:[/dim] {probe_cfg.llm_backend}  [dim]Model:[/dim] {client.model}")
-
-        use_chat = probe_cfg.llm_use_chat_api
-        primary_url = client.base_url
-        if not _probe_llm_endpoint(
-            primary_url,
-            client.model,
-            label="Configured/default endpoint",
-            use_chat_api=use_chat,
-        ):
-            ok = False
-
-        if primary_url == "http://127.0.0.1:8080/v1/completions":
-            _probe_llm_endpoint(
-                "http://127.0.0.1:11434/v1/completions",
-                client.model,
-                label="Ollama (alternate local endpoint)",
-                fail_is_warn=True,
-                use_chat_api=use_chat,
-            )
-    else:
+    if not use_llm:
         con.print("  [dim]Skipped (--no-llm)[/dim]")
+        return True
 
-    # --- Result ---
+    from .llm_backend import create_llm_client_from_config
+
+    probe_cfg = _build_doctor_probe_config(args)
+    client = create_llm_client_from_config(probe_cfg)
+    con.print(f"  [dim]Backend:[/dim] {probe_cfg.llm_backend}  [dim]Model:[/dim] {client.model}")
+
+    use_chat = probe_cfg.llm_use_chat_api
+    primary_url = client.base_url
+    ok = _probe_llm_endpoint(
+        primary_url,
+        client.model,
+        label="Configured/default endpoint",
+        use_chat_api=use_chat,
+    )
+
+    if primary_url == "http://127.0.0.1:8080/v1/completions":
+        _probe_llm_endpoint(
+            "http://127.0.0.1:11434/v1/completions",
+            client.model,
+            label="Ollama (alternate local endpoint)",
+            fail_is_warn=True,
+            use_chat_api=use_chat,
+        )
+    return ok
+
+
+def run_doctor_checks(args: argparse.Namespace) -> int:
+    """Run preflight diagnostics for local environment and dependencies."""
+    con = Console()
+
+    con.print()
+    con.print("[bold]AI-PDF-Renamer Doctor[/bold]")
+    con.print("[dim]Checking data files, dependencies, TUI readiness, and LLM connectivity...[/dim]")
+    con.print()
+
+    ok = _run_doctor_data_checks(con)
+    _run_doctor_dependency_checks(con)
+    ok = _run_doctor_llm_checks(args, con) and ok
+
     con.print()
     if ok:
         con.print("[bold green]All checks passed.[/bold green]")
@@ -382,65 +374,90 @@ def run_doctor_checks(args: argparse.Namespace) -> int:
 
 def _resolve_dirs(args: argparse.Namespace) -> tuple[list[str], str | None]:
     """Resolve directory list and optional single-file path from args. Raises SystemExit on error."""
-    # Manual mode is an interactive single-file flow; allowing --file as well
-    # would make it ambiguous which single-file contract should own prompts.
-    has_file = bool(getattr(args, "single_file", None))
-    has_manual = bool(getattr(args, "manual_file", None))
-    if has_file and has_manual:
-        _console.print("[red]Error:[/red] --file and --manual are mutually exclusive.")
-        _console.print("[dim]Use --file for non-interactive single-file, or --manual for interactive mode.[/dim]")
-        raise SystemExit(1)
-    single_file = getattr(args, "single_file", None) or getattr(args, "manual_file", None)
-    dirs: list[str] = list(getattr(args, "dirs", None) or [])
-    dirs_from_file = getattr(args, "dirs_from_file", None)
-    if dirs_from_file:
-        try:
-            lines = Path(dirs_from_file).read_text(encoding="utf-8").splitlines()
-            # Cap to avoid unbounded memory on huge or malicious input (P3).
-            _MAX_DIRS_FROM_FILE_LINES = 10_000
-            if len(lines) > _MAX_DIRS_FROM_FILE_LINES:
-                logger.warning(
-                    "--dirs-from-file has %s lines; using first %s only.",
-                    len(lines),
-                    _MAX_DIRS_FROM_FILE_LINES,
-                )
-                lines = lines[:_MAX_DIRS_FROM_FILE_LINES]
-            dirs.extend(line.strip() for line in lines if line.strip())
-        except OSError as e:
-            _console.print(f"[red]Cannot read --dirs-from-file:[/red] {e}")
-            raise SystemExit(1) from e
-    if single_file:
-        single_path = Path(single_file).resolve()
-        if not single_path.is_file():
-            _console.print(f"[red]File not found:[/red] {single_path}")
-            _console.print("[dim]Provide a valid path to an existing PDF file.[/dim]")
-            raise SystemExit(1)
-        dirs = [str(single_path.parent)]
-    if not dirs:
-        if _is_interactive():
-            try:
-                directory = (
-                    input("Path to the directory with PDFs (default: ./input_files): ").strip() or "./input_files"
-                )
-            except EOFError:
-                print("Error: stdin closed.", file=sys.stderr)
-                sys.exit(1)
-            except KeyboardInterrupt:
-                print("Interrupted.", file=sys.stderr)
-                sys.exit(130)
-            dirs = [directory]
-        else:
-            _console.print("[red]No input specified.[/red] Provide --dir or --file in non-interactive mode.")
-            raise SystemExit(1)
-    # Resolve paths and filter out empty strings
-    resolved_dirs = [str(Path(d).resolve()) for d in dirs if d.strip()]
-    if not resolved_dirs:
-        if dirs and not single_file:
-            _console.print("[red]Error:[/red] --dir path is empty. Provide a valid directory path.")
-        else:
-            _console.print("[red]No input specified.[/red] Use --dir or --file.")
-        raise SystemExit(1)
-    return (resolved_dirs, single_file)
+    return resolve_dirs(args, is_interactive=_is_interactive, console=_console, logger=logger)
+
+
+def _resolved_config_prompts(args: argparse.Namespace, file_defaults: dict[str, object]) -> dict[str, str]:
+    language = _resolve_option(
+        args,
+        request=OptionResolutionRequest(
+            attr="language",
+            file_defaults=file_defaults,
+            file_key="language",
+            default="de",
+            prompt=OptionPromptSpec(
+                choice_prompt="Language (de/en, default: de): ",
+                choices=["de", "en"],
+                choice_normalize=str.lower,
+            ),
+        ),
+    )
+    desired_case = _resolve_option(
+        args,
+        request=OptionResolutionRequest(
+            attr="desired_case",
+            file_defaults=file_defaults,
+            file_key="desired_case",
+            default="kebabCase",
+            prompt=OptionPromptSpec(
+                choice_prompt="Desired case format (camelCase, kebabCase, snakeCase, default: kebabCase): ",
+                choices=list(VALID_CASE_CHOICES),
+                choice_normalize=str.lower,
+            ),
+        ),
+    )
+    project = _resolve_option(
+        args,
+        request=OptionResolutionRequest(
+            attr="project",
+            file_defaults=file_defaults,
+            file_key="project",
+            default="",
+            prompt=OptionPromptSpec(free_prompt="Project name (optional): "),
+        ),
+    )
+    version = _resolve_option(
+        args,
+        request=OptionResolutionRequest(
+            attr="version",
+            file_defaults=file_defaults,
+            file_key="version",
+            default="",
+            prompt=OptionPromptSpec(free_prompt="Version (optional): "),
+        ),
+    )
+    return {"language": language, "desired_case": desired_case, "project": project, "version": version}
+
+
+def _raw_args_with_file_defaults(
+    args: argparse.Namespace,
+    file_defaults: dict[str, object],
+    parser: argparse.ArgumentParser,
+) -> dict[str, object]:
+    raw = vars(args).copy()
+    for dest, file_value in file_defaults.items():
+        if dest not in raw:
+            continue
+        if raw[dest] == parser.get_default(dest):
+            raw[dest] = file_value
+    return raw
+
+
+def _apply_runtime_overrides(raw: dict[str, object], args: argparse.Namespace) -> None:
+    raw["manual_mode"] = bool(getattr(args, "manual_file", None))
+    if raw["manual_mode"]:
+        raw["interactive"] = True
+    if getattr(args, "override_category_file", None):
+        raw["override_category_map"] = _load_override_category_map(args.override_category_file)
+
+
+def _build_config_or_exit(raw: dict[str, object], file_defaults: dict[str, object]) -> RenamerConfig:
+    try:
+        return build_config(raw, file_defaults=file_defaults)
+    except ValueError as exc:
+        _console.print(f"[red]Configuration error:[/red] {exc}")
+        _console.print("[dim]Run --validate-config to check settings without processing files.[/dim]")
+        raise SystemExit(1) from exc
 
 
 def _build_config_from_args(
@@ -450,64 +467,80 @@ def _build_config_from_args(
     parser: argparse.ArgumentParser,
 ) -> RenamerConfig:
     """Build RenamerConfig from args and file defaults (with interactive prompts where applicable)."""
-    language = _resolve_option(
-        args,
-        "language",
-        file_defaults,
-        "language",
-        "de",
-        choice_prompt="Language (de/en, default: de): ",
-        choices=["de", "en"],
-        choice_normalize=str.lower,
-    )
-    desired_case = _resolve_option(
-        args,
-        "desired_case",
-        file_defaults,
-        "desired_case",
-        "kebabCase",
-        choice_prompt="Desired case format (camelCase, kebabCase, snakeCase, default: kebabCase): ",
-        choices=list(VALID_CASE_CHOICES),
-        choice_normalize=str.lower,
-    )
-    project = _resolve_option(
-        args,
-        "project",
-        file_defaults,
-        "project",
-        "",
-        free_prompt="Project name (optional): ",
-    )
-    version = _resolve_option(
-        args,
-        "version",
-        file_defaults,
-        "version",
-        "",
-        free_prompt="Version (optional): ",
-    )
-
     # Treat parser defaults as "unset" so file defaults win when the CLI omitted an option.
-    raw = vars(args).copy()
-    for action in parser._actions:
-        if not action.dest or action.dest not in raw:
+    raw = _raw_args_with_file_defaults(args, file_defaults, parser)
+    raw.update(_resolved_config_prompts(args, file_defaults))
+    _apply_runtime_overrides(raw, args)
+    return _build_config_or_exit(raw, file_defaults)
+
+
+def _files_override_for(directory: str, single_file: str | None) -> list[Path] | None:
+    if not single_file:
+        return None
+    single_path = Path(single_file).resolve()
+    if Path(directory).resolve() != single_path.parent:
+        return None
+    return [single_path]
+
+
+def _run_requested_operation(
+    dirs: list[str],
+    config: RenamerConfig,
+    args: argparse.Namespace,
+    *,
+    single_file: str | None,
+) -> None:
+    if getattr(args, "watch", False):
+        if len(dirs) > 1:
+            raise SystemExit("Error: --watch supports only one directory. Use a single --dir.")
+        run_watch_loop(
+            dirs[0],
+            config=config,
+            interval_seconds=float(getattr(args, "watch_interval", 60) or 60),
+        )
+        return
+
+    for directory in dirs:
+        if not directory:
             continue
-        if action.dest not in file_defaults:
-            continue
-        if raw[action.dest] == parser.get_default(action.dest):
-            raw[action.dest] = file_defaults[action.dest]
-    raw.update(language=language, desired_case=desired_case, project=project, version=version)
-    raw["manual_mode"] = bool(getattr(args, "manual_file", None))
-    if raw["manual_mode"]:
-        raw["interactive"] = True
-    if getattr(args, "override_category_file", None):
-        raw["override_category_map"] = _load_override_category_map(args.override_category_file)
-    try:
-        return build_config(raw, file_defaults=file_defaults)
-    except ValueError as exc:
-        _console.print(f"[red]Configuration error:[/red] {exc}")
-        _console.print("[dim]Run --validate-config to check settings without processing files.[/dim]")
+        rename_pdfs_in_directory(
+            directory,
+            config=config,
+            files_override=_files_override_for(directory, single_file),
+        )
+
+
+def _raise_cli_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, FileNotFoundError | NotADirectoryError):
+        _console.print(f"[red]Path error:[/red] {exc}")
+        _console.print("[dim]Check that the directory exists and is accessible.[/dim]")
         raise SystemExit(1) from exc
+    if isinstance(exc, json.JSONDecodeError):
+        _console.print(f"[red]Invalid JSON in data file[/red] (line {exc.lineno}): {exc.msg}")
+        _console.print("[dim]Check heuristic_scores.json / meta_stopwords.json in the data directory.[/dim]")
+        raise SystemExit(1) from exc
+    if isinstance(exc, requests.Timeout):
+        _console.print(f"[red]LLM timeout:[/red] {exc}")
+        _console.print("[dim]Try increasing --llm-timeout or check server status. Use --doctor to verify.[/dim]")
+        raise SystemExit(1) from exc
+    if isinstance(exc, requests.RequestException):
+        _console.print(f"[red]LLM/network error:[/red] {exc}")
+        _console.print(
+            "[dim]Check server status, endpoint URL, or try increasing --llm-timeout. Use --doctor to verify.[/dim]"
+        )
+        raise SystemExit(1) from exc
+    if isinstance(exc, OSError):
+        _console.print(f"[red]I/O error:[/red] {exc}")
+        raise SystemExit(1) from exc
+    if isinstance(exc, ValueError):
+        _console.print(f"[red]Configuration error:[/red] {exc}")
+        _console.print("[dim]Run --validate-config to check config precedence and merged values.[/dim]")
+        raise SystemExit(1) from exc
+
+    logger.debug("Unhandled exception", exc_info=True)
+    _console.print(f"[red]Unexpected error:[/red] {exc}")
+    _console.print("[dim]Run with --verbose for full traceback.[/dim]")
+    raise SystemExit(1) from exc
 
 
 def _run_renamer_or_watch(
@@ -519,54 +552,9 @@ def _run_renamer_or_watch(
 ) -> None:
     """Run watch loop or rename each directory. Raises SystemExit on path/data errors."""
     try:
-        if getattr(args, "watch", False):
-            if len(dirs) > 1:
-                raise SystemExit("Error: --watch supports only one directory. Use a single --dir.")
-            run_watch_loop(
-                dirs[0],
-                config=config,
-                interval_seconds=float(getattr(args, "watch_interval", 60) or 60),
-            )
-        else:
-            for directory in dirs:
-                if not directory:
-                    continue
-                files_override = None
-                if single_file:
-                    single_path = Path(single_file).resolve()
-                    if Path(directory).resolve() == single_path.parent:
-                        files_override = [single_path]
-                rename_pdfs_in_directory(directory, config=config, files_override=files_override)
-    except (FileNotFoundError, NotADirectoryError) as exc:
-        _console.print(f"[red]Path error:[/red] {exc}")
-        _console.print("[dim]Check that the directory exists and is accessible.[/dim]")
-        raise SystemExit(1) from exc
-    except OSError as exc:
-        _console.print(f"[red]I/O error:[/red] {exc}")
-        raise SystemExit(1) from exc
-    except json.JSONDecodeError as exc:
-        _console.print(f"[red]Invalid JSON in data file[/red] (line {exc.lineno}): {exc.msg}")
-        _console.print("[dim]Check heuristic_scores.json / meta_stopwords.json in the data directory.[/dim]")
-        raise SystemExit(1) from exc
-    except ValueError as exc:
-        _console.print(f"[red]Configuration error:[/red] {exc}")
-        _console.print("[dim]Run --validate-config to check config precedence and merged values.[/dim]")
-        raise SystemExit(1) from exc
-    except requests.Timeout as exc:
-        _console.print(f"[red]LLM timeout:[/red] {exc}")
-        _console.print("[dim]Try increasing --llm-timeout or check server status. Use --doctor to verify.[/dim]")
-        raise SystemExit(1) from exc
-    except requests.RequestException as exc:
-        _console.print(f"[red]LLM/network error:[/red] {exc}")
-        _console.print(
-            "[dim]Check server status, endpoint URL, or try increasing --llm-timeout. Use --doctor to verify.[/dim]"
-        )
-        raise SystemExit(1) from exc
-    except Exception as exc:
-        logger.debug("Unhandled exception", exc_info=True)
-        _console.print(f"[red]Unexpected error:[/red] {exc}")
-        _console.print("[dim]Run with --verbose for full traceback.[/dim]")
-        raise SystemExit(1) from exc
+        _run_requested_operation(dirs, config, args, single_file=single_file)
+    except _RECOVERABLE_CLI_EXCEPTIONS as exc:
+        _raise_cli_error(exc)
 
 
 def main(argv: list[str] | None = None) -> None:

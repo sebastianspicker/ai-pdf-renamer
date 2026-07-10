@@ -1,5 +1,3 @@
-# ruff: noqa: F401
-
 """Tests for renamer.py pipeline helper functions.
 
 Covers _sanitize_csv_cell, _write_json_or_csv, _write_summary_json,
@@ -9,64 +7,112 @@ and _write_rename_outputs without requiring full pipeline orchestration.
 from __future__ import annotations
 
 import contextlib
-import csv
 import json
-import logging
-import threading
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 import ai_pdf_renamer.renamer as renamer
-from ai_pdf_renamer.config import RenamerConfig
-from ai_pdf_renamer.renamer import _sanitize_csv_cell, _write_json_or_csv, _write_rename_outputs, _write_summary_json
+from tests.conftest import make_config as _cfg
+from tests.conftest import patch_renamer_process_result
+from tests.conftest import write_dummy_pdf as _write_dummy_pdf
 
 
-def _make_config(**overrides: object) -> MagicMock:
-    """Build a MagicMock that behaves like RenamerConfig with sensible defaults."""
-    cfg = MagicMock()
-    cfg.export_metadata_path = overrides.get("export_metadata_path")
-    cfg.plan_file_path = overrides.get("plan_file_path")
-    cfg.summary_json_path = overrides.get("summary_json_path")
-    cfg.dry_run = overrides.get("dry_run", False)
-    return cfg
+def _stop_after_sleep_cycles(monkeypatch: pytest.MonkeyPatch, cycles: int) -> None:
+    sleep_count = 0
+
+    def fake_sleep(seconds: float) -> None:
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count >= cycles:
+            raise KeyboardInterrupt(f"stop after {cycles} sleep cycle(s)")
+
+    monkeypatch.setattr("time.sleep", fake_sleep)
 
 
-def _cfg(**overrides: Any) -> RenamerConfig:
-    """Build a RenamerConfig with sensible test defaults."""
-    defaults: dict[str, Any] = {
-        "use_llm": False,
-        "use_single_llm_call": False,
-    }
-    defaults.update(overrides)
-    return RenamerConfig(**defaults)
+def _patch_watch_collect_and_rename(
+    monkeypatch: pytest.MonkeyPatch,
+    scans: list[list[Path]],
+    original: Path,
+    renamed_output: Path,
+) -> list[list[Path]]:
+    scan_iter = iter(scans)
+    rename_calls: list[list[Path]] = []
+
+    def fake_rename(
+        directory: Any,
+        *,
+        config: Any,
+        files_override: list[Path] | None = None,
+        rules_override: Any = None,
+    ) -> set[Path]:
+        assert files_override is not None
+        rename_calls.append(files_override)
+        return {renamed_output} if files_override == [original] else set()
+
+    monkeypatch.setattr(renamer, "collect_pdf_files", lambda *args, **kwargs: next(scan_iter))
+    monkeypatch.setattr(renamer, "rename_pdfs_in_directory", fake_rename)
+    return rename_calls
+
+
+def _export_metadata_result(pdf: Path) -> list[tuple[Path, str, dict[str, object], None]]:
+    return [
+        (
+            pdf,
+            "20260101-exported-doc",
+            {
+                "category": "report",
+                "summary": "quarterly report",
+                "keywords": "finance, q1",
+                "category_source": "heuristic",
+                "llm_failed": False,
+                "used_vision_fallback": False,
+                "invoice_id": "",
+                "amount": "",
+                "company": "Acme",
+            },
+            None,
+        )
+    ]
+
+
+def _apply_with_success_callback(
+    file_path: Path,
+    base: str,
+    **kwargs: Any,
+) -> tuple[bool, Path]:
+    target = file_path.with_name(base + file_path.suffix)
+    on_success = kwargs.get("on_success")
+    if on_success is not None:
+        on_success(file_path, target, base)
+    return (True, target)
 
 
 class TestProcessContentToResult:
     def test_process_content_to_result_success(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """generate_filename returns a valid tuple; result includes used_vision_fallback."""
-        pdf = tmp_path / "doc.pdf"
-        pdf.write_bytes(b"%PDF-1.4 dummy")
+        pdf = _write_dummy_pdf(tmp_path / "doc.pdf")
         cfg = _cfg()
 
         monkeypatch.setattr(
             renamer,
+            "_extract_pdf_content",
+            lambda path, config: ("some invoice content", False),
+        )
+        monkeypatch.setattr(
+            renamer,
             "generate_filename",
-            lambda content, *, config, override_category=None, pdf_metadata=None, rules=None, source_path=None: (
+            lambda content, request: (
                 "20260101-invoice-acme",
                 {"category": "invoice"},
             ),
         )
         monkeypatch.setattr(renamer, "get_pdf_metadata", lambda path: None)
 
-        path_out, new_base, meta, exc = renamer._process_content_to_result(
-            pdf, "some invoice content", cfg, rules=None, used_vision=False
-        )
+        new_base, meta, exc = renamer.suggest_rename_for_file(pdf, cfg)
 
-        assert path_out == pdf
         assert new_base == "20260101-invoice-acme"
         assert meta is not None
         assert meta["category"] == "invoice"
@@ -84,12 +130,10 @@ class TestProcessContentToResult:
 
         monkeypatch.setattr(renamer, "generate_filename", _raise_value_error)
         monkeypatch.setattr(renamer, "get_pdf_metadata", lambda path: None)
+        monkeypatch.setattr(renamer, "_extract_pdf_content", lambda path, config: ("content", False))
 
-        path_out, new_base, meta, exc = renamer._process_content_to_result(
-            pdf, "content", cfg, rules=None, used_vision=False
-        )
+        new_base, meta, exc = renamer.suggest_rename_for_file(pdf, cfg)
 
-        assert path_out == pdf
         assert new_base is None
         assert meta is None
         assert isinstance(exc, ValueError)
@@ -111,7 +155,7 @@ class TestWatchLoop:
         monkeypatch.setattr(renamer, "rename_pdfs_in_directory", fake_rename)
         monkeypatch.setattr(
             renamer,
-            "_collect_pdf_files",
+            "collect_pdf_files",
             lambda *args, **kwargs: [pdf],
         )
 
@@ -144,10 +188,10 @@ class TestWatchLoop:
 
         monkeypatch.setattr(renamer, "rename_pdfs_in_directory", fake_rename)
 
-        # _collect_pdf_files returns the same file every iteration
+        # collect_pdf_files returns the same file every iteration
         monkeypatch.setattr(
             renamer,
-            "_collect_pdf_files",
+            "collect_pdf_files",
             lambda *args, **kwargs: [pdf],
         )
 
@@ -173,51 +217,23 @@ class TestWatchLoop:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """A legitimate new PDF discovered after a pass must be processed on the next iteration."""
-        original = tmp_path / "incoming.pdf"
-        renamed_output = tmp_path / "20260101-incoming.pdf"
-        newcomer = tmp_path / "arrived-later.pdf"
-        original.write_bytes(b"%PDF-1.4 original")
-        renamed_output.write_bytes(b"%PDF-1.4 renamed")
-        newcomer.write_bytes(b"%PDF-1.4 newcomer")
+        original = _write_dummy_pdf(tmp_path / "incoming.pdf", b"%PDF-1.4 original")
+        renamed_output = _write_dummy_pdf(tmp_path / "20260101-incoming.pdf", b"%PDF-1.4 renamed")
+        newcomer = _write_dummy_pdf(tmp_path / "arrived-later.pdf", b"%PDF-1.4 newcomer")
         cfg = _cfg(dry_run=False)
 
-        scans = iter(
+        rename_calls = _patch_watch_collect_and_rename(
+            monkeypatch,
             [
                 [original],
                 [renamed_output, newcomer],
                 [renamed_output, newcomer],
                 [renamed_output, newcomer],
-            ]
+            ],
+            original,
+            renamed_output,
         )
-        rename_calls: list[list[Path]] = []
-
-        def fake_collect(*args: Any, **kwargs: Any) -> list[Path]:
-            return next(scans)
-
-        def fake_rename(
-            directory: Any,
-            *,
-            config: Any,
-            files_override: list[Path] | None = None,
-            rules_override: Any = None,
-        ) -> set[Path]:
-            assert files_override is not None
-            rename_calls.append(files_override)
-            if files_override == [original]:
-                return {renamed_output}
-            return set()
-
-        sleep_count = 0
-
-        def fake_sleep(seconds: float) -> None:
-            nonlocal sleep_count
-            sleep_count += 1
-            if sleep_count >= 2:
-                raise KeyboardInterrupt("stop after second watch cycle")
-
-        monkeypatch.setattr(renamer, "_collect_pdf_files", fake_collect)
-        monkeypatch.setattr(renamer, "rename_pdfs_in_directory", fake_rename)
-        monkeypatch.setattr("time.sleep", fake_sleep)
+        _stop_after_sleep_cycles(monkeypatch, 2)
 
         with contextlib.suppress(KeyboardInterrupt):
             renamer.run_watch_loop(tmp_path, config=cfg, interval_seconds=0.01)
@@ -235,7 +251,7 @@ class TestWatchLoop:
         monkeypatch.setattr(renamer, "load_processing_rules", lambda *args, **kwargs: next(rule_iter))
         monkeypatch.setattr(
             renamer,
-            "_collect_pdf_files",
+            "collect_pdf_files",
             lambda *args, **kwargs: rules_seen.append(kwargs["rules"]) or [],
         )
 
@@ -264,7 +280,7 @@ class TestWatchLoop:
         rename_rules: list[object | None] = []
 
         monkeypatch.setattr(renamer, "load_processing_rules", lambda *args, **kwargs: rule_snapshot)
-        monkeypatch.setattr(renamer, "_collect_pdf_files", lambda *args, **kwargs: [pdf])
+        monkeypatch.setattr(renamer, "collect_pdf_files", lambda *args, **kwargs: [pdf])
 
         def fake_rename(
             directory: Any,
@@ -293,20 +309,16 @@ class TestRenamePipelineEdgeCases:
         cfg = _cfg(workers=1)
 
         monkeypatch.setattr(renamer, "_extract_pdf_content", lambda path, config: ("text", False))
-        monkeypatch.setattr(
+        patch_renamer_process_result(
+            monkeypatch,
             renamer,
-            "_process_content_to_result",
-            lambda file_path, content, config, rules=None, used_vision=False: (
-                file_path,
-                file_path.stem,
-                {"category": "invoice"},
-                None,
-            ),
+            lambda file_path: file_path.stem,
+            meta={"category": "invoice"},
         )
 
         seen: list[tuple[int, int, str]] = []
 
-        renamer._produce_rename_results(
+        renamer.produce_rename_results(
             [pdf_a, pdf_b],
             cfg,
             progress_callback=lambda current, total, file_path: seen.append((current, total, file_path.name)),
@@ -324,20 +336,16 @@ class TestRenamePipelineEdgeCases:
         cfg = _cfg(workers=2)
 
         monkeypatch.setattr(renamer, "_extract_pdf_content", lambda path, config: ("text", False))
-        monkeypatch.setattr(
+        patch_renamer_process_result(
+            monkeypatch,
             renamer,
-            "_process_content_to_result",
-            lambda file_path, content, config, rules=None, used_vision=False: (
-                file_path,
-                file_path.stem,
-                {"category": "invoice"},
-                None,
-            ),
+            lambda file_path: file_path.stem,
+            meta={"category": "invoice"},
         )
 
         seen: list[tuple[int, int, str]] = []
 
-        renamer._produce_rename_results(
+        renamer.produce_rename_results(
             [pdf_a, pdf_b],
             cfg,
             progress_callback=lambda current, total, file_path: seen.append((current, total, file_path.name)),
@@ -391,7 +399,7 @@ class TestRenamePipelineEdgeCases:
         monkeypatch.setattr(renamer, "ThreadPoolExecutor", FakeExecutor)
         monkeypatch.setattr(renamer, "wait", fake_wait)
 
-        results = renamer._produce_rename_results(files, cfg, rules=None)
+        results = renamer.produce_rename_results(files, cfg, rules=None)
 
         assert len(results) == len(files)
         assert max_pending <= cfg.workers
@@ -403,16 +411,16 @@ class TestRenamePipelineEdgeCases:
         cfg = _cfg(dry_run=True)
 
         collected_overrides: list[list[Path] | None] = []
-        original_collect = renamer._collect_pdf_files
+        original_collect = renamer.collect_pdf_files
 
         def spy_collect(*args: Any, **kwargs: Any) -> list[Path]:
             collected_overrides.append(kwargs.get("files_override"))
             return original_collect(*args, **kwargs)
 
-        monkeypatch.setattr(renamer, "_collect_pdf_files", spy_collect)
+        monkeypatch.setattr(renamer, "collect_pdf_files", spy_collect)
         monkeypatch.setattr(
             renamer,
-            "_produce_rename_results",
+            "produce_rename_results",
             lambda files, config, rules=None, progress_callback=None: [
                 (pdf, "20260101-overridden-file", {"category": "test"}, None)
             ],
@@ -429,58 +437,24 @@ class TestRenamePipelineEdgeCases:
 
     def test_rename_pdfs_with_export_metadata(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """When config.export_metadata_path is set, the export file is written after processing."""
-        pdf = tmp_path / "exportable.pdf"
-        pdf.write_bytes(b"%PDF-1.4 dummy")
+        pdf = _write_dummy_pdf(tmp_path / "exportable.pdf")
         export_path = tmp_path / "export.json"
         cfg = _cfg(dry_run=True, export_metadata_path=str(export_path))
 
         monkeypatch.setattr(
             renamer,
-            "_collect_pdf_files",
+            "collect_pdf_files",
             lambda *args, **kwargs: [pdf],
         )
         monkeypatch.setattr(
             renamer,
-            "_produce_rename_results",
-            lambda files, config, rules=None, progress_callback=None: [
-                (
-                    pdf,
-                    "20260101-exported-doc",
-                    {
-                        "category": "report",
-                        "summary": "quarterly report",
-                        "keywords": "finance, q1",
-                        "category_source": "heuristic",
-                        "llm_failed": False,
-                        "used_vision_fallback": False,
-                        "invoice_id": "",
-                        "amount": "",
-                        "company": "Acme",
-                    },
-                    None,
-                )
-            ],
+            "produce_rename_results",
+            lambda files, config, rules=None, progress_callback=None: _export_metadata_result(pdf),
         )
 
         # In dry_run mode, apply_single_rename returns True without calling on_success.
         # We mock it to invoke on_success so the export path is exercised.
-        def fake_apply(
-            file_path: Path,
-            base: str,
-            *,
-            plan_file_path: Any = None,
-            plan_entries: Any = None,
-            dry_run: bool = False,
-            backup_dir: Any = None,
-            on_success: Any = None,
-            max_filename_chars: Any = None,
-        ) -> tuple[bool, Path]:
-            target = file_path.with_name(base + file_path.suffix)
-            if on_success is not None:
-                on_success(file_path, target, base)
-            return (True, target)
-
-        monkeypatch.setattr(renamer, "apply_single_rename", fake_apply)
+        monkeypatch.setattr(renamer, "apply_single_rename", _apply_with_success_callback)
 
         renamer.rename_pdfs_in_directory(tmp_path, config=cfg)
 

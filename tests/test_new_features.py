@@ -5,6 +5,7 @@ import json
 import re
 import threading
 from pathlib import Path
+from typing import Self
 
 import pytest
 
@@ -142,34 +143,63 @@ def test_summary_json_written(monkeypatch, tmp_path: Path) -> None:
     assert data["failed"] == 0
 
 
-def test_rules_allowed_categories_are_passed_to_llm(monkeypatch) -> None:
+def _rules_allowed_categories_dependencies() -> tuple[object, object, object, object, object, object, object]:
     import ai_pdf_renamer.filename as filename_mod
+    import ai_pdf_renamer.filename_llm_metadata as filename_llm_metadata
+    import ai_pdf_renamer.filename_metadata as filename_metadata
     from ai_pdf_renamer.config import RenamerConfig
     from ai_pdf_renamer.heuristics import HeuristicRule, HeuristicScorer
     from ai_pdf_renamer.rules import ProcessingRules
     from ai_pdf_renamer.text_utils import Stopwords
 
-    scorer = HeuristicScorer(
-        rules=[
-            HeuristicRule(
-                pattern=re.compile("invoice"),
-                category="invoice",
-                score=2.0,
-            )
-        ]
+    return (
+        filename_mod,
+        filename_llm_metadata,
+        filename_metadata,
+        RenamerConfig,
+        HeuristicRule,
+        HeuristicScorer,
+        ProcessingRules,
+        Stopwords,
     )
 
-    captured: dict[str, object] = {}
 
-    monkeypatch.setattr(filename_mod, "get_document_summary", lambda *a, **k: "summary")
-    monkeypatch.setattr(filename_mod, "get_document_keywords", lambda *a, **k: ["kw"])
+def _invoice_scorer(heuristic_rule_cls: object, heuristic_scorer_cls: object) -> object:
+    rule = heuristic_rule_cls(pattern=re.compile("invoice"), category="invoice", score=2.0)
+    return heuristic_scorer_cls(rules=[rule])
+
+
+def _patch_llm_category_helpers(
+    monkeypatch,
+    filename_llm_metadata: object,
+    filename_metadata: object,
+) -> dict[str, object]:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(filename_llm_metadata, "get_document_summary", lambda *a, **k: "summary")
+    monkeypatch.setattr(filename_llm_metadata, "get_document_keywords", lambda *a, **k: ["kw"])
+    monkeypatch.setattr(filename_llm_metadata, "get_final_summary_tokens", lambda *a, **k: ["kw"])
 
     def fake_get_document_category(*args, **kwargs):
         captured["allowed_categories"] = kwargs.get("allowed_categories")
         return "invoice"
 
-    monkeypatch.setattr(filename_mod, "get_document_category", fake_get_document_category)
-    monkeypatch.setattr(filename_mod, "get_final_summary_tokens", lambda *a, **k: ["kw"])
+    monkeypatch.setattr(filename_metadata, "get_document_category", fake_get_document_category)
+    return captured
+
+
+def test_rules_allowed_categories_are_passed_to_llm(monkeypatch) -> None:
+    (
+        filename_mod,
+        filename_llm_metadata,
+        filename_metadata,
+        RenamerConfig,
+        HeuristicRule,
+        HeuristicScorer,
+        ProcessingRules,
+        Stopwords,
+    ) = _rules_allowed_categories_dependencies()
+    scorer = _invoice_scorer(HeuristicRule, HeuristicScorer)
+    captured = _patch_llm_category_helpers(monkeypatch, filename_llm_metadata, filename_metadata)
 
     rules = ProcessingRules(
         skip_llm_if_heuristic_category=[],
@@ -180,11 +210,13 @@ def test_rules_allowed_categories_are_passed_to_llm(monkeypatch) -> None:
 
     name, _meta = filename_mod.generate_filename(
         "Invoice 2024-01-09",
-        config=RenamerConfig(use_llm=True, use_single_llm_call=False),
-        llm_client=object(),
-        heuristic_scorer=scorer,
-        stopwords=Stopwords(words=set()),
-        rules=rules,
+        filename_mod.FilenameGenerationRequest(
+            config=RenamerConfig(use_llm=True, use_single_llm_call=False),
+            llm_client=object(),
+            heuristic_scorer=scorer,
+            stopwords=Stopwords(words=set()),
+            rules=rules,
+        ),
     )
 
     assert name
@@ -263,64 +295,36 @@ def test_parallel_processing_respects_stop_before_submitting(monkeypatch, tmp_pa
     stop_event = threading.Event()
     stop_event.set()
     cfg = renamer.RenamerConfig(workers=4, stop_event=stop_event)
-    out = renamer._produce_rename_results(files, cfg, rules=None)
+    out = renamer.rename_pdfs_in_directory(tmp_path, config=cfg, files_override=files)
 
-    assert out == []
+    assert out == set()
     assert calls["count"] == 0
 
 
-def test_post_rename_hook_runs_without_shell(monkeypatch, tmp_path: Path) -> None:
-    import ai_pdf_renamer.renamer as renamer
-
-    called: dict[str, object] = {}
-
-    def fake_run(*args, **kwargs):
-        called["args"] = args
-        called["kwargs"] = kwargs
-        return None
-
-    monkeypatch.setattr(renamer.subprocess, "run", fake_run)
+def test_post_rename_hook_rejects_local_command(tmp_path: Path, caplog) -> None:
+    from ai_pdf_renamer.renamer_hooks import run_post_rename_hook
 
     old_path = tmp_path / "old.pdf"
     new_path = tmp_path / "new.pdf"
-    renamer._run_post_rename_hook("echo hello", old_path, new_path, {"category": "invoice"})
+    with caplog.at_level("WARNING", logger="ai_pdf_renamer.renamer_hooks"):
+        run_post_rename_hook("echo hello", old_path, new_path, {"category": "invoice"})
 
-    assert called["args"][0] == ["echo", "hello"]
-    assert called["kwargs"]["shell"] is False
+    assert any("Local post-rename hook commands are disabled" in record.message for record in caplog.records)
 
 
-def test_post_rename_hook_shell_features_use_shell_wrapper(monkeypatch, tmp_path: Path) -> None:
-    import os
-
-    import ai_pdf_renamer.renamer as renamer
-
-    called: dict[str, object] = {}
-
-    def fake_run(*args, **kwargs):
-        called["args"] = args
-        called["kwargs"] = kwargs
-        return None
-
-    monkeypatch.setattr(renamer.subprocess, "run", fake_run)
+def test_post_rename_hook_rejects_shell_metacharacters(tmp_path: Path, caplog) -> None:
+    from ai_pdf_renamer.renamer_hooks import run_post_rename_hook
 
     old_path = tmp_path / "old.pdf"
     new_path = tmp_path / "new.pdf"
-    renamer._run_post_rename_hook("echo hello | cat", old_path, new_path, {"category": "invoice"})
+    with caplog.at_level("WARNING", logger="ai_pdf_renamer.renamer_hooks"):
+        run_post_rename_hook("echo hello | cat", old_path, new_path, {"category": "invoice"})
 
-    argv = called["args"][0]
-    if os.name == "nt":
-        assert len(argv) >= 3
-        assert argv[1] == "/c"
-        assert argv[2] == "echo hello | cat"
-    else:
-        assert len(argv) >= 3
-        assert argv[1] == "-c"
-        assert argv[2] == "echo hello | cat"
-    assert called["kwargs"]["shell"] is False
+    assert any("Local post-rename hook commands are disabled" in record.message for record in caplog.records)
 
 
 def test_post_rename_hook_supports_http_endpoint(monkeypatch, tmp_path: Path) -> None:
-    import ai_pdf_renamer.renamer as renamer
+    import ai_pdf_renamer.renamer_hooks as renamer_hooks
 
     calls: dict[str, object] = {}
 
@@ -332,25 +336,25 @@ def test_post_rename_hook_supports_http_endpoint(monkeypatch, tmp_path: Path) ->
         def __init__(self) -> None:
             self.trust_env = True
 
-        def __enter__(self) -> FakeSession:
+        def __enter__(self) -> Self:
             calls["trust_env_before_post"] = self.trust_env
             return self
 
         def __exit__(self, exc_type, exc, tb) -> None:
             return None
 
-        def post(self, url, json, timeout):
+        def post(self, url, **kwargs):
             calls["url"] = url
-            calls["payload"] = json
-            calls["timeout"] = timeout
+            calls["payload"] = kwargs["json"]
+            calls["timeout"] = kwargs["timeout"]
             calls["trust_env_at_post"] = self.trust_env
             return FakeResponse()
 
-    monkeypatch.setattr(renamer.requests, "Session", FakeSession)
+    monkeypatch.setattr(renamer_hooks.requests, "Session", FakeSession)
 
     old_path = tmp_path / "old.pdf"
     new_path = tmp_path / "new.pdf"
-    renamer._run_post_rename_hook("https://example.invalid/hook", old_path, new_path, {"x": 1})
+    renamer_hooks.run_post_rename_hook("https://example.invalid/hook", old_path, new_path, {"x": 1})
 
     assert calls["url"] == "https://example.invalid/hook"
     assert calls["payload"]["old_path"] == str(old_path)
@@ -381,13 +385,13 @@ def test_doctor_checks_fail_on_invalid_llm_probe_response(monkeypatch, tmp_path:
         def __init__(self) -> None:
             self.trust_env = True
 
-        def __enter__(self) -> FakeSession:
+        def __enter__(self) -> Self:
             return self
 
         def __exit__(self, exc_type, exc, tb) -> None:
             return None
 
-        def post(self, url, json, timeout):
+        def post(self, url, **kwargs):
             return FakeResponse()
 
     monkeypatch.setattr(cli.requests, "Session", FakeSession)
@@ -435,7 +439,7 @@ def test_llm_backend_concurrent_calls(monkeypatch) -> None:
     results: dict[str, str] = {}
 
     backend = HttpLLMBackend(base_url="http://example.invalid/v1/completions", model="x", timeout_s=1.0, use_chat=True)
-    monkeypatch.setattr(backend._session, "post", lambda *a, **kw: FakeResponse())
+    monkeypatch.setattr(backend.session, "post", lambda *a, **kw: FakeResponse())
 
     assert backend.complete("ping") == "ok"
     results["main"] = backend.complete("ping")
@@ -474,5 +478,5 @@ def test_load_config_file_non_object_returns_empty_dict(tmp_path: Path) -> None:
     json_path = tmp_path / "cfg.json"
     json_path.write_text('["not", "an", "object"]', encoding="utf-8")
 
-    loaded = cli._load_config_file(json_path)
+    loaded = cli.load_config_file(json_path)
     assert loaded == {}

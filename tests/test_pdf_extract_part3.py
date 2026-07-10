@@ -1,62 +1,18 @@
-# ruff: noqa: F401,F811
-
 from __future__ import annotations
 
 import argparse
 import base64
-import contextlib
 import json
 import logging
-import os
-import re
 import sys
-import time
-from datetime import date
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from ai_pdf_renamer import pdf_extract
-from ai_pdf_renamer.config import RenamerConfig
-from ai_pdf_renamer.heuristics import (
-    HeuristicRule,
-    HeuristicScorer,
-    _combine_resolve_conflict,
-    _embedding_conflict_pick,
-    _load_category_aliases,
-    load_heuristic_rules,
-    load_heuristic_rules_for_language,
-)
-from ai_pdf_renamer.renamer import (
-    _apply_post_rename_actions,
-    _produce_rename_results,
-    _run_post_rename_hook,
-    _write_json_or_csv,
-    rename_pdfs_in_directory,
-    run_watch_loop,
-)
-
-
-def _cfg(**overrides: object) -> RenamerConfig:
-    """Build a RenamerConfig with sensible test defaults and overrides."""
-    defaults: dict[str, object] = {
-        "use_llm": False,
-        "use_single_llm_call": False,
-    }
-    defaults.update(overrides)
-    return RenamerConfig(**defaults)  # type: ignore[arg-type]
-
-
-def _make_fake_pdf(tmp_path: Path, name: str = "test.pdf", mtime: float | None = None) -> Path:
-    """Create a minimal PDF in tmp_path and optionally set its mtime."""
-    p = tmp_path / name
-    # Minimal valid PDF (enough to be treated as a file with .pdf extension)
-    p.write_bytes(b"%PDF-1.0\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n%%EOF\n")
-    if mtime is not None:
-        os.utime(p, (mtime, mtime))
-    return p
+from tests.conftest import install_fitz_mock, make_cli_main_args, make_fitz_doc, make_pdf_to_text_sequence
 
 
 class TestPdfToTextRaisesOnExtractionError:
@@ -64,21 +20,12 @@ class TestPdfToTextRaisesOnExtractionError:
 
     def test_pdf_to_text_raises_on_extraction_error(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """All pages fail extraction -> RuntimeError with error details."""
-        from ai_pdf_renamer import pdf_extract
 
         mock_page = MagicMock()
         # All get_text calls raise, triggering error recording on all methods.
         mock_page.get_text.side_effect = RuntimeError("extraction failed")
 
-        mock_doc = MagicMock()
-        mock_doc.page_count = 1
-        mock_doc.is_encrypted = False
-        mock_doc.__getitem__ = MagicMock(return_value=mock_page)
-        mock_doc.load_page = MagicMock(return_value=mock_page)
-
-        mock_fitz = MagicMock()
-        mock_fitz.open.return_value = mock_doc
-        monkeypatch.setitem(sys.modules, "fitz", mock_fitz)
+        install_fitz_mock(monkeypatch, make_fitz_doc(mock_page, item_access=True))
 
         pdf_path = tmp_path / "broken.pdf"
         pdf_path.write_bytes(b"%PDF-1.4")
@@ -92,7 +39,6 @@ class TestVisionRenderJpegSuccess:
 
     def test_vision_render_jpeg_success(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """tobytes(output='jpeg') succeeds -> base64-encoded result."""
-        from ai_pdf_renamer import pdf_extract
 
         fake_jpeg = b"\xff\xd8\xff\xe0JFIF-test-data"
 
@@ -102,14 +48,7 @@ class TestVisionRenderJpegSuccess:
         mock_page = MagicMock()
         mock_page.get_pixmap.return_value = mock_pix
 
-        mock_doc = MagicMock()
-        mock_doc.is_encrypted = False
-        mock_doc.page_count = 1
-        mock_doc.load_page.return_value = mock_page
-
-        mock_fitz = MagicMock()
-        mock_fitz.open.return_value = mock_doc
-        monkeypatch.setitem(sys.modules, "fitz", mock_fitz)
+        install_fitz_mock(monkeypatch, make_fitz_doc(mock_page))
 
         pdf_path = tmp_path / "render_jpeg.pdf"
         pdf_path.write_bytes(b"%PDF-1.4")
@@ -125,7 +64,6 @@ class TestVisionRenderJpegTypeErrorPngFallback:
 
     def test_vision_render_jpeg_type_error_png_fallback(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """tobytes('jpeg') raises TypeError -> falls back to tobytes('png')."""
-        from ai_pdf_renamer import pdf_extract
 
         fake_png = b"\x89PNG-test-data"
 
@@ -141,14 +79,7 @@ class TestVisionRenderJpegTypeErrorPngFallback:
         mock_page = MagicMock()
         mock_page.get_pixmap.return_value = mock_pix
 
-        mock_doc = MagicMock()
-        mock_doc.is_encrypted = False
-        mock_doc.page_count = 1
-        mock_doc.load_page.return_value = mock_page
-
-        mock_fitz = MagicMock()
-        mock_fitz.open.return_value = mock_doc
-        monkeypatch.setitem(sys.modules, "fitz", mock_fitz)
+        install_fitz_mock(monkeypatch, make_fitz_doc(mock_page))
 
         pdf_path = tmp_path / "render_png_fallback.pdf"
         pdf_path.write_bytes(b"%PDF-1.4")
@@ -163,7 +94,6 @@ class TestVisionRenderGetPNGDataFallback:
 
     def test_vision_render_getpngdata_fallback(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """No tobytes, no getImageData -> getPNGData is used."""
-        from ai_pdf_renamer import pdf_extract
 
         fake_png = b"\x89PNG-via-getPNGData"
 
@@ -197,7 +127,6 @@ class TestVisionRenderNoMethods:
 
     def test_vision_render_no_methods(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Pix object has no tobytes/getImageData/getPNGData -> returns None."""
-        from ai_pdf_renamer import pdf_extract
 
         # spec=[] means no attributes at all -> hasattr checks all return False
         mock_pix = MagicMock(spec=[])
@@ -226,7 +155,6 @@ class TestVisionRenderEmptyBytes:
 
     def test_vision_render_empty_bytes(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """tobytes returns b'' -> returns None."""
-        from ai_pdf_renamer import pdf_extract
 
         mock_pix = MagicMock(spec=["tobytes"])
         mock_pix.tobytes.return_value = b""
@@ -253,20 +181,25 @@ class TestVisionRenderEmptyBytes:
 class TestExtractPagesEmptyTextResult:
     """Test _extract_pages when text mode returns empty (no fallback since S3 simplification)."""
 
-    def test_extract_pages_empty_text_yields_nothing(self) -> None:
+    def test_extract_pages_empty_text_yields_nothing(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Text mode empty -> no pieces extracted, no errors."""
-        from ai_pdf_renamer import pdf_extract
 
         mock_page = MagicMock()
         mock_page.get_text.return_value = ""
 
         mock_doc = MagicMock()
+        mock_doc.is_encrypted = False
         mock_doc.page_count = 1
         mock_doc.load_page = MagicMock(return_value=mock_page)
 
-        pieces, errors = pdf_extract._extract_pages(mock_doc, Path("/tmp/test.pdf"))
-        assert pieces == []
-        assert errors == []
+        mock_fitz = MagicMock()
+        mock_fitz.open.return_value = mock_doc
+        monkeypatch.setitem(sys.modules, "fitz", mock_fitz)
+
+        pdf_path = tmp_path / "test.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4")
+
+        assert pdf_extract.pdf_to_text(pdf_path) == ""
 
 
 class TestOcrTempFileCleanup:
@@ -274,18 +207,12 @@ class TestOcrTempFileCleanup:
 
     def test_ocr_temp_file_cleanup(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """After OCR, temp file is deleted regardless of outcome."""
-        from ai_pdf_renamer import pdf_extract
 
-        call_count = 0
-
-        def fake_pdf_to_text(*args: Any, **kwargs: Any) -> str:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return "Hi"  # Short, triggers OCR
-            return "OCR result text with enough characters to pass."
-
-        monkeypatch.setattr(pdf_extract, "pdf_to_text", fake_pdf_to_text)
+        monkeypatch.setattr(
+            pdf_extract,
+            "pdf_to_text",
+            make_pdf_to_text_sequence("Hi", "OCR result text with enough characters to pass."),
+        )
 
         temp_files_created: list[Path] = []
 
@@ -314,7 +241,6 @@ class TestVisionRenderOpenError:
 
     def test_vision_render_open_error(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """fitz.open raises RuntimeError -> returns None."""
-        from ai_pdf_renamer import pdf_extract
 
         mock_fitz = MagicMock()
         mock_fitz.open.side_effect = RuntimeError("Cannot open file")
@@ -332,7 +258,6 @@ class TestVisionRenderNoneFilepath:
 
     def test_vision_render_none_filepath(self) -> None:
         """None filepath -> returns None."""
-        from ai_pdf_renamer import pdf_extract
 
         result = pdf_extract.pdf_first_page_to_image_base64(None)
         assert result is None
@@ -343,7 +268,6 @@ class TestVisionRenderZeroPages:
 
     def test_vision_render_zero_pages(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Doc with 0 page_count -> returns None."""
-        from ai_pdf_renamer import pdf_extract
 
         mock_doc = MagicMock()
         mock_doc.is_encrypted = False
@@ -365,7 +289,6 @@ class TestVisionRenderExceptionInBody:
 
     def test_vision_render_runtime_error(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """RuntimeError during rendering -> returns None."""
-        from ai_pdf_renamer import pdf_extract
 
         mock_page = MagicMock()
         mock_page.get_pixmap.side_effect = RuntimeError("render error")
@@ -389,11 +312,11 @@ class TestVisionRenderExceptionInBody:
 class TestExtractPagesAccessError:
     """Test _extract_pages with page access error (lines 343-347)."""
 
-    def test_extract_pages_access_error(self) -> None:
+    def test_extract_pages_access_error(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Page access raises IndexError -> error recorded, continues."""
-        from ai_pdf_renamer import pdf_extract
 
         mock_doc = MagicMock()
+        mock_doc.is_encrypted = False
         mock_doc.page_count = 2
 
         call_count = 0
@@ -420,31 +343,39 @@ class TestExtractPagesAccessError:
 
         mock_doc.load_page = load_page_fn
 
-        pieces, errors = pdf_extract._extract_pages(mock_doc, Path("/tmp/test.pdf"))
-        assert len(pieces) == 1
-        assert "Page 1 text." in pieces[0]
-        assert len(errors) == 1
-        assert "page 0" in errors[0].lower()
+        mock_fitz = MagicMock()
+        mock_fitz.open.return_value = mock_doc
+        monkeypatch.setitem(sys.modules, "fitz", mock_fitz)
+
+        pdf_path = tmp_path / "test.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4")
+
+        assert pdf_extract.pdf_to_text(pdf_path) == "Page 1 text."
 
 
 class TestExtractPagesTextExtractionError:
     """Test _extract_pages records error when text extraction fails."""
 
-    def test_extract_pages_text_error_recorded(self) -> None:
+    def test_extract_pages_text_error_recorded(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Text extraction raises -> error recorded with OCR suggestion."""
-        from ai_pdf_renamer import pdf_extract
 
         mock_page = MagicMock()
         mock_page.get_text.side_effect = RuntimeError("corrupt page")
 
         mock_doc = MagicMock()
+        mock_doc.is_encrypted = False
         mock_doc.page_count = 1
         mock_doc.load_page = MagicMock(return_value=mock_page)
 
-        pieces, errors = pdf_extract._extract_pages(mock_doc, Path("/tmp/test.pdf"))
-        assert pieces == []
-        assert len(errors) == 1
-        assert "corrupt page" in errors[0]
+        mock_fitz = MagicMock()
+        mock_fitz.open.return_value = mock_doc
+        monkeypatch.setitem(sys.modules, "fitz", mock_fitz)
+
+        pdf_path = tmp_path / "test.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4")
+
+        with pytest.raises(RuntimeError, match="corrupt page"):
+            pdf_extract.pdf_to_text(pdf_path)
 
 
 class TestPdfToTextEmptyContentLargeFile:
@@ -452,7 +383,6 @@ class TestPdfToTextEmptyContentLargeFile:
 
     def test_pdf_to_text_empty_content_large_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """No text, page_count > 0, file > 1024 bytes -> ValueError with OCR suggestion."""
-        from ai_pdf_renamer import pdf_extract
 
         # Page returns empty text from all methods
         mock_page = MagicMock()
@@ -481,7 +411,6 @@ class TestVisionRenderGetImageDataFallback:
 
     def test_vision_render_getimagedata_fallback(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """No tobytes, but getImageData present -> uses getImageData('jpeg')."""
-        from ai_pdf_renamer import pdf_extract
 
         fake_jpeg = b"\xff\xd8\xff\xe0JFIF-via-getImageData"
 
@@ -592,13 +521,17 @@ class TestResolveDirsInteractivePrompt:
 
     def test_resolve_dirs_interactive_prompt(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Interactive mode with no --dir prompts user; input is used."""
-        import ai_pdf_renamer.cli as cli
+        from ai_pdf_renamer.cli_runtime import resolve_dirs
 
-        monkeypatch.setattr(cli, "_is_interactive", lambda: True)
         monkeypatch.setattr("builtins.input", lambda _prompt: str(tmp_path))
 
         args = argparse.Namespace(dirs=None, single_file=None, manual_file=None, dirs_from_file=None)
-        dirs, single_file = cli._resolve_dirs(args)
+        dirs, single_file = resolve_dirs(
+            args,
+            is_interactive=lambda: True,
+            console=MagicMock(),
+            logger=MagicMock(),
+        )
         assert dirs == [str(tmp_path.resolve())]
         assert single_file is None
 
@@ -608,13 +541,16 @@ class TestResolveDirsNoTtyNoDir:
 
     def test_resolve_dirs_no_tty_no_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Non-interactive, no --dir -> SystemExit."""
-        import ai_pdf_renamer.cli as cli
-
-        monkeypatch.setattr(cli, "_is_interactive", lambda: False)
+        from ai_pdf_renamer.cli_runtime import resolve_dirs
 
         args = argparse.Namespace(dirs=None, single_file=None, manual_file=None, dirs_from_file=None)
         with pytest.raises(SystemExit) as exc_info:
-            cli._resolve_dirs(args)
+            resolve_dirs(
+                args,
+                is_interactive=lambda: False,
+                console=MagicMock(),
+                logger=MagicMock(),
+            )
         assert exc_info.value.code == 1
 
 
@@ -692,7 +628,7 @@ class TestMainDoctorPath:
         monkeypatch.setattr(cli, "run_doctor_checks", lambda args: 0)
 
         with pytest.raises(SystemExit) as exc_info:
-            cli.main(["--doctor", "--dir", "/tmp"])
+            cli.main(["--doctor", "--dir", "."])
 
         assert exc_info.value.code == 0
 
@@ -719,51 +655,25 @@ class TestMainRequestsError:
         monkeypatch.setattr(cli, "rename_pdfs_in_directory", fake_rename)
 
         with pytest.raises(SystemExit) as exc_info:
-            cli.main(
-                [
-                    "--dir",
-                    str(tmp_path),
-                    "--language",
-                    "de",
-                    "--case",
-                    "kebabCase",
-                    "--project",
-                    "",
-                    "--version",
-                    "",
-                ]
-            )
+            cli.main(make_cli_main_args(tmp_path))
         assert exc_info.value.code == 1
 
 
 class TestMainGenericError:
-    """Test main() generic Exception handling (lines 421-423)."""
+    """Test main() unexpected runtime error handling."""
 
     def test_main_generic_error(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """Generic Exception during rename -> SystemExit with exit code 1."""
+        """Unexpected RuntimeError during rename -> SystemExit with exit code 1."""
         import ai_pdf_renamer.cli as cli
 
         monkeypatch.setattr(cli, "setup_logging", lambda **k: None)
         monkeypatch.setattr(cli, "_is_interactive", lambda: False)
 
         def fake_rename(*args: Any, **kwargs: Any) -> None:
-            raise Exception("Unexpected failure")
+            raise RuntimeError("Unexpected failure")
 
         monkeypatch.setattr(cli, "rename_pdfs_in_directory", fake_rename)
 
         with pytest.raises(SystemExit) as exc_info:
-            cli.main(
-                [
-                    "--dir",
-                    str(tmp_path),
-                    "--language",
-                    "de",
-                    "--case",
-                    "kebabCase",
-                    "--project",
-                    "",
-                    "--version",
-                    "",
-                ]
-            )
+            cli.main(make_cli_main_args(tmp_path))
         assert exc_info.value.code == 1

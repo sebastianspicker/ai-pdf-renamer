@@ -1,9 +1,26 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
+from . import llm_backend as _llm_backend
 from .cache import ResponseCache
-from .llm_backend import HttpLLMBackend, LLMClient, LocalLLMClient  # noqa: F401 (re-exports)
+from .llm_options import (
+    AnalysisOptions,
+    CategoryOptions,
+    FinalSummaryOptions,
+    JsonCompletionOptions,
+    KeywordsOptions,
+    LlmCacheOptions,
+    PromptKeyOptions,
+    PromptRetryOptions,
+    SummaryOptions,
+    _merge_analysis_options,
+    _merge_summary_options,
+)
+from .llm_options import (
+    SimpleFilenameOptions as SimpleFilenameOptions,
+)
 from .llm_parsing import (
     CONTEXT_128K_CHUNK_OVERLAP,
     CONTEXT_128K_CHUNK_SIZE,
@@ -16,7 +33,6 @@ from .llm_parsing import (
 from .llm_prompts import (
     _PLACEHOLDER_ALLOWED_CATEGORIES,
     _build_allowed_categories_instruction,
-    _escape_doc_content,
     _summary_doc_type_hint,
     _summary_prompt_chunk,
     _summary_prompt_combine,
@@ -24,10 +40,16 @@ from .llm_prompts import (
     build_analysis_prompt,
 )
 from .llm_schema import DocumentAnalysisResult, validate_llm_document_result
-from .rename_ops import sanitize_filename_from_llm
+from .llm_simple_filename import get_document_filename_simple as get_document_filename_simple
+from .options import merge_options
 from .text_utils import chunk_text
 
 logger = logging.getLogger(__name__)
+
+HttpLLMBackend = _llm_backend.HttpLLMBackend
+LLMClient = _llm_backend.LLMClient
+LocalLLMClient = _llm_backend.LocalLLMClient
+_COMPAT_EXPORTS = (SimpleFilenameOptions, get_document_filename_simple)
 
 # Temperature increment per retry attempt when LLM JSON parsing fails.
 _RETRY_TEMP_INCREMENT = 0.2
@@ -56,73 +78,101 @@ def _build_cache_key(
 def complete_json_with_retry(
     client: LLMClient,
     prompt: str,
-    *,
-    temperature: float = 0.0,
-    max_retries: int = 3,
-    max_tokens: int | None = 1024,
-    json_mode: bool = False,
-    cache: ResponseCache | None = None,
-    cache_key: str | None = None,
+    options: JsonCompletionOptions | None = None,
+    **overrides: object,
 ) -> str:
     """Retry LLM completion up to max_retries times, increasing temperature, until valid JSON."""
-    if cache is not None and cache_key is not None:
-        cached = cache.get(cache_key)
-        if cached is not None:
-            logger.debug("LLM cache hit for %s", cache_key)
-            return cached
-
-    response_format = {"type": "json_object"} if json_mode else None
-    effective_retries = 1 if json_mode else max_retries
-    temp = temperature
-    last = ""
-    for i in range(effective_retries):
-        last = client.complete(prompt, temperature=temp, max_tokens=max_tokens, response_format=response_format)
-        try:
-            extract_and_validate_json(last)
-            if cache is not None and cache_key is not None:
-                cache.set(cache_key, last)
-            return last
-        except ValueError:
-            pass
-        temp += _RETRY_TEMP_INCREMENT
-        logger.info("Retry %s: New temperature=%s", i + 1, temp)
+    opts = merge_options(options or JsonCompletionOptions(), overrides)
+    if cached := _cached_llm_response(opts):
+        return cached
+    result = _complete_json_attempts(client, prompt, opts)
+    if result.valid:
+        _store_cached_llm_response(opts, result.response)
+        return result.response
     logger.error(
         "LLM returned no valid JSON after %s retries. Using heuristic or 'na' for this document.",
-        effective_retries,
+        _effective_retries(opts),
     )
-    return last
+    return result.response
+
+
+@dataclass(frozen=True)
+class JsonCompletionResult:
+    response: str
+    valid: bool
+
+
+def _cached_llm_response(options: JsonCompletionOptions) -> str | None:
+    if options.cache is None or options.cache_key is None:
+        return None
+    cached = options.cache.get(options.cache_key)
+    if cached is not None:
+        logger.debug("LLM cache hit for %s", options.cache_key)
+    return cached
+
+
+def _store_cached_llm_response(options: JsonCompletionOptions, response: str) -> None:
+    if options.cache is not None and options.cache_key is not None:
+        options.cache.set(options.cache_key, response)
+
+
+def _effective_retries(options: JsonCompletionOptions) -> int:
+    return 1 if options.json_mode else options.max_retries
+
+
+def _response_format(options: JsonCompletionOptions) -> dict[str, str] | None:
+    return {"type": "json_object"} if options.json_mode else None
+
+
+def _complete_json_attempts(client: LLMClient, prompt: str, options: JsonCompletionOptions) -> JsonCompletionResult:
+    temp = options.temperature
+    last = ""
+    for attempt in range(_effective_retries(options)):
+        last = client.complete(
+            prompt,
+            temperature=temp,
+            max_tokens=options.max_tokens,
+            response_format=_response_format(options),
+        )
+        if _is_valid_json_response(last):
+            return JsonCompletionResult(last, valid=True)
+        temp += _RETRY_TEMP_INCREMENT
+        logger.info("Retry %s: New temperature=%s", attempt + 1, temp)
+    return JsonCompletionResult(last, valid=False)
+
+
+def _is_valid_json_response(response: str) -> bool:
+    try:
+        extract_and_validate_json(response)
+    except ValueError:
+        return False
+    return True
 
 
 def _try_prompts_for_key(
     client: LLMClient,
     prompts: list[str],
-    *,
-    key: str,
-    language: str,
-    operation: str,
-    temperature: float,
-    max_tokens: int | None = 1024,
-    lenient: bool = False,
-    cache: ResponseCache | None = None,
-    cache_key_base: str | None = None,
+    options: PromptKeyOptions,
 ) -> str | list[str] | None:
     for i, prompt in enumerate(prompts):
         cache_key = _build_cache_key(
-            cache_key_base,
-            operation=f"{operation}:{i}",
+            options.cache_key_base,
+            operation=f"{options.operation}:{i}",
             model=client.model,
-            language=language,
+            language=options.language,
             payload=prompt,
         )
         r = complete_json_with_retry(
             client,
             prompt,
-            temperature=temperature + i * _RETRY_TEMP_INCREMENT,
-            max_tokens=max_tokens,
-            cache=cache,
-            cache_key=cache_key,
+            JsonCompletionOptions(
+                temperature=options.temperature + i * _RETRY_TEMP_INCREMENT,
+                max_tokens=options.max_tokens,
+                cache=options.cache,
+                cache_key=cache_key,
+            ),
         )
-        v = parse_json_field(r, key=key, lenient=lenient)
+        v = parse_json_field(r, key=options.key, lenient=options.lenient)
         if v is not None:
             return v
     return None
@@ -131,55 +181,67 @@ def _try_prompts_for_key(
 def get_document_analysis(
     client: LLMClient,
     pdf_content: str,
-    *,
-    language: str = "de",
-    temperature: float = 0.0,
-    max_content_chars: int | None = None,
-    max_content_tokens: int | None = None,
-    suggested_doc_type: str | None = None,
-    allowed_categories: list[str] | None = None,
-    suggested_categories: list[str] | None = None,
-    lenient_json: bool = False,
-    json_mode: bool = False,
-    cache: ResponseCache | None = None,
-    cache_key_base: str | None = None,
+    options: AnalysisOptions | None = None,
+    **overrides: object,
 ) -> DocumentAnalysisResult:
     """Extract summary, keywords, and category from document text in a single LLM call.
 
     Return a DocumentAnalysisResult with empty defaults when content is too short or parsing fails.
     """
-    if not isinstance(pdf_content, str) or len(pdf_content.strip()) < 50:
+    opts = _merge_analysis_options(options or AnalysisOptions(), overrides)
+    text = _usable_document_text(pdf_content)
+    if text is None:
         return DocumentAnalysisResult()
 
-    text = pdf_content.strip()
-    effective_max = CONTEXT_128K_MAX_CHARS_SINGLE
-    if max_content_chars is not None:
-        effective_max = min(CONTEXT_128K_MAX_CHARS_SINGLE, max_content_chars)
-    text = truncate_for_llm(text, effective_max, max_tokens=max_content_tokens)
+    text = _truncated_analysis_text(text, opts)
 
     prompt = build_analysis_prompt(
-        language,
+        opts.language,
         text,
-        suggested_doc_type=suggested_doc_type,
-        allowed_categories=allowed_categories,
-        suggested_categories=suggested_categories,
+        suggested_doc_type=opts.suggested_doc_type,
+        allowed_categories=opts.allowed_categories,
+        suggested_categories=opts.suggested_categories,
     )
     raw = complete_json_with_retry(
         client,
         prompt,
-        temperature=temperature,
-        max_retries=2,
-        max_tokens=1024,
-        json_mode=json_mode,
-        cache=cache,
-        cache_key=_build_cache_key(
-            cache_key_base,
-            operation="analysis",
-            model=client.model,
-            language=language,
-            payload=prompt,
+        JsonCompletionOptions(
+            temperature=opts.temperature,
+            max_retries=2,
+            max_tokens=1024,
+            json_mode=opts.json_mode,
+            cache=opts.cache,
+            cache_key=_analysis_cache_key(client, prompt, opts),
         ),
     )
+    return _validated_analysis_result(raw, opts.lenient_json)
+
+
+def _usable_document_text(pdf_content: object) -> str | None:
+    if not isinstance(pdf_content, str):
+        return None
+    text = pdf_content.strip()
+    return text if len(text) >= 50 else None
+
+
+def _truncated_analysis_text(text: str, options: AnalysisOptions) -> str:
+    effective_max = CONTEXT_128K_MAX_CHARS_SINGLE
+    if options.max_content_chars is not None:
+        effective_max = min(CONTEXT_128K_MAX_CHARS_SINGLE, options.max_content_chars)
+    return truncate_for_llm(text, effective_max, max_tokens=options.max_content_tokens)
+
+
+def _analysis_cache_key(client: LLMClient, prompt: str, options: AnalysisOptions) -> str | None:
+    return _build_cache_key(
+        options.cache_key_base,
+        operation="analysis",
+        model=client.model,
+        language=options.language,
+        payload=prompt,
+    )
+
+
+def _validated_analysis_result(raw: str, lenient_json: bool) -> DocumentAnalysisResult:
     try:
         data = extract_and_validate_json(
             raw,
@@ -188,61 +250,68 @@ def get_document_analysis(
         )
     except ValueError:
         data = {}
-
     return validate_llm_document_result(data)
 
 
 def get_document_summary(
     client: LLMClient,
     pdf_content: str,
-    *,
-    language: str = "de",
-    temperature: float = 0.0,
-    max_chars_single: int = CONTEXT_128K_MAX_CHARS_SINGLE,
-    max_content_chars: int | None = None,
-    max_content_tokens: int | None = None,
-    suggested_doc_type: str | None = None,
-    lenient_json: bool = False,
-    cache: ResponseCache | None = None,
-    cache_key_base: str | None = None,
+    options: SummaryOptions | None = None,
+    **overrides: object,
 ) -> str:
     """Generate a short document summary via LLM, chunking long content and combining partial summaries.
 
     Return 'na' when content is missing or too short.
     """
-    if not isinstance(pdf_content, str):
-        return "na"
-    text = pdf_content.strip()
-    if len(text) < 50:
+    opts = _merge_summary_options(options or SummaryOptions(), overrides)
+    text = _usable_document_text(pdf_content)
+    if text is None:
         return "na"
 
-    # Chunking depends on the original document size, not the truncated prompt
-    # size, otherwise large documents would be misclassified as single-prompt.
     original_text_length = len(text)
-    effective_max = max_chars_single
-    if max_content_chars is not None:
-        effective_max = min(max_chars_single, max_content_chars)
-    text = truncate_for_llm(text, effective_max, max_tokens=max_content_tokens)
+    text = _truncated_summary_text(text, opts)
+    doc_type_hint = _summary_doc_type_hint(opts.language, opts.suggested_doc_type)
 
-    doc_type_hint = _summary_doc_type_hint(language, suggested_doc_type)
+    if original_text_length < opts.max_chars_single:
+        return _short_document_summary(client, text, doc_type_hint, opts)
+    return _chunked_document_summary(client, text, doc_type_hint, opts)
 
-    if original_text_length < max_chars_single:
-        prompts = _summary_prompts_short(language, doc_type_hint, text)
-        val = _try_prompts_for_key(
-            client,
-            prompts,
+
+def _truncated_summary_text(text: str, options: SummaryOptions) -> str:
+    effective_max = options.max_chars_single
+    if options.max_content_chars is not None:
+        effective_max = min(options.max_chars_single, options.max_content_chars)
+    return truncate_for_llm(text, effective_max, max_tokens=options.max_content_tokens)
+
+
+def _short_document_summary(client: LLMClient, text: str, doc_type_hint: str, options: SummaryOptions) -> str:
+    prompts = _summary_prompts_short(options.language, doc_type_hint, text)
+    val = _try_prompts_for_key(
+        client,
+        prompts,
+        PromptKeyOptions(
             key="summary",
-            language=language,
             operation="summary_short",
-            temperature=temperature,
-            max_tokens=1024,
-            lenient=lenient_json,
-            cache=cache,
-            cache_key_base=cache_key_base,
-        )
-        result = validate_llm_document_result({"summary": val if isinstance(val, str) else ""})
-        return result.summary
+            retry=PromptRetryOptions(
+                language=options.language,
+                temperature=options.temperature,
+                lenient=options.lenient_json,
+            ),
+            cache_options=LlmCacheOptions(options.cache, options.cache_key_base),
+        ),
+    )
+    result = validate_llm_document_result({"summary": val if isinstance(val, str) else ""})
+    return result.summary
 
+
+def _chunked_document_summary(client: LLMClient, text: str, doc_type_hint: str, options: SummaryOptions) -> str:
+    combined = _combined_chunk_summaries(client, text, doc_type_hint, options)
+    if not combined:
+        return "na"
+    return _combined_summary_result(client, combined, doc_type_hint, options)
+
+
+def _combined_chunk_summaries(client: LLMClient, text: str, doc_type_hint: str, options: SummaryOptions) -> str:
     chunks = chunk_text(
         text,
         chunk_size=CONTEXT_128K_CHUNK_SIZE,
@@ -250,46 +319,49 @@ def get_document_summary(
     )
     partial: list[str] = []
     for chunk in chunks:
-        chunk_prompt = _summary_prompt_chunk(language, doc_type_hint, chunk)
+        chunk_prompt = _summary_prompt_chunk(options.language, doc_type_hint, chunk)
         r = complete_json_with_retry(
             client,
             chunk_prompt,
-            temperature=temperature,
-            max_retries=3,
-            max_tokens=1024,
-            cache=cache,
-            cache_key=_build_cache_key(
-                cache_key_base,
-                operation=f"summary_chunk:{len(partial)}",
-                model=client.model,
-                language=language,
-                payload=chunk_prompt,
+            JsonCompletionOptions(
+                temperature=options.temperature,
+                max_retries=3,
+                max_tokens=1024,
+                cache=options.cache,
+                cache_key=_build_cache_key(
+                    options.cache_key_base,
+                    operation=f"summary_chunk:{len(partial)}",
+                    model=client.model,
+                    language=options.language,
+                    payload=chunk_prompt,
+                ),
             ),
         )
-        v = parse_json_field(r, key="summary", lenient=lenient_json)
+        v = parse_json_field(r, key="summary", lenient=options.lenient_json)
         partial.append(v if isinstance(v, str) else "")
+    return " ".join(p for p in partial if p)
 
-    combined = " ".join(p for p in partial if p)
-    if not combined:
-        return "na"
 
-    final_prompt = _summary_prompt_combine(language, doc_type_hint, combined)
+def _combined_summary_result(client: LLMClient, combined: str, doc_type_hint: str, options: SummaryOptions) -> str:
+    final_prompt = _summary_prompt_combine(options.language, doc_type_hint, combined)
     r_final = complete_json_with_retry(
         client,
         final_prompt,
-        temperature=temperature + _RETRY_TEMP_INCREMENT,
-        max_retries=3,
-        max_tokens=1024,
-        cache=cache,
-        cache_key=_build_cache_key(
-            cache_key_base,
-            operation="summary_combine",
-            model=client.model,
-            language=language,
-            payload=final_prompt,
+        JsonCompletionOptions(
+            temperature=options.temperature + _RETRY_TEMP_INCREMENT,
+            max_retries=3,
+            max_tokens=1024,
+            cache=options.cache,
+            cache_key=_build_cache_key(
+                options.cache_key_base,
+                operation="summary_combine",
+                model=client.model,
+                language=options.language,
+                payload=final_prompt,
+            ),
         ),
     )
-    v_final = parse_json_field(r_final, key="summary", lenient=lenient_json)
+    v_final = parse_json_field(r_final, key="summary", lenient=options.lenient_json)
     result = validate_llm_document_result({"summary": v_final if isinstance(v_final, str) else ""})
     return result.summary
 
@@ -297,22 +369,43 @@ def get_document_summary(
 def get_document_keywords(
     client: LLMClient,
     summary: str,
-    *,
-    language: str = "de",
-    temperature: float = 0.0,
-    suggested_category: str | None = None,
-    lenient_json: bool = False,
-    cache: ResponseCache | None = None,
-    cache_key_base: str | None = None,
+    options: KeywordsOptions | None = None,
+    **overrides: object,
 ) -> tuple[str, ...] | None:
     """Extract 5-7 keywords from a document summary via LLM. Return None on failure."""
-    cat_hint = ""
-    if suggested_category and suggested_category.strip():
-        c = suggested_category.strip()
-        cat_hint = f"Das Dokument ist voraussichtlich: {c}. " if language == "de" else f"The document is likely: {c}. "
+    opts = merge_options(options or KeywordsOptions(), overrides)
+    prompts = _keyword_prompts(summary, opts)
+    val = _try_prompts_for_key(
+        client,
+        prompts,
+        PromptKeyOptions(
+            key="keywords",
+            operation="keywords",
+            retry=PromptRetryOptions(
+                language=opts.language,
+                temperature=opts.temperature,
+                max_tokens=512,
+                lenient=opts.lenient_json,
+            ),
+            cache_options=LlmCacheOptions(opts.cache, opts.cache_key_base),
+        ),
+    )
+    result = validate_llm_document_result({"keywords": val if isinstance(val, list) else []})
+    return result.keywords if result.keywords else None
 
-    if language == "de":
-        prompts = [
+
+def _keyword_prompts(summary: str, options: KeywordsOptions) -> list[str]:
+    cat_hint = ""
+    if options.suggested_category and options.suggested_category.strip():
+        category = options.suggested_category.strip()
+        cat_hint = (
+            f"Das Dokument ist voraussichtlich: {category}. "
+            if options.language == "de"
+            else f"The document is likely: {category}. "
+        )
+
+    if options.language == "de":
+        return [
             (
                 cat_hint + "Extrahiere bitte 5–7 Schlüsselwörter aus dieser Zusammenfassung.\n"
                 "Gib ausschließlich eine Ausgabe in der Form:\n"
@@ -326,29 +419,13 @@ def get_document_keywords(
                 "Hier die Zusammenfassung:\n" + summary
             ),
         ]
-    else:
-        prompts = [
-            (
-                cat_hint + "Extract 5–7 keywords from this summary. Return ONLY JSON:\n"
-                '{"keywords":["KW1","KW2"]}\n\n'
-                "Summary:\n" + summary
-            )
-        ]
-
-    val = _try_prompts_for_key(
-        client,
-        prompts,
-        key="keywords",
-        language=language,
-        operation="keywords",
-        temperature=temperature,
-        max_tokens=512,
-        lenient=lenient_json,
-        cache=cache,
-        cache_key_base=cache_key_base,
-    )
-    result = validate_llm_document_result({"keywords": val if isinstance(val, list) else []})
-    return result.keywords if result.keywords else None
+    return [
+        (
+            cat_hint + "Extract 5–7 keywords from this summary. Return ONLY JSON:\n"
+            '{"keywords":["KW1","KW2"]}\n\n'
+            "Summary:\n" + summary
+        )
+    ]
 
 
 def get_document_category(
@@ -356,57 +433,62 @@ def get_document_category(
     *,
     summary: str,
     keywords: list[str],
-    language: str = "de",
-    temperature: float = 0.0,
-    suggested_categories: list[str] | None = None,
-    allowed_categories: list[str] | None = None,
-    lenient_json: bool = False,
-    cache: ResponseCache | None = None,
-    cache_key_base: str | None = None,
+    options: CategoryOptions | None = None,
+    **overrides: object,
 ) -> str:
     """Classify document category via LLM, optionally constrained to allowed/suggested categories."""
+    opts = merge_options(options or CategoryOptions(), overrides)
+    prompts = _category_prompts(summary, keywords, opts)
+    val = _try_prompts_for_key(
+        client,
+        prompts,
+        PromptKeyOptions(
+            key="category",
+            operation="category",
+            retry=PromptRetryOptions(
+                language=opts.language,
+                temperature=opts.temperature,
+                max_tokens=256,
+                lenient=opts.lenient_json,
+            ),
+            cache_options=LlmCacheOptions(opts.cache, opts.cache_key_base),
+        ),
+    )
+    result = validate_llm_document_result({"category": _validated_raw_category(val)})
+    return result.category
+
+
+def _category_prompts(summary: str, keywords: list[str], options: CategoryOptions) -> list[str]:
     keywords_joined = ", ".join(keywords)
-    if language == "de":
+    if options.language == "de":
         base_text = f"Zusammenfassung:\n{summary}\nKeywords:{keywords_joined}"
     else:
         base_text = f"Summary:\n{summary}\nKeywords:{keywords_joined}"
     category_instruction = _build_allowed_categories_instruction(
-        allowed_categories=allowed_categories,
-        suggested_categories=suggested_categories,
-        language=language,
+        allowed_categories=options.allowed_categories,
+        suggested_categories=options.suggested_categories,
+        language=options.language,
     )
     content = _replace_prompt_placeholders(
         base_text + "\n\n" + _PLACEHOLDER_ALLOWED_CATEGORIES,
         {_PLACEHOLDER_ALLOWED_CATEGORIES: category_instruction},
     )
-    if language == "de":
+    if options.language == "de":
         prompt_templates = [
             "Bestimme eine sinnvolle Kategorie als reines JSON.\n"
             'Gib nur: {"category":"..."}\n\nKeine weiteren Erklärungen. Text:\n',
             'Bitte nur {"category":"..."} - ohne Zusätze:\n',
         ]
-        prompts = [t + content for t in prompt_templates]
-    else:
-        prompts = [f'Determine a suitable category. Return ONLY JSON: {{"category":"..."}}\n\nText:\n{content}']
+        return [t + content for t in prompt_templates]
+    return [f'Determine a suitable category. Return ONLY JSON: {{"category":"..."}}\n\nText:\n{content}']
 
-    val = _try_prompts_for_key(
-        client,
-        prompts,
-        key="category",
-        language=language,
-        operation="category",
-        temperature=temperature,
-        max_tokens=256,
-        lenient=lenient_json,
-        cache=cache,
-        cache_key_base=cache_key_base,
-    )
+
+def _validated_raw_category(val: str | list[str] | None) -> str:
     raw = val if isinstance(val, str) else ""
     if len(raw.strip()) > 80:
         logger.info("LLM category too long (%d chars); treating as invalid.", len(raw))
-        raw = ""
-    result = validate_llm_document_result({"category": raw})
-    return result.category
+        return ""
+    return raw
 
 
 def get_final_summary_tokens(
@@ -415,13 +497,31 @@ def get_final_summary_tokens(
     summary: str,
     keywords: list[str],
     category: str,
-    language: str = "de",
-    temperature: float = 0.0,
-    lenient_json: bool = False,
-    cache: ResponseCache | None = None,
-    cache_key_base: str | None = None,
+    options: FinalSummaryOptions | None = None,
+    **overrides: object,
 ) -> list[str] | None:
     """Extract 3-5 short summary tokens from document text via LLM. Return None on failure."""
+    opts = merge_options(options or FinalSummaryOptions(), overrides)
+    prompts = _final_summary_prompts(summary, keywords, category, opts.language)
+    val = _try_prompts_for_key(
+        client,
+        prompts,
+        PromptKeyOptions(
+            key="final_summary",
+            operation="final_summary",
+            retry=PromptRetryOptions(
+                language=opts.language,
+                temperature=opts.temperature,
+                max_tokens=256,
+                lenient=opts.lenient_json,
+            ),
+            cache_options=LlmCacheOptions(opts.cache, opts.cache_key_base),
+        ),
+    )
+    return _split_final_summary_tokens(val)
+
+
+def _final_summary_prompts(summary: str, keywords: list[str], category: str, language: str) -> list[str]:
     kw_str = ", ".join(keywords)
     base_text = f"Zusammenfassung: {summary}\nSchlagworte: {kw_str}\nKategorie: {category}"
 
@@ -447,110 +547,11 @@ def get_final_summary_tokens(
             )
         ]
 
-    val = _try_prompts_for_key(
-        client,
-        prompts,
-        key="final_summary",
-        language=language,
-        operation="final_summary",
-        temperature=temperature,
-        max_tokens=256,
-        lenient=lenient_json,
-        cache=cache,
-        cache_key_base=cache_key_base,
-    )
+    return prompts
+
+
+def _split_final_summary_tokens(val: str | list[str] | None) -> list[str] | None:
     if not isinstance(val, str):
         return None
-
     tokens = [t.strip() for t in val.split(",") if t.strip()]
     return tokens[:5] if tokens else None
-
-
-# Max chars of content to send for simple filename (one-shot prompt).
-SIMPLE_FILENAME_MAX_CONTENT_CHARS = 12_000
-
-_PLACEHOLDER_INTRO_LINE = "%INTRO_LINE%"
-_PLACEHOLDER_DATE_HINT = "%DATE_HINT%"
-_PLACEHOLDER_EXAMPLE = "%EXAMPLE%"
-_PLACEHOLDER_CLOSING_LINE = "%CLOSING_LINE%"
-_PLACEHOLDER_DOCUMENT_CONTENT = "%DOCUMENT_CONTENT%"
-_PLACEHOLDER_EXAMPLE_LABEL = "%EXAMPLE_LABEL%"
-
-_SIMPLE_FILENAME_TEMPLATE = (
-    "%INTRO_LINE%\n"
-    "- 3–6 words, target language in the requested language.\n"
-    "- Use underscores only (no spaces), no special characters except underscores and hyphens.\n"
-    "- Optional: date at end (e.g. dd-mm-yyyy).\n"
-    "- Uppercase preferred.\n"
-    "%DATE_HINT%\n"
-    "%EXAMPLE_LABEL%%EXAMPLE%\n\n"
-    "%CLOSING_LINE%\n\n"
-    "<document_content>\n%DOCUMENT_CONTENT%\n</document_content>"
-)
-
-
-def get_document_filename_simple(
-    client: LLMClient,
-    content: str,
-    *,
-    language: str = "de",
-    temperature: float = 0.0,
-    max_content_chars: int | None = None,
-    max_content_tokens: int | None = None,
-    cache: ResponseCache | None = None,
-    cache_key_base: str | None = None,
-) -> str:
-    """
-    Ask the LLM for a single short filename (3-6 words, underscores). No JSON.
-    Returns a sanitized string suitable as the middle part of a filename.
-    """
-    if not content or not content.strip():
-        return "document"
-    text = content.strip()
-    effective_max = (
-        min(SIMPLE_FILENAME_MAX_CONTENT_CHARS, max_content_chars)
-        if max_content_chars is not None
-        else SIMPLE_FILENAME_MAX_CONTENT_CHARS
-    )
-    text = truncate_for_llm(text, effective_max, max_tokens=max_content_tokens)
-    safe_text = _escape_doc_content(text)
-    if language == "de":
-        intro = "Erzeuge einen kurzen Dateinamen (ohne Endung) für dieses Dokument."
-        date_hint = "Optional: Datum am Ende (z. B. 15-11-2023)."
-        example_label = "Beispiel: "
-        example = "RECHNUNG_AMAZON_MAX_2023-11-15"
-        closing = "Antworte mit NUR dem Dateinamen, sonst nichts."
-    else:
-        intro = "Generate a short filename (without extension) for this document."
-        date_hint = "Optional: date at end (e.g. 15-11-2023)."
-        example_label = "Example: "
-        example = "INVOICE_AMAZON_JOHN_2023-11-15"
-        closing = "Respond with ONLY the filename, nothing else."
-    prompt = _replace_prompt_placeholders(
-        _SIMPLE_FILENAME_TEMPLATE,
-        {
-            _PLACEHOLDER_INTRO_LINE: intro,
-            _PLACEHOLDER_DATE_HINT: date_hint,
-            _PLACEHOLDER_EXAMPLE_LABEL: example_label,
-            _PLACEHOLDER_EXAMPLE: example,
-            _PLACEHOLDER_CLOSING_LINE: closing,
-            _PLACEHOLDER_DOCUMENT_CONTENT: safe_text,
-        },
-    )
-    cache_key = _build_cache_key(
-        cache_key_base,
-        operation="simple_filename",
-        model=client.model,
-        language=language,
-        payload=prompt,
-    )
-    if cache is not None and cache_key is not None:
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return sanitize_filename_from_llm(cached)
-    raw = client.complete(prompt, temperature=temperature, max_tokens=128)
-    if raw and isinstance(raw, str):
-        raw = raw.strip().rstrip(".")
-    if cache is not None and cache_key is not None and raw:
-        cache.set(cache_key, raw)
-    return sanitize_filename_from_llm(raw)

@@ -21,6 +21,57 @@ class ProcessingRules:
     allowed_categories: list[str]
 
 
+def _rules_file_path(path: str | Path, *, raise_on_error: bool) -> Path | None:
+    p = Path(path).expanduser().resolve()
+    if p.exists():
+        return p
+    if raise_on_error:
+        raise ValueError(f"Rules file not found: {p}")
+    logger.debug("Rules file not found: %s", p)
+    return None
+
+
+def _read_rules_json(path: Path, *, raise_on_error: bool) -> dict[str, object] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        if raise_on_error:
+            raise ValueError(f"Could not load processing rules from {path}: {e}") from e
+        logger.warning("Could not load processing rules from %s: %s. Proceeding with no rules.", path, e)
+        return None
+    if isinstance(data, dict):
+        return data
+    if raise_on_error:
+        raise ValueError(f"Processing rules at {path} must be a JSON object.")
+    logger.warning("Processing rules at %s is not a JSON object. Proceeding with no rules.", path)
+    return None
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if item and str(item).strip()]
+
+
+def _force_category_rules(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        item
+        for item in value
+        if isinstance(item, dict) and isinstance(item.get("pattern"), str) and isinstance(item.get("category"), str)
+    ]
+
+
+def _processing_rules_from_data(data: dict[str, object]) -> ProcessingRules:
+    return ProcessingRules(
+        skip_llm_if_heuristic_category=_string_list(data.get("skip_llm_if_heuristic_category")),
+        force_category_by_pattern=_force_category_rules(data.get("force_category_by_pattern")),
+        skip_files_by_pattern=_string_list(data.get("skip_files_by_pattern")),
+        allowed_categories=_string_list(data.get("allowed_categories")),
+    )
+
+
 def load_processing_rules(path: str | Path | None, *, raise_on_error: bool = False) -> ProcessingRules | None:
     """
     Load processing rules from a JSON file. Returns None if path is None, file is missing, or invalid.
@@ -28,54 +79,13 @@ def load_processing_rules(path: str | Path | None, *, raise_on_error: bool = Fal
     """
     if path is None:
         return None
-    p = Path(path).expanduser().resolve()
-    if not p.exists():
-        if raise_on_error:
-            raise ValueError(f"Rules file not found: {p}")
-        logger.debug("Rules file not found: %s", p)
+    p = _rules_file_path(path, raise_on_error=raise_on_error)
+    if p is None:
         return None
-    try:
-        raw = p.read_text(encoding="utf-8")
-        data = json.loads(raw)
-    except (OSError, json.JSONDecodeError) as e:
-        if raise_on_error:
-            raise ValueError(f"Could not load processing rules from {p}: {e}") from e
-        logger.warning("Could not load processing rules from %s: %s. Proceeding with no rules.", p, e)
+    data = _read_rules_json(p, raise_on_error=raise_on_error)
+    if data is None:
         return None
-    if not isinstance(data, dict):
-        if raise_on_error:
-            raise ValueError(f"Processing rules at {p} must be a JSON object.")
-        logger.warning("Processing rules at %s is not a JSON object. Proceeding with no rules.", p)
-        return None
-
-    skip_llm = data.get("skip_llm_if_heuristic_category")
-    skip_llm = [str(x).strip() for x in skip_llm if x and str(x).strip()] if isinstance(skip_llm, list) else []
-
-    force_cat = data.get("force_category_by_pattern")
-    if isinstance(force_cat, list):
-        force_cat = [
-            item
-            for item in force_cat
-            if isinstance(item, dict) and isinstance(item.get("pattern"), str) and isinstance(item.get("category"), str)
-        ]
-    else:
-        force_cat = []
-
-    skip_files = data.get("skip_files_by_pattern")
-    skip_files = [str(x).strip() for x in skip_files if x and str(x).strip()] if isinstance(skip_files, list) else []
-
-    allowed_cats = data.get("allowed_categories")
-    if isinstance(allowed_cats, list):
-        allowed_cats = [str(x).strip() for x in allowed_cats if x and str(x).strip()]
-    else:
-        allowed_cats = []
-
-    return ProcessingRules(
-        skip_llm_if_heuristic_category=skip_llm,
-        force_category_by_pattern=force_cat,
-        skip_files_by_pattern=skip_files,
-        allowed_categories=allowed_cats,
-    )
+    return _processing_rules_from_data(data)
 
 
 def force_category_for_basename(rules: ProcessingRules | None, basename: str) -> str | None:

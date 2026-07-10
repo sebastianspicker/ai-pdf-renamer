@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
-import subprocess
-import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+
+import ai_pdf_renamer.cli as cli_mod
+import ai_pdf_renamer.undo_cli as undo_cli
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -21,14 +25,25 @@ def _clean_env(tmp_path: Path) -> dict[str, str]:
     return env
 
 
-def _entrypoint(name: str) -> list[str]:
-    sibling_script = Path(sys.executable).with_name(name)
-    if sibling_script.exists():
-        return [str(sibling_script)]
+@dataclass(frozen=True)
+class CliResult:
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+@dataclass(frozen=True)
+class ApplyOutputPaths:
+    summary: Path
+    metadata: Path
+    rename_log: Path
+
+
+def _main_for_entrypoint(name: str):
     if name == "ai-pdf-renamer":
-        return [sys.executable, "-m", "ai_pdf_renamer.cli"]
+        return cli_mod.main
     if name == "ai-pdf-renamer-undo":
-        return [sys.executable, "-c", "from ai_pdf_renamer.undo_cli import main; main()"]
+        return undo_cli.main
     pytest.fail(f"Missing CLI entry point: {name}")
     raise AssertionError(f"Unreachable: missing CLI entry point: {name}")
 
@@ -39,16 +54,35 @@ def _run_cli(
     *,
     cwd: Path,
     env: Mapping[str, str],
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [*_entrypoint(name), *args],
-        cwd=cwd,
-        env=dict(env),
-        text=True,
-        capture_output=True,
-        timeout=30,
-        check=False,
-    )
+) -> CliResult:
+    main = _main_for_entrypoint(name)
+    old_cwd = Path.cwd()
+    old_env = os.environ.copy()
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    returncode = 0
+
+    try:
+        os.chdir(cwd)
+        os.environ.clear()
+        os.environ.update(env)
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                main(list(args))
+            except SystemExit as exc:
+                if exc.code is None:
+                    returncode = 0
+                elif isinstance(exc.code, int):
+                    returncode = exc.code
+                else:
+                    stderr.write(f"{exc.code}\n")
+                    returncode = 1
+    finally:
+        os.environ.clear()
+        os.environ.update(old_env)
+        os.chdir(old_cwd)
+
+    return CliResult(returncode=returncode, stdout=stdout.getvalue(), stderr=stderr.getvalue())
 
 
 def _write_pdf(path: Path, text: str) -> None:
@@ -70,9 +104,7 @@ def _write_pdf(path: Path, text: str) -> None:
         doc.close()
 
 
-def test_cli_dry_run_apply_and_undo_round_trip(tmp_path: Path) -> None:
-    pdf_dir = tmp_path / "pdfs"
-    pdf_dir.mkdir()
+def _write_invoice_fixture(pdf_dir: Path) -> Path:
     original = pdf_dir / "incoming.pdf"
     _write_pdf(
         original,
@@ -81,14 +113,12 @@ def test_cli_dry_run_apply_and_undo_round_trip(tmp_path: Path) -> None:
         "Total amount: 42.00 EUR\n"
         "This deterministic fixture exercises the local heuristic path.",
     )
+    return original
 
-    env = _clean_env(tmp_path)
+
+def _run_dry_run_phase(tmp_path: Path, pdf_dir: Path, original: Path, env: dict[str, str]) -> str:
     plan_path = tmp_path / "plan.json"
     dry_summary_path = tmp_path / "dry-summary.json"
-    apply_summary_path = tmp_path / "apply-summary.json"
-    metadata_path = tmp_path / "metadata.json"
-    rename_log_path = tmp_path / "rename.log"
-
     dry_run = _run_cli(
         "ai-pdf-renamer",
         [
@@ -105,9 +135,13 @@ def test_cli_dry_run_apply_and_undo_round_trip(tmp_path: Path) -> None:
         cwd=tmp_path,
         env=env,
     )
-
     assert dry_run.returncode == 0, dry_run.stderr
     assert original.exists()
+    _assert_dry_run_outputs(pdf_dir, original, plan_path, dry_summary_path)
+    return "20240314-invoice.pdf"
+
+
+def _assert_dry_run_outputs(pdf_dir: Path, original: Path, plan_path: Path, dry_summary_path: Path) -> None:
     dry_summary = json.loads(dry_summary_path.read_text(encoding="utf-8"))
     assert dry_summary == {
         "directory": str(pdf_dir),
@@ -120,10 +154,21 @@ def test_cli_dry_run_apply_and_undo_round_trip(tmp_path: Path) -> None:
     }
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     assert len(plan) == 1
-    expected_name = "20240314-invoice.pdf"
     assert plan[0]["old"] == str(original)
-    assert plan[0]["new"].endswith(f"/{expected_name}")
+    assert plan[0]["new"].endswith("/20240314-invoice.pdf")
 
+
+def _run_apply_phase(
+    tmp_path: Path,
+    pdf_dir: Path,
+    original: Path,
+    expected_name: str,
+    env: dict[str, str],
+) -> tuple[Path, Path]:
+    apply_summary_path = tmp_path / "apply-summary.json"
+    metadata_path = tmp_path / "metadata.json"
+    rename_log_path = tmp_path / "rename.log"
+    output_paths = ApplyOutputPaths(apply_summary_path, metadata_path, rename_log_path)
     apply = _run_cli(
         "ai-pdf-renamer",
         [
@@ -141,32 +186,52 @@ def test_cli_dry_run_apply_and_undo_round_trip(tmp_path: Path) -> None:
         cwd=tmp_path,
         env=env,
     )
-
     assert apply.returncode == 0, apply.stderr
     renamed = pdf_dir / expected_name
+    _assert_apply_outputs(original, renamed, expected_name, output_paths)
+    return (renamed, rename_log_path)
+
+
+def _assert_apply_outputs(
+    original: Path,
+    renamed: Path,
+    expected_name: str,
+    output_paths: ApplyOutputPaths,
+) -> None:
     assert renamed.exists()
     assert not original.exists()
-    apply_summary = json.loads(apply_summary_path.read_text(encoding="utf-8"))
+    apply_summary = json.loads(output_paths.summary.read_text(encoding="utf-8"))
     assert apply_summary["processed"] == 1
     assert apply_summary["renamed"] == 1
     assert apply_summary["failed"] == 0
     assert apply_summary["dry_run"] is False
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata = json.loads(output_paths.metadata.read_text(encoding="utf-8"))
     assert metadata[0]["new_name"] == expected_name
     assert metadata[0]["category"] == "invoice"
-    assert rename_log_path.read_text(encoding="utf-8").strip() == f"{original}\t{renamed}"
+    assert output_paths.rename_log.read_text(encoding="utf-8").strip() == f"{original}\t{renamed}"
 
+
+def _run_undo_phase(tmp_path: Path, original: Path, renamed: Path, rename_log_path: Path, env: dict[str, str]) -> None:
     undo = _run_cli(
         "ai-pdf-renamer-undo",
         ["--rename-log", str(rename_log_path)],
         cwd=tmp_path,
         env=env,
     )
-
     assert undo.returncode == 0, undo.stderr
     assert original.exists()
     assert not renamed.exists()
     assert "Reverted:" in undo.stdout
+
+
+def test_cli_dry_run_apply_and_undo_round_trip(tmp_path: Path) -> None:
+    pdf_dir = tmp_path / "pdfs"
+    pdf_dir.mkdir()
+    original = _write_invoice_fixture(pdf_dir)
+    env = _clean_env(tmp_path)
+    expected_name = _run_dry_run_phase(tmp_path, pdf_dir, original, env)
+    renamed, rename_log_path = _run_apply_phase(tmp_path, pdf_dir, original, expected_name, env)
+    _run_undo_phase(tmp_path, original, renamed, rename_log_path, env)
 
 
 def test_cli_validate_config_accepts_local_heuristic_run_defaults(tmp_path: Path) -> None:

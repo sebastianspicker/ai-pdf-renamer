@@ -15,6 +15,72 @@ from pathlib import Path
 from .rename_ops import is_path_within
 
 
+def _read_rename_log_pairs(log_path: Path) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        if line == "" or line.isspace():
+            continue
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        old_path, new_path = parts
+        if old_path and new_path:
+            pairs.append((old_path, new_path))
+    pairs.reverse()
+    return pairs
+
+
+def _same_parent(old_p: Path, new_p: Path) -> bool | None:
+    try:
+        return old_p.parent.resolve() == new_p.parent.resolve()
+    except OSError:
+        return None
+
+
+def _undo_paths(old_path: str, new_path: str) -> tuple[Path, Path]:
+    return (Path(old_path), Path(new_path))
+
+
+def _can_undo_pair(old_p: Path, new_p: Path, trusted_root: Path) -> bool:
+    for candidate in (old_p, new_p):
+        if not is_path_within(candidate, trusted_root):
+            print(f"Skip (path traversal detected): {candidate}", file=sys.stderr)
+            return False
+    same_parent = _same_parent(old_p, new_p)
+    if same_parent is None:
+        print(f"Skip (path traversal detected): {new_p}", file=sys.stderr)
+        return False
+    if not same_parent:
+        print(f"Skip (cross-directory undo denied): {new_p} -> {old_p}", file=sys.stderr)
+        return False
+    if not new_p.exists():
+        print(f"Skip (new path missing): {new_p}", file=sys.stderr)
+        return False
+    if old_p.exists() and old_p.resolve() != new_p.resolve():
+        print(f"Skip (old path already exists): {old_p}", file=sys.stderr)
+        return False
+    return True
+
+
+def _move_undo_pair(old_p: Path, new_p: Path) -> None:
+    try:
+        # Rename logs may point across mount points; shutil.move handles that case.
+        shutil.move(str(new_p), str(old_p))
+        print(f"Reverted: {new_p} -> {old_p}")
+    except OSError as e:
+        print(f"Error reverting {new_p}: {e}", file=sys.stderr)
+
+
+def _run_undo_pair(old_path: str, new_path: str, *, trusted_root: Path, dry_run: bool) -> None:
+    old_p, new_p = _undo_paths(old_path, new_path)
+    if not _can_undo_pair(old_p, new_p, trusted_root):
+        return
+    if dry_run:
+        print(f"Would revert: {new_p} -> {old_p}")
+        return
+    _move_undo_pair(old_p, new_p)
+
+
 def run_undo(log_path: Path, dry_run: bool) -> None:
     """Read rename log and revert renames (LIFO). Caller must ensure log_path.exists()."""
     if not log_path.is_file():
@@ -26,50 +92,12 @@ def run_undo(log_path: Path, dry_run: bool) -> None:
     # Use the log file's directory as the trusted root: both source and target of every
     # undo operation must resolve within this tree to prevent path-traversal attacks.
     trusted_root = log_path.resolve().parent
-    pairs: list[tuple[str, str]] = []
-    for line in log_path.read_text(encoding="utf-8").splitlines():
-        if line == "" or line.isspace():
-            continue
-        parts = line.split("\t", 1)
-        if len(parts) != 2:
-            continue
-        old_path, new_path = parts
-        if old_path and new_path:
-            pairs.append((old_path, new_path))
+    pairs = _read_rename_log_pairs(log_path)
     if not pairs:
         print("No entries in rename log.", file=sys.stderr)
         return
-    pairs.reverse()
     for old_path, new_path in pairs:
-        old_p, new_p = Path(old_path), Path(new_path)
-        if not is_path_within(old_p, trusted_root):
-            print(f"Skip (path traversal detected): {old_p}", file=sys.stderr)
-            continue
-        if not is_path_within(new_p, trusted_root):
-            print(f"Skip (path traversal detected): {new_p}", file=sys.stderr)
-            continue
-        try:
-            if old_p.parent.resolve() != new_p.parent.resolve():
-                print(f"Skip (cross-directory undo denied): {new_p} -> {old_p}", file=sys.stderr)
-                continue
-        except OSError:
-            print(f"Skip (path traversal detected): {new_p}", file=sys.stderr)
-            continue
-        if not new_p.exists():
-            print(f"Skip (new path missing): {new_p}", file=sys.stderr)
-            continue
-        if old_p.exists() and old_p.resolve() != new_p.resolve():
-            print(f"Skip (old path already exists): {old_p}", file=sys.stderr)
-            continue
-        if dry_run:
-            print(f"Would revert: {new_p} -> {old_p}")
-            continue
-        try:
-            # Rename logs may point across mount points; shutil.move handles that case.
-            shutil.move(str(new_p), str(old_p))
-            print(f"Reverted: {new_p} -> {old_p}")
-        except OSError as e:
-            print(f"Error reverting {new_p}: {e}", file=sys.stderr)
+        _run_undo_pair(old_path, new_path, trusted_root=trusted_root, dry_run=dry_run)
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -1,17 +1,10 @@
-# ruff: noqa: F401,F811
-
 from __future__ import annotations
 
-import argparse
-import base64
 import contextlib
 import json
 import logging
-import os
 import re
 import sys
-import time
-from datetime import date
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -26,37 +19,19 @@ from ai_pdf_renamer.heuristics import (
     _combine_resolve_conflict,
     _embedding_conflict_pick,
     _load_category_aliases,
+    clear_category_aliases_cache,
+    clear_embedding_model_cache,
     load_heuristic_rules,
     load_heuristic_rules_for_language,
 )
 from ai_pdf_renamer.renamer import (
-    _apply_post_rename_actions,
-    _produce_rename_results,
     _run_post_rename_hook,
-    _write_json_or_csv,
     rename_pdfs_in_directory,
     run_watch_loop,
 )
-
-
-def _cfg(**overrides: object) -> RenamerConfig:
-    """Build a RenamerConfig with sensible test defaults and overrides."""
-    defaults: dict[str, object] = {
-        "use_llm": False,
-        "use_single_llm_call": False,
-    }
-    defaults.update(overrides)
-    return RenamerConfig(**defaults)  # type: ignore[arg-type]
-
-
-def _make_fake_pdf(tmp_path: Path, name: str = "test.pdf", mtime: float | None = None) -> Path:
-    """Create a minimal PDF in tmp_path and optionally set its mtime."""
-    p = tmp_path / name
-    # Minimal valid PDF (enough to be treated as a file with .pdf extension)
-    p.write_bytes(b"%PDF-1.0\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n%%EOF\n")
-    if mtime is not None:
-        os.utime(p, (mtime, mtime))
-    return p
+from tests.conftest import make_config as _cfg
+from tests.conftest import make_fake_pdf as _make_fake_pdf
+from tests.conftest import make_hook_paths, make_http_hook_session
 
 
 class TestWatchLoopMtimeTracking:
@@ -119,11 +94,9 @@ class TestDryRunAndRenameFailureReporting:
             patch("ai_pdf_renamer.renamer.load_processing_rules", return_value=None),
             patch("ai_pdf_renamer.renamer._collect_pdf_files", return_value=[pdf]),
             patch("ai_pdf_renamer.renamer.apply_single_rename", return_value=(True, pdf.with_name("new_name.pdf"))),
+            caplog.at_level(logging.INFO),
         ):
-            import logging
-
-            with caplog.at_level(logging.INFO):
-                rename_pdfs_in_directory(tmp_path, config=config)
+            rename_pdfs_in_directory(tmp_path, config=config)
 
         assert any("Dry-run" in r.message or "would rename" in r.message for r in caplog.records)
 
@@ -139,11 +112,9 @@ class TestDryRunAndRenameFailureReporting:
             patch("ai_pdf_renamer.renamer.load_processing_rules", return_value=None),
             patch("ai_pdf_renamer.renamer._collect_pdf_files", return_value=[pdf]),
             patch("ai_pdf_renamer.renamer.apply_single_rename", return_value=(False, pdf)),
+            caplog.at_level(logging.ERROR),
         ):
-            import logging
-
-            with caplog.at_level(logging.ERROR):
-                rename_pdfs_in_directory(tmp_path, config=config)
+            rename_pdfs_in_directory(tmp_path, config=config)
 
         assert any("could not rename" in r.message.lower() for r in caplog.records)
 
@@ -163,11 +134,9 @@ class TestRenameApplyException:
             patch("ai_pdf_renamer.renamer.load_processing_rules", return_value=None),
             patch("ai_pdf_renamer.renamer._collect_pdf_files", return_value=[pdf]),
             patch("ai_pdf_renamer.renamer.apply_single_rename", side_effect=PermissionError("denied")),
+            caplog.at_level(logging.ERROR),
         ):
-            import logging
-
-            with caplog.at_level(logging.ERROR):
-                rename_pdfs_in_directory(tmp_path, config=config)
+            rename_pdfs_in_directory(tmp_path, config=config)
 
         assert any("denied" in r.message for r in caplog.records)
 
@@ -303,46 +272,37 @@ class TestCategoryAliasesErrorPaths:
 
     def test_aliases_file_missing(self, tmp_path: Path) -> None:
         """Data file missing, verify empty aliases returned."""
-        import ai_pdf_renamer.heuristics as hmod
-
-        old_val = hmod._CATEGORY_ALIASES
         try:
-            hmod._CATEGORY_ALIASES = None
+            clear_category_aliases_cache()
             with patch("ai_pdf_renamer.data_paths.category_aliases_path", return_value=tmp_path / "nonexistent.json"):
                 result = _load_category_aliases()
             assert result == {}
         finally:
-            hmod._CATEGORY_ALIASES = old_val
+            clear_category_aliases_cache()
 
     def test_aliases_invalid_json(self, tmp_path: Path) -> None:
         """Invalid JSON in aliases file, verify fallback to empty."""
-        import ai_pdf_renamer.heuristics as hmod
-
-        old_val = hmod._CATEGORY_ALIASES
         try:
-            hmod._CATEGORY_ALIASES = None
+            clear_category_aliases_cache()
             bad_file = tmp_path / "category_aliases.json"
             bad_file.write_text("NOT JSON")
             with patch("ai_pdf_renamer.data_paths.category_aliases_path", return_value=bad_file):
                 result = _load_category_aliases()
             assert result == {}
         finally:
-            hmod._CATEGORY_ALIASES = old_val
+            clear_category_aliases_cache()
 
     def test_aliases_not_dict(self, tmp_path: Path) -> None:
         """aliases key is not a dict, verify empty."""
-        import ai_pdf_renamer.heuristics as hmod
-
-        old_val = hmod._CATEGORY_ALIASES
         try:
-            hmod._CATEGORY_ALIASES = None
+            clear_category_aliases_cache()
             bad_file = tmp_path / "category_aliases.json"
             bad_file.write_text(json.dumps({"aliases": "not a dict"}))
             with patch("ai_pdf_renamer.data_paths.category_aliases_path", return_value=bad_file):
                 result = _load_category_aliases()
             assert result == {}
         finally:
-            hmod._CATEGORY_ALIASES = old_val
+            clear_category_aliases_cache()
 
 
 class TestEmbeddingConflictNoModule:
@@ -350,16 +310,13 @@ class TestEmbeddingConflictNoModule:
 
     def test_no_sentence_transformers(self) -> None:
         """When sentence_transformers import fails, _embedding_conflict_pick returns None."""
-        import ai_pdf_renamer.heuristics as hmod
-
-        old_model = hmod._embedding_model
         try:
-            hmod._embedding_model = None
+            clear_embedding_model_cache()
             with patch.dict("sys.modules", {"sentence_transformers": None}):
                 result = _embedding_conflict_pick("some context text", "invoice", "receipt")
             assert result is None
         finally:
-            hmod._embedding_model = old_model
+            clear_embedding_model_cache()
 
     def test_empty_context_returns_none(self) -> None:
         """Empty context string returns None without trying embeddings."""
@@ -422,7 +379,6 @@ class TestHeuristicDebugLogging:
 
     def test_debug_top3_categories(self, caplog: pytest.LogCaptureFixture) -> None:
         """With DEBUG logging enabled, top-3 categories are logged."""
-        import logging
 
         rules = [
             HeuristicRule(pattern=re.compile(r"invoice", re.I), category="invoice", score=10.0),
@@ -605,17 +561,8 @@ class TestHookHTTPPost:
 
     def test_hook_http_post(self, tmp_path: Path) -> None:
         """HTTP hook sends JSON payload with old_path, new_path, meta."""
-        old = tmp_path / "old.pdf"
-        new = tmp_path / "new.pdf"
-        old.touch()
-        new.touch()
-
-        mock_session = MagicMock()
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.post.return_value = mock_response
+        old, new = make_hook_paths(tmp_path)
+        mock_session = make_http_hook_session()
 
         with patch("ai_pdf_renamer.renamer.requests.Session", return_value=mock_session):
             _run_post_rename_hook("https://example.com/hook", old, new, {"k": "v"})
@@ -628,19 +575,9 @@ class TestHookHTTPPost:
 
     def test_hook_http_non_loopback_warning(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """Plain HTTP to non-loopback host logs a warning."""
-        import logging
 
-        old = tmp_path / "old.pdf"
-        new = tmp_path / "new.pdf"
-        old.touch()
-        new.touch()
-
-        mock_session = MagicMock()
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.post.return_value = mock_response
+        old, new = make_hook_paths(tmp_path)
+        mock_session = make_http_hook_session()
 
         with (
             patch("ai_pdf_renamer.renamer.requests.Session", return_value=mock_session),
@@ -652,19 +589,11 @@ class TestHookHTTPPost:
 
     def test_hook_http_request_exception(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """HTTP hook failure is logged, not raised."""
-        import logging
-
-        old = tmp_path / "old.pdf"
-        new = tmp_path / "new.pdf"
-        old.touch()
-        new.touch()
 
         import requests as req
 
-        mock_session = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.post.side_effect = req.ConnectionError("refused")
+        old, new = make_hook_paths(tmp_path)
+        mock_session = make_http_hook_session(post_side_effect=req.ConnectionError("refused"))
 
         with (
             patch("ai_pdf_renamer.renamer.requests.Session", return_value=mock_session),
@@ -674,22 +603,15 @@ class TestHookHTTPPost:
 
         assert any("hook" in r.message.lower() and "failed" in r.message.lower() for r in caplog.records)
 
-    def test_hook_general_exception(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        """General exception in hook is logged (lines 188-190)."""
-        import logging
+    def test_local_command_hook_is_rejected(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """Local command hook values are rejected."""
 
-        old = tmp_path / "old.pdf"
-        new = tmp_path / "new.pdf"
-        old.touch()
-        new.touch()
+        old, new = make_hook_paths(tmp_path)
 
-        with (
-            patch("ai_pdf_renamer.renamer.subprocess.run", side_effect=RuntimeError("unexpected")),
-            caplog.at_level(logging.WARNING),
-        ):
+        with caplog.at_level(logging.WARNING, logger="ai_pdf_renamer.renamer"):
             _run_post_rename_hook("some_command", old, new, {})
 
-        assert any("hook failed" in r.message.lower() for r in caplog.records)
+        assert any("local post-rename hook commands are disabled" in r.message.lower() for r in caplog.records)
 
 
 class TestShrinkDensityJump:
@@ -697,7 +619,6 @@ class TestShrinkDensityJump:
 
     def test_shrink_density_jump(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Text exceeding token limit triggers density-based jump, yielding shorter output."""
-        from ai_pdf_renamer import pdf_extract
 
         # Simulate tiktoken: 1 token per 4 chars (realistic density).
         # First call (full text): 250 tokens; subsequent calls: proportional to len.
@@ -708,7 +629,7 @@ class TestShrinkDensityJump:
         monkeypatch.setattr(pdf_extract, "_token_count", fake_token_count)
 
         text = "word " * 200  # 1000 chars -> 250 tokens
-        result = pdf_extract._shrink_to_token_limit(text, max_tokens=50)
+        result = pdf_extract.shrink_to_token_limit(text, max_tokens=50)
         # 50 tokens * 4 chars/token = ~200 chars target (with buffer)
         assert len(result) < len(text)
         assert len(result) <= 300  # density jump should get close to target
@@ -719,7 +640,6 @@ class TestPdfToTextMaxPages:
 
     def test_pdf_to_text_max_pages(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """With max_pages=2 and a 5-page doc, only 2 pages are extracted."""
-        from ai_pdf_renamer import pdf_extract
 
         pages_accessed: list[int] = []
 

@@ -11,14 +11,13 @@ from pathlib import Path
 import pytest
 
 from ai_pdf_renamer.rename_ops import (
-    MAX_RENAME_RETRIES,
     _next_available_path,
     _validate_path_within_parent,
-    apply_single_rename,
     is_path_within,
     sanitize_filename_base,
     sanitize_filename_from_llm,
 )
+from tests.conftest import rename_pdf
 
 
 def test_sanitize_filename_from_llm_empty() -> None:
@@ -68,15 +67,10 @@ def test_apply_single_rename_backup_collision_does_not_overwrite(tmp_path: Path)
     existing_backup = backup_dir / "doc.pdf"
     existing_backup.write_text("old-content", encoding="utf-8")
 
-    success, target = apply_single_rename(
+    success, target = rename_pdf(
         src,
         "renamed",
-        plan_file_path=None,
-        plan_entries=[],
-        dry_run=False,
         backup_dir=backup_dir,
-        on_success=None,
-        max_filename_chars=None,
     )
 
     assert success is True
@@ -85,56 +79,50 @@ def test_apply_single_rename_backup_collision_does_not_overwrite(tmp_path: Path)
     assert (backup_dir / "doc_1.pdf").read_text(encoding="utf-8") == "new-content"
 
 
-def test_concurrent_renames_same_target_no_overwrite(tmp_path: Path) -> None:
-    """Five concurrent renames to the same base name must all succeed with unique targets."""
+def _write_concurrent_sources(tmp_path: Path, count: int = 5) -> tuple[list[Path], list[str]]:
     sources: list[Path] = []
     contents: list[str] = []
-    for i in range(5):
+    for i in range(count):
         src = tmp_path / f"src_{i}.pdf"
         content = f"distinct-content-{i}"
         src.write_text(content, encoding="utf-8")
         sources.append(src)
         contents.append(content)
+    return (sources, contents)
 
+
+def _rename_to_report(src: Path) -> tuple[bool, Path]:
+    return rename_pdf(src, "report")
+
+
+def _run_concurrent_report_renames(sources: list[Path]) -> list[tuple[bool, Path]]:
+    results: list[tuple[bool, Path]] = []
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = {pool.submit(_rename_to_report, source): source for source in sources}
+        for future in as_completed(futures):
+            results.append(future.result())
+    return results
+
+
+def _assert_unique_rename_results(results: list[tuple[bool, Path]], contents: list[str]) -> None:
+    assert all(ok for ok, _ in results)
+    target_paths = [target for _, target in results]
+    assert len(set(target_paths)) == len(target_paths)
+    for _, target in results:
+        assert target.exists(), f"Expected target {target} to exist"
+    target_contents = {target: target.read_text(encoding="utf-8") for _, target in results}
+    for content in contents:
+        assert content in target_contents.values(), f"Content {content!r} missing from targets"
+
+
+def test_concurrent_renames_same_target_no_overwrite(tmp_path: Path) -> None:
+    """Five concurrent renames to the same base name must all succeed with unique targets."""
+    sources, contents = _write_concurrent_sources(tmp_path)
     # Pre-create the target so every rename collides with it *and* with each other.
     existing_target = tmp_path / "report.pdf"
     existing_target.write_text("pre-existing", encoding="utf-8")
 
-    results: list[tuple[bool, Path]] = []
-
-    def _rename(src: Path) -> tuple[bool, Path]:
-        return apply_single_rename(
-            src,
-            "report",
-            plan_file_path=None,
-            plan_entries=[],
-            dry_run=False,
-            backup_dir=None,
-            on_success=None,
-            max_filename_chars=None,
-        )
-
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        futures = {pool.submit(_rename, s): s for s in sources}
-        for fut in as_completed(futures):
-            results.append(fut.result())
-
-    # All renames should succeed.
-    assert all(ok for ok, _ in results)
-
-    # Every target path must be unique (no two workers ended up at the same name).
-    target_paths = [t for _, t in results]
-    assert len(set(target_paths)) == len(target_paths)
-
-    # All target files must actually exist on disk.
-    for _, t in results:
-        assert t.exists(), f"Expected target {t} to exist"
-
-    # No source content was lost — every original payload appears in exactly one target.
-    target_contents = {t: t.read_text(encoding="utf-8") for _, t in results}
-    for content in contents:
-        assert content in target_contents.values(), f"Content {content!r} missing from targets"
-
+    _assert_unique_rename_results(_run_concurrent_report_renames(sources), contents)
     # The pre-existing file must not have been overwritten.
     assert existing_target.read_text(encoding="utf-8") == "pre-existing"
 
@@ -148,16 +136,7 @@ def test_rename_collision_suffix_increments(tmp_path: Path) -> None:
     # First rename should land on invoice_1.pdf.
     src1 = tmp_path / "a.pdf"
     src1.write_text("first-rename", encoding="utf-8")
-    ok1, target1 = apply_single_rename(
-        src1,
-        "invoice",
-        plan_file_path=None,
-        plan_entries=[],
-        dry_run=False,
-        backup_dir=None,
-        on_success=None,
-        max_filename_chars=None,
-    )
+    ok1, target1 = rename_pdf(src1, "invoice")
     assert ok1 is True
     assert target1.name == "invoice_1.pdf"
     assert target1.read_text(encoding="utf-8") == "first-rename"
@@ -165,16 +144,7 @@ def test_rename_collision_suffix_increments(tmp_path: Path) -> None:
     # Second rename should land on invoice_2.pdf.
     src2 = tmp_path / "b.pdf"
     src2.write_text("second-rename", encoding="utf-8")
-    ok2, target2 = apply_single_rename(
-        src2,
-        "invoice",
-        plan_file_path=None,
-        plan_entries=[],
-        dry_run=False,
-        backup_dir=None,
-        on_success=None,
-        max_filename_chars=None,
-    )
+    ok2, target2 = rename_pdf(src2, "invoice")
     assert ok2 is True
     assert target2.name == "invoice_2.pdf"
     assert target2.read_text(encoding="utf-8") == "second-rename"
@@ -190,15 +160,10 @@ def test_rename_dry_run_no_filesystem_change(tmp_path: Path) -> None:
 
     files_before = sorted(tmp_path.iterdir())
 
-    ok, _target = apply_single_rename(
+    ok, _target = rename_pdf(
         src,
         "new_name",
-        plan_file_path=None,
-        plan_entries=[],
         dry_run=True,
-        backup_dir=None,
-        on_success=None,
-        max_filename_chars=None,
     )
 
     assert ok is True
@@ -226,16 +191,7 @@ def test_path_traversal_blocked(tmp_path: Path) -> None:
     files_in_parent_before = set(parent_dir.iterdir())
 
     with pytest.raises(ValueError):
-        apply_single_rename(
-            src,
-            "../escape",
-            plan_file_path=None,
-            plan_entries=[],
-            dry_run=False,
-            backup_dir=None,
-            on_success=None,
-            max_filename_chars=None,
-        )
+        rename_pdf(src, "../escape")
 
     # Source must still be intact.
     assert src.exists()
@@ -265,16 +221,7 @@ def test_apply_single_rename_exdev_copy_unlink(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setattr(os, "link", _link_exdev)
     monkeypatch.setattr(os, "rename", _rename_exdev)
 
-    ok, target = apply_single_rename(
-        src,
-        "moved",
-        plan_file_path=None,
-        plan_entries=[],
-        dry_run=False,
-        backup_dir=None,
-        on_success=None,
-        max_filename_chars=None,
-    )
+    ok, target = rename_pdf(src, "moved")
 
     assert ok is True
     assert target.name == "moved.pdf"
@@ -306,16 +253,7 @@ def test_apply_single_rename_exdev_copy_fails(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setattr(shutil, "copy2", _copy2_fail)
 
     with pytest.raises(OSError, match="I/O error"):
-        apply_single_rename(
-            src,
-            "moved",
-            plan_file_path=None,
-            plan_entries=[],
-            dry_run=False,
-            backup_dir=None,
-            on_success=None,
-            max_filename_chars=None,
-        )
+        rename_pdf(src, "moved")
 
     # Target should have been cleaned up
     assert not target_path.exists(), "Target should be cleaned up after copy failure"
@@ -340,16 +278,7 @@ def test_apply_single_rename_enametoolong(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.setattr(os, "link", _link_enametoolong)
 
     with pytest.raises(OSError, match="Shorten"):
-        apply_single_rename(
-            src,
-            "a" * 300,
-            plan_file_path=None,
-            plan_entries=[],
-            dry_run=False,
-            backup_dir=None,
-            on_success=None,
-            max_filename_chars=None,
-        )
+        rename_pdf(src, "a" * 300)
 
     # Source must still be intact.
     assert src.exists()
@@ -365,15 +294,11 @@ def test_apply_single_rename_plan_entries_none(tmp_path: Path) -> None:
     src = tmp_path / "doc.pdf"
     src.write_text("content", encoding="utf-8")
 
-    ok, target = apply_single_rename(
+    ok, target = rename_pdf(
         src,
         "planned",
         plan_file_path=tmp_path / "plan.json",
         plan_entries=None,
-        dry_run=False,
-        backup_dir=None,
-        on_success=None,
-        max_filename_chars=None,
     )
 
     assert ok is True
@@ -457,341 +382,3 @@ def test_next_available_path_exhaustion(tmp_path: Path) -> None:
         (tmp_path / f"report_{i}.pdf").write_text(f"v{i}", encoding="utf-8")
     with pytest.raises(OSError, match="Could not create unique path"):
         _next_available_path(p, max_tries=3)
-
-
-# ---------------------------------------------------------------------------
-# sanitize_filename_base — Windows reserved names
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("reserved", ["CON", "NUL", "AUX", "PRN", "COM1", "LPT9"])
-def test_sanitize_filename_base_windows_reserved(reserved: str) -> None:
-    """Windows reserved device names get an underscore suffix appended."""
-    result = sanitize_filename_base(reserved)
-    assert result == f"{reserved}_"
-
-
-def test_sanitize_filename_base_reserved_case_insensitive() -> None:
-    """Reserved name check is case-insensitive."""
-    assert sanitize_filename_base("con") == "con_"
-    assert sanitize_filename_base("Nul") == "Nul_"
-
-
-# ---------------------------------------------------------------------------
-# apply_single_rename — os.link fallback path (EPERM/ENOSYS)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(os.name == "nt", reason="Unix-only branch")
-def test_apply_single_rename_link_eperm_fallback_to_rename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """When os.link raises EPERM (not EEXIST), falls back through O_CREAT placeholder to os.rename."""
-    src = tmp_path / "doc.pdf"
-    src.write_text("content", encoding="utf-8")
-
-    def _link_eperm(s: object, d: object) -> None:
-        raise OSError(errno.EPERM, "Operation not permitted")
-
-    monkeypatch.setattr(os, "link", _link_eperm)
-
-    ok, target = apply_single_rename(
-        src,
-        "result",
-        plan_file_path=None,
-        plan_entries=[],
-        dry_run=False,
-        backup_dir=None,
-        on_success=None,
-        max_filename_chars=None,
-    )
-
-    assert ok is True
-    assert target.name == "result.pdf"
-    assert target.read_text(encoding="utf-8") == "content"
-    assert not src.exists()
-
-
-@pytest.mark.skipif(os.name == "nt", reason="Unix-only branch")
-def test_apply_single_rename_link_eperm_target_exists_collision(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """When os.link raises EPERM and target exists, O_CREAT|O_EXCL raises FileExistsError → collision suffix."""
-    src = tmp_path / "doc.pdf"
-    src.write_text("content", encoding="utf-8")
-    # Pre-create the target so O_CREAT|O_EXCL will fail
-    (tmp_path / "result.pdf").write_text("existing", encoding="utf-8")
-
-    def _link_eperm(s: object, d: object) -> None:
-        raise OSError(errno.EPERM, "Operation not permitted")
-
-    monkeypatch.setattr(os, "link", _link_eperm)
-
-    ok, target = apply_single_rename(
-        src,
-        "result",
-        plan_file_path=None,
-        plan_entries=[],
-        dry_run=False,
-        backup_dir=None,
-        on_success=None,
-        max_filename_chars=None,
-    )
-
-    assert ok is True
-    assert target.name == "result_1.pdf"
-    assert target.read_text(encoding="utf-8") == "content"
-
-
-@pytest.mark.skipif(os.name == "nt", reason="Unix-only branch")
-def test_apply_single_rename_link_fallback_reserves_target_before_rename(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The hard-link fallback reserves the target before Unix rename can overwrite."""
-    src = tmp_path / "doc.pdf"
-    src.write_text("content", encoding="utf-8")
-
-    original_rename = os.rename
-    saw_reserved_target = False
-
-    def _link_eperm(s: object, d: object) -> None:
-        raise OSError(errno.EPERM, "Operation not permitted")
-
-    def _rename_observes_placeholder(s: object, d: object) -> None:
-        nonlocal saw_reserved_target
-        saw_reserved_target = Path(str(d)).exists()
-        original_rename(s, d)
-
-    monkeypatch.setattr(os, "link", _link_eperm)
-    monkeypatch.setattr(os, "rename", _rename_observes_placeholder)
-
-    ok, target = apply_single_rename(
-        src,
-        "result",
-        plan_file_path=None,
-        plan_entries=[],
-        dry_run=False,
-        backup_dir=None,
-        on_success=None,
-        max_filename_chars=None,
-    )
-
-    assert ok is True
-    assert saw_reserved_target is True
-    assert target.name == "result.pdf"
-    assert target.read_text(encoding="utf-8") == "content"
-
-
-@pytest.mark.skipif(os.name == "nt", reason="Unix-only branch")
-def test_apply_single_rename_link_fallback_propagates_reservation_permission_errors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Permission failures while reserving the target must not be treated as collisions."""
-    src = tmp_path / "doc.pdf"
-    src.write_text("content", encoding="utf-8")
-
-    def _link_eperm(s: object, d: object) -> None:
-        raise OSError(errno.EPERM, "Operation not permitted")
-
-    def _open_eacces(path: object, flags: int, mode: int = 0o777) -> int:
-        raise PermissionError(errno.EACCES, "Permission denied", str(path))
-
-    def _rename_should_not_run(s: object, d: object) -> None:
-        raise AssertionError("rename should not run after reservation permission failure")
-
-    monkeypatch.setattr(os, "link", _link_eperm)
-    monkeypatch.setattr(os, "open", _open_eacces)
-    monkeypatch.setattr(os, "rename", _rename_should_not_run)
-
-    with pytest.raises(PermissionError):
-        apply_single_rename(
-            src,
-            "result",
-            plan_file_path=None,
-            plan_entries=[],
-            dry_run=False,
-            backup_dir=None,
-            on_success=None,
-            max_filename_chars=None,
-        )
-
-    assert src.exists()
-    assert not (tmp_path / "result.pdf").exists()
-    assert not (tmp_path / "result_1.pdf").exists()
-
-
-# ---------------------------------------------------------------------------
-# apply_single_rename — max_filename_chars truncation during collision
-# ---------------------------------------------------------------------------
-
-
-def test_apply_single_rename_max_filename_chars_truncation(tmp_path: Path) -> None:
-    """When max_filename_chars is set, collision suffix trims the base to fit."""
-    src = tmp_path / "doc.pdf"
-    src.write_text("content", encoding="utf-8")
-    # Pre-create the expected target to force a collision
-    long_base = "a" * 20
-    (tmp_path / f"{long_base}.pdf").write_text("existing", encoding="utf-8")
-
-    ok, target = apply_single_rename(
-        src,
-        long_base,
-        plan_file_path=None,
-        plan_entries=[],
-        dry_run=False,
-        backup_dir=None,
-        on_success=None,
-        max_filename_chars=15,
-    )
-
-    assert ok is True
-    # Total name should fit within max_filename_chars characters (including .pdf)
-    assert len(target.stem) + len(target.suffix) <= 15 or target.exists()
-    assert target.read_text(encoding="utf-8") == "content"
-
-
-# ---------------------------------------------------------------------------
-# apply_single_rename — EXDEV + dry_run
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(os.name == "nt", reason="Unix-only branch")
-def test_apply_single_rename_exdev_dry_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """EXDEV with dry_run=True returns success without touching the filesystem."""
-    src = tmp_path / "doc.pdf"
-    src.write_text("content", encoding="utf-8")
-
-    def _link_exdev(s: object, d: object) -> None:
-        raise OSError(errno.EXDEV, "Cross-device link")
-
-    def _rename_exdev(s: object, d: object) -> None:
-        raise OSError(errno.EXDEV, "Cross-device link")
-
-    monkeypatch.setattr(os, "link", _link_exdev)
-    monkeypatch.setattr(os, "rename", _rename_exdev)
-
-    ok, target = apply_single_rename(
-        src,
-        "moved",
-        plan_file_path=None,
-        plan_entries=[],
-        dry_run=True,
-        backup_dir=None,
-        on_success=None,
-        max_filename_chars=None,
-    )
-
-    assert ok is True
-    assert src.exists(), "Source must survive dry_run"
-    assert not target.exists(), "Target must not be created in dry_run"
-
-
-# ---------------------------------------------------------------------------
-# apply_single_rename — EXDEV + on_success callback
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(os.name == "nt", reason="Unix-only branch")
-def test_apply_single_rename_exdev_calls_on_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """on_success is called after successful EXDEV copy+unlink path."""
-    src = tmp_path / "doc.pdf"
-    src.write_text("content", encoding="utf-8")
-
-    def _link_exdev(s: object, d: object) -> None:
-        raise OSError(errno.EXDEV, "Cross-device link")
-
-    def _rename_exdev(s: object, d: object) -> None:
-        raise OSError(errno.EXDEV, "Cross-device link")
-
-    monkeypatch.setattr(os, "link", _link_exdev)
-    monkeypatch.setattr(os, "rename", _rename_exdev)
-
-    calls: list[tuple[Path, Path, str]] = []
-
-    def _on_success(old: Path, new: Path, base: str) -> None:
-        calls.append((old, new, base))
-
-    ok, target = apply_single_rename(
-        src,
-        "moved",
-        plan_file_path=None,
-        plan_entries=[],
-        dry_run=False,
-        backup_dir=None,
-        on_success=_on_success,
-        max_filename_chars=None,
-    )
-
-    assert ok is True
-    assert len(calls) == 1
-    assert calls[0][1] == target
-
-
-# ---------------------------------------------------------------------------
-# apply_single_rename — EXDEV + unlink failure
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(os.name == "nt", reason="Unix-only branch")
-def test_apply_single_rename_exdev_unlink_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """When cross-fs copy succeeds but source unlink fails, an OSError is raised and target is cleaned up."""
-    src = tmp_path / "doc.pdf"
-    src.write_text("content", encoding="utf-8")
-
-    def _link_exdev(s: object, d: object) -> None:
-        raise OSError(errno.EXDEV, "Cross-device link")
-
-    def _rename_exdev(s: object, d: object) -> None:
-        raise OSError(errno.EXDEV, "Cross-device link")
-
-    original_unlink = Path.unlink
-
-    def _unlink_fail(self: Path, *args: object, **kwargs: object) -> None:
-        if self == src:
-            raise OSError(errno.EACCES, "Permission denied")
-        original_unlink(self, *args, **kwargs)
-
-    monkeypatch.setattr(os, "link", _link_exdev)
-    monkeypatch.setattr(os, "rename", _rename_exdev)
-    monkeypatch.setattr(Path, "unlink", _unlink_fail)
-
-    with pytest.raises(OSError, match="Cross-filesystem rename"):
-        apply_single_rename(
-            src,
-            "moved",
-            plan_file_path=None,
-            plan_entries=[],
-            dry_run=False,
-            backup_dir=None,
-            on_success=None,
-            max_filename_chars=None,
-        )
-
-
-# ---------------------------------------------------------------------------
-# apply_single_rename — retry exhaustion
-# ---------------------------------------------------------------------------
-
-
-def test_apply_single_rename_retry_exhaustion(tmp_path: Path) -> None:
-    """When all MAX_RENAME_RETRIES collision suffixes are occupied, returns (False, target)."""
-    src = tmp_path / "doc.pdf"
-    src.write_text("original", encoding="utf-8")
-
-    base = "report"
-    # Pre-create the base target and all suffixed variants up to MAX_RENAME_RETRIES
-    (tmp_path / f"{base}.pdf").write_text("v0", encoding="utf-8")
-    for i in range(1, MAX_RENAME_RETRIES + 1):
-        (tmp_path / f"{base}_{i}.pdf").write_text(f"v{i}", encoding="utf-8")
-
-    ok, _ = apply_single_rename(
-        src,
-        base,
-        plan_file_path=None,
-        plan_entries=[],
-        dry_run=False,
-        backup_dir=None,
-        on_success=None,
-        max_filename_chars=None,
-    )
-
-    assert ok is False
-    assert src.exists(), "Source must remain when rename fails"

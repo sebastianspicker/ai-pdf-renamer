@@ -5,389 +5,106 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 import threading
-import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, cast
+
+from .heuristic_scoring import (
+    HeuristicRule,
+    HeuristicScorer,
+    _score_text,
+    load_heuristic_rules,
+    load_heuristic_rules_for_language,
+)
+from .options import merge_options
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class HeuristicRule:
-    pattern: re.Pattern[str]
-    category: str
-    score: float
-    negative_pattern: re.Pattern[str] | None = None
-    language: str | None = None
-    parent: str | None = None
-
-
-def load_heuristic_rules(path: str | Path) -> list[HeuristicRule]:
-    """Load heuristic scoring rules from a JSON file, compiling regex patterns and validating fields."""
-    path_obj = Path(path)
-    try:
-        raw = path_obj.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ValueError(f"Could not read data file at {path_obj.absolute()}: {exc!s}") from exc
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid JSON in data file at {path_obj.absolute()}. {exc!s}") from exc
-    rules: list[HeuristicRule] = []
-    raw_patterns = data.get("patterns", [])
-    if not isinstance(raw_patterns, list):
-        raw_patterns = []
-
-    for entry in raw_patterns:
-        regex = entry.get("regex")
-        negative_regex = entry.get("negative_regex")
-        category = entry.get("category")
-        score = entry.get("score")
-        if not isinstance(regex, str) or not isinstance(category, str):
-            continue
-        try:
-            compiled = re.compile(regex)
-        except re.error as exc:
-            raise ValueError(f"Invalid regex in data file at {path_obj.absolute()}: {regex!r} ({exc})") from exc
-        negative_compiled: re.Pattern[str] | None = None
-        if isinstance(negative_regex, str) and negative_regex.strip():
-            try:
-                negative_compiled = re.compile(negative_regex)
-            except re.error as exc:
-                raise ValueError(
-                    f"Invalid negative regex in data file at {path_obj.absolute()} for {category!r}: "
-                    f"{negative_regex!r} ({exc})"
-                ) from exc
-        try:
-            score_f = float(score)
-        except (TypeError, ValueError):
-            score_f = 0.0
-        language = entry.get("language")
-        if language is not None and not isinstance(language, str):
-            language = None
-        elif language is not None:
-            language = language.strip().lower() or None
-            if language not in ("de", "en"):
-                language = None
-        parent = entry.get("parent")
-        if parent is not None and not isinstance(parent, str):
-            parent = None
-        elif parent is not None:
-            parent = parent.strip() or None
-        rules.append(
-            HeuristicRule(
-                pattern=compiled,
-                category=category,
-                score=score_f,
-                negative_pattern=negative_compiled,
-                language=language,
-                parent=parent,
-            )
-        )
-
-    return rules
-
-
-def load_heuristic_rules_for_language(
-    base_path: str | Path,
-    language: str,
-) -> list[HeuristicRule]:
-    """
-    Load heuristic rules from base file and, if present, from a per-locale file
-    (e.g. heuristic_scores_de.json, heuristic_scores_en.json). Base rules come
-    first, then locale-specific rules (same structure as heuristic_scores.json).
-    """
-    path_obj = Path(base_path)
-    base_rules = load_heuristic_rules(path_obj)
-    lang = (language or "de").strip().lower()
-    if lang not in ("de", "en"):
-        lang = "de"
-    locale_file = path_obj.parent / f"heuristic_scores_{lang}.json"
-    if not locale_file.exists():
-        return base_rules
-    try:
-        locale_rules = load_heuristic_rules(locale_file)
-        return base_rules + locale_rules
-    except (ValueError, OSError) as exc:
-        logger.warning(
-            "Could not load locale heuristic file %s: %s. Using base rules only.",
-            locale_file.name,
-            exc,
-        )
-        return base_rules
-
-
-def _score_text(
-    text: str,
-    rules: list[HeuristicRule],
-    language: str | None,
-    *,
-    rules_by_category: dict[str, list[HeuristicRule]] | None = None,
-    title_weight_region: int = 0,
-    title_weight_factor: float = 1.5,
-    max_score_per_category: float | None = None,
-    max_text_length: int = 100000,
-) -> dict[str, float]:
-    """
-    Score text against heuristic rules. Returns dict of category -> score.
-
-    Security note: Regex patterns are loaded from heuristic_scores.json. To prevent
-    ReDoS (Regular Expression Denial of Service), the text length is capped at
-    max_text_length characters. Only trusted users should modify heuristic pattern files.
-    Pattern files should be validated for catastrophic backtracking before deployment.
-    """
-    scores: dict[str, float] = {}
-    started_at = time.perf_counter()
-    # Mitigate potential ReDoS by capping the text length searched by regexes.
-    search_text = text if len(text) <= max_text_length else text[:max_text_length]
-    grouped_rules = rules_by_category
-    if grouped_rules is None:
-        grouped_rules = {}
-        for rule in rules:
-            grouped_rules.setdefault(rule.category, []).append(rule)
-    for category, category_rules in grouped_rules.items():
-        category_score = 0.0
-        for rule in category_rules:
-            if language is not None and rule.language is not None and rule.language != language:
-                continue
-            matches = list(rule.pattern.finditer(search_text))
-            if not matches:
-                continue
-            delta = 0.0
-            for match in matches:
-                if rule.negative_pattern is not None:
-                    window_start = max(0, match.start() - 48)
-                    window_end = min(len(search_text), match.end() + 48)
-                    if rule.negative_pattern.search(search_text[window_start:window_end]):
-                        continue
-                weight = 1.0
-                if title_weight_region > 0 and match.start() < title_weight_region:
-                    weight = title_weight_factor
-                delta += rule.score * weight
-            if delta <= 0:
-                continue
-            category_score += delta
-            if max_score_per_category is not None and category_score >= max_score_per_category:
-                category_score = max_score_per_category
-                break
-        if category_score > 0:
-            scores[category] = category_score
-    if max_score_per_category is not None:
-        for cat in list(scores):
-            if scores[cat] > max_score_per_category:
-                scores[cat] = max_score_per_category
-    if logger.isEnabledFor(logging.DEBUG):
-        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
-        logger.debug(
-            "HeuristicMatchTiming chars=%s categories=%s rules=%s elapsed_ms=%.2f",
-            len(search_text),
-            len(grouped_rules),
-            len(rules),
-            elapsed_ms,
-        )
-    return scores
-
-
-@dataclass(frozen=True)
-class HeuristicScorer:
-    rules: list[HeuristicRule]
-    _parent_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
-    _rules_by_category: dict[str, list[HeuristicRule]] = field(default_factory=dict, init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        # Pre-compute parent map once at construction (frozen dataclass: use object.__setattr__).
-        cache: dict[str, str] = {}
-        grouped: dict[str, list[HeuristicRule]] = {}
-        for rule in self.rules:
-            if rule.parent is not None and rule.parent.strip():
-                cache[rule.category] = rule.parent.strip()
-            grouped.setdefault(rule.category, []).append(rule)
-        object.__setattr__(self, "_parent_map", cache)
-        object.__setattr__(self, "_rules_by_category", grouped)
-
-    def best_category(
-        self,
-        text: str,
-        *,
-        language: str | None = None,
-    ) -> str:
-        cat, _best, _runner_cat, _runner_up = self.best_category_with_confidence(
-            text,
-            language=language,
-            min_score_gap=0.0,
-        )
-        return cat
-
-    def best_category_with_confidence(
-        self,
-        text: str,
-        *,
-        language: str | None = None,
-        min_score_gap: float = 0.0,
-        max_score_per_category: float | None = None,
-        title_weight_region: int = 0,
-        title_weight_factor: float = 1.5,
-    ) -> tuple[str, float, str, float]:
-        """
-        Returns (category, best_score, runner_up_cat, runner_up_score).
-        If no rule matches or min_score_gap not met: 'unknown', 0.0, 'unknown', 0.0.
-        """
-        if text is None or not isinstance(text, str):
-            return ("unknown", 0.0, "unknown", 0.0)
-        scores = _score_text(
-            text,
-            self.rules,
-            language,
-            rules_by_category=self._rules_by_category,
-            title_weight_region=title_weight_region,
-            title_weight_factor=title_weight_factor,
-            max_score_per_category=max_score_per_category,
-        )
-        if not scores:
-            return ("unknown", 0.0, "unknown", 0.0)
-        parents = self._category_to_parent()
-        # Tie-break: same score -> prefer category that has a parent (more specific)
-        sorted_cats = sorted(
-            scores,
-            key=lambda c: (scores[c], 1 if c in parents else 0),
-            reverse=True,
-        )
-        best_cat = sorted_cats[0]
-        best_score = scores[best_cat]
-        runner_up_cat = sorted_cats[1] if len(sorted_cats) > 1 else "unknown"
-        runner_up_score = scores.get(runner_up_cat, 0.0)
-        if min_score_gap > 0 and (best_score - runner_up_score) < min_score_gap:
-            logger.info(
-                "Heuristic gap too small (best=%s %.2f, runner_up=%.2f, gap=%.2f). Returning unknown.",
-                best_cat,
-                best_score,
-                runner_up_score,
-                best_score - runner_up_score,
-            )
-            return ("unknown", 0.0, "unknown", 0.0)
-        logger.info(
-            "Heuristic scoring result: %s. Best: %s (%.2f)",
-            scores,
-            best_cat,
-            best_score,
-        )
-        if logger.isEnabledFor(logging.DEBUG):
-            top3 = sorted_cats[:3]
-            logger.debug(
-                "Heuristic top-3: %s",
-                [(c, scores[c]) for c in top3],
-            )
-        return (best_cat, best_score, runner_up_cat, runner_up_score)
-
-    def top_n_categories(
-        self,
-        text: str,
-        n: int = 5,
-        *,
-        language: str | None = None,
-        max_score_per_category: float | None = None,
-        title_weight_region: int = 0,
-        title_weight_factor: float = 1.5,
-    ) -> list[str]:
-        """Return up to n category names by score (best first). No min_score_gap."""
-        if not text or not isinstance(text, str) or n <= 0:
-            return []
-        scores = _score_text(
-            text,
-            self.rules,
-            language,
-            rules_by_category=self._rules_by_category,
-            title_weight_region=title_weight_region,
-            title_weight_factor=title_weight_factor,
-            max_score_per_category=max_score_per_category,
-        )
-        if not scores:
-            return []
-        parents = self._category_to_parent()
-        sorted_cats = sorted(
-            scores,
-            key=lambda c: (scores[c], 1 if c in parents else 0),
-            reverse=True,
-        )
-        return sorted_cats[:n]
-
-    def all_categories(self) -> frozenset[str]:
-        """Return the set of all category names from rules (for constrained LLM)."""
-        return frozenset(rule.category for rule in self.rules)
-
-    def _category_to_parent(self) -> dict[str, str]:
-        """Category -> parent from rules (last occurrence wins). Pre-computed at construction."""
-        return self._parent_map
-
-    def get_display_category(
-        self,
-        category: str,
-        style: str,
-    ) -> str:
-        """
-        Map category to filename segment using optional parent.
-        style: specific (as-is), with_parent (parent_category), parent_only (parent).
-        """
-        if not category or category in {"unknown", "document", "na", ""}:
-            return category
-        if style == "specific":
-            return category
-        parents = self._category_to_parent()
-        parent = parents.get(category)
-        if style == "parent_only":
-            return parent if parent else category
-        if style == "with_parent" and parent:
-            return f"{parent}_{category}"
-        return category
-
+__all__ = [
+    "CategoryCombineParams",
+    "HeuristicRule",
+    "HeuristicScorer",
+    "_score_text",
+    "clear_category_aliases_cache",
+    "clear_embedding_model_cache",
+    "combine_categories",
+    "load_heuristic_rules",
+    "load_heuristic_rules_for_language",
+    "normalize_llm_category",
+]
 
 # Global cache for category aliases (loaded once from category_aliases.json).
 _CATEGORY_ALIASES: dict[str, str] | None = None
 _CATEGORY_ALIASES_LOCK = threading.Lock()
-_CATEGORY_ALIASES_MTIME_NS: int = 0  # nanosecond mtime avoids float comparison issues on coarse-grained FSes
+_CATEGORY_ALIASES_MTIME_NS: int = 0
 
 
 def _load_category_aliases() -> dict[str, str]:
-    """Load alias map: LLM output (lowercase, _) -> heuristic category. Cached with mtime invalidation."""
-    global _CATEGORY_ALIASES, _CATEGORY_ALIASES_MTIME_NS
+    """Load alias map: LLM output (lowercase, _) -> heuristic category."""
+    module = sys.modules[__name__]
+    cached_aliases = cast(dict[str, str] | None, module.__dict__["_CATEGORY_ALIASES"])
+    path = _category_aliases_path_or_none()
+    if path is None:
+        if cached_aliases is None:
+            cached_aliases = {}
+            module.__dict__["_CATEGORY_ALIASES"] = cached_aliases
+        return cached_aliases
+
+    current_mtime_ns = _path_mtime_ns(path)
+    cached_mtime_ns = int(module.__dict__["_CATEGORY_ALIASES_MTIME_NS"])
+
+    if cached_aliases is not None and current_mtime_ns == cached_mtime_ns:
+        return cached_aliases
+    with _CATEGORY_ALIASES_LOCK:
+        cached_aliases = cast(dict[str, str] | None, module.__dict__["_CATEGORY_ALIASES"])
+        cached_mtime_ns = int(module.__dict__["_CATEGORY_ALIASES_MTIME_NS"])
+        if cached_aliases is not None and current_mtime_ns == cached_mtime_ns:
+            return cached_aliases
+        aliases = _read_category_aliases(path)
+        module.__dict__["_CATEGORY_ALIASES"] = aliases
+        module.__dict__["_CATEGORY_ALIASES_MTIME_NS"] = current_mtime_ns
+        return aliases
+
+
+def clear_category_aliases_cache() -> None:
+    """Clear the cached category alias map."""
+    with _CATEGORY_ALIASES_LOCK:
+        module = sys.modules[__name__]
+        module.__dict__["_CATEGORY_ALIASES"] = None
+        module.__dict__["_CATEGORY_ALIASES_MTIME_NS"] = 0
+
+
+def _category_aliases_path_or_none() -> Any | None:
     try:
         from .data_paths import category_aliases_path
 
-        path = category_aliases_path()
+        return category_aliases_path()
     except (ImportError, ValueError, FileNotFoundError):
-        if _CATEGORY_ALIASES is None:
-            _CATEGORY_ALIASES = {}
-        return _CATEGORY_ALIASES
+        return None
 
+
+def _path_mtime_ns(path: Any) -> int:
     try:
-        current_mtime_ns = path.stat().st_mtime_ns if path.exists() else 0
+        return path.stat().st_mtime_ns if path.exists() else 0
     except OSError:
-        current_mtime_ns = 0
+        return 0
 
-    if _CATEGORY_ALIASES is not None and current_mtime_ns == _CATEGORY_ALIASES_MTIME_NS:
-        return _CATEGORY_ALIASES
-    with _CATEGORY_ALIASES_LOCK:
-        if _CATEGORY_ALIASES is not None and current_mtime_ns == _CATEGORY_ALIASES_MTIME_NS:
-            return _CATEGORY_ALIASES
-        try:
-            if path.exists():
-                raw = path.read_text(encoding="utf-8")
-                data = json.loads(raw)
-                aliases = data.get("aliases")
-                if not isinstance(aliases, dict):
-                    aliases = {}
-                norm = {str(k).strip().lower().replace(" ", "_"): str(v) for k, v in aliases.items() if k and v}
-                _CATEGORY_ALIASES = norm
-                _CATEGORY_ALIASES_MTIME_NS = current_mtime_ns
-            else:
-                _CATEGORY_ALIASES = {}
-                _CATEGORY_ALIASES_MTIME_NS = current_mtime_ns
-        except (OSError, json.JSONDecodeError, ValueError):
-            _CATEGORY_ALIASES = {}
-            _CATEGORY_ALIASES_MTIME_NS = current_mtime_ns
-    return _CATEGORY_ALIASES
+
+def _read_category_aliases(path: Any) -> dict[str, str]:
+    try:
+        if not path.exists():
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        aliases = data.get("aliases") if isinstance(data, dict) else {}
+        return _normalized_alias_map(aliases if isinstance(aliases, dict) else {})
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+
+
+def _normalized_alias_map(aliases: dict[Any, Any]) -> dict[str, str]:
+    return {str(k).strip().lower().replace(" ", "_"): str(v) for k, v in aliases.items() if k and v}
 
 
 def normalize_llm_category(cat_llm: str | None, *, _aliases: dict[str, str] | None = None) -> str:
@@ -404,7 +121,7 @@ def normalize_llm_category(cat_llm: str | None, *, _aliases: dict[str, str] | No
 
 
 def _tokenize_for_overlap(text: str) -> set[str]:
-    """Lowercase token set from category or context (split on whitespace and _)."""
+    """Lowercase token set from category or context."""
     if not text or not isinstance(text, str):
         return set()
     tokens = re.split(r"[\s_]+", text.lower())
@@ -412,7 +129,7 @@ def _tokenize_for_overlap(text: str) -> set[str]:
 
 
 def _overlap_count(category_tokens: set[str], context_tokens: set[str]) -> int:
-    """Number of category tokens that appear in context (for conflict resolution)."""
+    """Number of category tokens that appear in context."""
     return len(category_tokens & context_tokens)
 
 
@@ -426,70 +143,74 @@ def _embedding_conflict_pick(
     cat_heur: str,
     cat_llm: str,
 ) -> str | None:
-    """
-    If sentence-transformers is available, return 'heuristic' or 'llm' based on
-    which category is more similar to context (cosine similarity). Else return None.
-    """
-    global _embedding_model
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
-        return None
+    """Return the category source with higher embedding similarity when available."""
     if not context or not context.strip():
         return None
     try:
-        if _embedding_model is None:
-            with _embedding_model_lock:
-                if _embedding_model is None:
-                    _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-        model = _embedding_model
+        model = _embedding_model_instance()
+        if model is None:
+            return None
         embs = model.encode([context.strip(), cat_heur, cat_llm])
         if embs is None or len(embs) < 3:
             return None
         ctx_emb, heur_emb, llm_emb = embs[0], embs[1], embs[2]
-
-        # Cosine similarity (emb can be numpy or list)
-        def _cos(a: Any, b: Any) -> float:
-            dot = sum(float(x) * float(y) for x, y in zip(a, b, strict=True))
-            na = sum(float(x) * float(x) for x in a) ** 0.5
-            nb = sum(float(y) * float(y) for y in b) ** 0.5
-            if na * nb <= 0:
-                return 0.0
-            return float(dot / (na * nb))
-
-        sim_heur = _cos(ctx_emb, heur_emb)
-        sim_llm = _cos(ctx_emb, llm_emb)
-        if sim_heur >= sim_llm:
-            return "heuristic"
-        return "llm"
+        return "heuristic" if _cosine_similarity(ctx_emb, heur_emb) >= _cosine_similarity(ctx_emb, llm_emb) else "llm"
     except (TypeError, ValueError, AttributeError, RuntimeError, ImportError) as exc:
         logger.debug("Embedding conflict resolution failed: %s", exc)
         return None
 
 
+def _embedding_model_instance() -> Any | None:
+    module = sys.modules[__name__]
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        return None
+    model = module.__dict__["_embedding_model"]
+    if model is None:
+        with _embedding_model_lock:
+            model = module.__dict__["_embedding_model"]
+            if model is None:
+                model = SentenceTransformer("all-MiniLM-L6-v2")
+                module.__dict__["_embedding_model"] = model
+    return model
+
+
+def clear_embedding_model_cache() -> None:
+    """Clear the cached embedding model instance."""
+    with _embedding_model_lock:
+        sys.modules[__name__].__dict__["_embedding_model"] = None
+
+
+def _cosine_similarity(a: Any, b: Any) -> float:
+    dot = sum(float(x) * float(y) for x, y in zip(a, b, strict=True))
+    na = sum(float(x) * float(x) for x in a) ** 0.5
+    nb = sum(float(y) * float(y) for y in b) ** 0.5
+    if na * nb <= 0:
+        return 0.0
+    return float(dot / (na * nb))
+
+
 def _combine_apply_heuristic_override(
     cat_heuristic: str,
     cat_llm_norm: str,
-    *,
-    heuristic_override_min_score: float | None,
-    heuristic_override_min_gap: float | None,
-    heuristic_score: float | None,
-    heuristic_gap: float | None,
+    opts: CategoryCombineOptions,
+    params: CategoryCombineParams,
 ) -> str | None:
     """If high-confidence heuristic override applies, return cat_heuristic; else None."""
+    if params.heuristic_override_min_score is None or params.heuristic_override_min_gap is None:
+        return None
+    if opts.heuristic_score is None or opts.heuristic_gap is None:
+        return None
     if (
-        heuristic_override_min_score is None
-        or heuristic_override_min_gap is None
-        or heuristic_score is None
-        or heuristic_gap is None
-        or heuristic_score < heuristic_override_min_score
-        or heuristic_gap < heuristic_override_min_gap
+        opts.heuristic_score < params.heuristic_override_min_score
+        or opts.heuristic_gap < params.heuristic_override_min_gap
     ):
         return None
     logger.info(
         "High-confidence heuristic (score=%.2f gap=%.2f). Using %s.",
-        heuristic_score,
-        heuristic_gap,
+        opts.heuristic_score,
+        opts.heuristic_gap,
         cat_heuristic,
     )
     logger.info(
@@ -513,7 +234,6 @@ def _combine_agreement_or_parent(
     heur_parent = category_parent_map.get(cat_heuristic)
     llm_parent = category_parent_map.get(cat_llm_norm)
     if heur_parent == cat_llm_norm:
-        # Prefer the more specific child category when one side names the parent.
         logger.info(
             "LLM %s and heuristic %s agree (parent match). Using more specific: heuristic.",
             cat_llm_norm,
@@ -521,7 +241,6 @@ def _combine_agreement_or_parent(
         )
         return cat_heuristic
     if llm_parent == cat_heuristic:
-        # Prefer the more specific child category when one side names the parent.
         logger.info(
             "LLM %s and heuristic %s agree (parent match). Using more specific: LLM.",
             cat_llm_norm,
@@ -546,106 +265,114 @@ def _combine_agreement_or_parent(
 def _combine_resolve_conflict(
     cat_llm_norm: str,
     cat_heuristic: str,
-    *,
-    prefer_llm: bool,
-    context_for_overlap: str | None,
-    use_embeddings_for_conflict: bool,
-    use_keyword_overlap: bool,
-    heuristic_score: float | None,
-    heuristic_score_weight: float,
+    options: ConflictResolutionOptions | None = None,
+    **overrides: object,
 ) -> str:
     """Resolve conflict via embedding, keyword overlap, or prefer_llm; default heuristic."""
-    if context_for_overlap and (use_embeddings_for_conflict or use_keyword_overlap):
-        if use_embeddings_for_conflict:
-            pick = _embedding_conflict_pick(context_for_overlap, cat_heuristic, cat_llm_norm)
-            if pick == "heuristic":
-                logger.info(
-                    "CategoryConflict chosen=heuristic (embedding) llm=%s heuristic=%s",
-                    cat_llm_norm,
-                    cat_heuristic,
-                )
-                return cat_heuristic
-            if pick == "llm":
-                logger.info(
-                    "CategoryConflict chosen=llm (embedding) llm=%s heuristic=%s",
-                    cat_llm_norm,
-                    cat_heuristic,
-                )
-                return cat_llm_norm
-        if use_keyword_overlap:
-            ctx_tokens = _tokenize_for_overlap(context_for_overlap)
-            llm_tokens = _tokenize_for_overlap(cat_llm_norm)
-            heur_tokens = _tokenize_for_overlap(cat_heuristic)
-            overlap_llm = _overlap_count(llm_tokens, ctx_tokens)
-            overlap_heur = _overlap_count(heur_tokens, ctx_tokens)
-            score_bonus = (
-                heuristic_score_weight * (heuristic_score or 0.0)
-                if heuristic_score_weight > 0 and heuristic_score is not None
-                else 0.0
-            )
-            overlap_heur_weighted = overlap_heur + score_bonus
-            if overlap_llm > overlap_heur_weighted:
-                logger.info(
-                    "Conflict: LLM=%s, Heuristic=%s. Overlap favors LLM (%d vs %.2f).",
-                    cat_llm_norm,
-                    cat_heuristic,
-                    overlap_llm,
-                    overlap_heur_weighted,
-                )
-                logger.info(
-                    "CategoryConflict chosen=llm llm=%s heuristic=%s",
-                    cat_llm_norm,
-                    cat_heuristic,
-                )
-                return cat_llm_norm
-            if overlap_heur_weighted > overlap_llm:
-                logger.info(
-                    "Conflict: LLM=%s, Heur=%s. Overlap favors heuristic (%.2f vs %d).",
-                    cat_llm_norm,
-                    cat_heuristic,
-                    overlap_heur_weighted,
-                    overlap_llm,
-                )
-                logger.info(
-                    "CategoryConflict chosen=heuristic llm=%s heuristic=%s",
-                    cat_llm_norm,
-                    cat_heuristic,
-                )
-                return cat_heuristic
-            logger.info(
-                "Conflict: LLM=%s, Heuristic=%s. Overlap tie; using heuristic.",
-                cat_llm_norm,
-                cat_heuristic,
-            )
-            logger.info(
-                "CategoryConflict chosen=heuristic llm=%s heuristic=%s",
-                cat_llm_norm,
-                cat_heuristic,
-            )
-            return cat_heuristic
-    if prefer_llm:
+    opts = merge_options(options or ConflictResolutionOptions(), overrides)
+    context_pick = _context_conflict_pick(cat_llm_norm, cat_heuristic, opts)
+    if context_pick is not None:
+        return context_pick
+    return _preference_conflict_pick(cat_llm_norm, cat_heuristic, opts.prefer_llm)
+
+
+@dataclass(frozen=True)
+class ConflictResolutionOptions:
+    prefer_llm: bool = True
+    context_for_overlap: str | None = None
+    use_embeddings_for_conflict: bool = False
+    use_keyword_overlap: bool = False
+    heuristic_score: float | None = None
+    heuristic_score_weight: float = 1.0
+
+
+def _context_conflict_pick(
+    cat_llm_norm: str,
+    cat_heuristic: str,
+    options: ConflictResolutionOptions,
+) -> str | None:
+    if not options.context_for_overlap:
+        return None
+    if options.use_embeddings_for_conflict:
+        pick = _embedding_conflict_pick(options.context_for_overlap, cat_heuristic, cat_llm_norm)
+        if pick in {"heuristic", "llm"}:
+            chosen = cat_heuristic if pick == "heuristic" else cat_llm_norm
+            _log_category_conflict(pick, cat_llm_norm, cat_heuristic, detail="embedding")
+            return chosen
+    if options.use_keyword_overlap:
+        return _overlap_conflict_pick(cat_llm_norm, cat_heuristic, options)
+    return None
+
+
+def _overlap_conflict_pick(
+    cat_llm_norm: str,
+    cat_heuristic: str,
+    options: ConflictResolutionOptions,
+) -> str:
+    overlap_llm, overlap_heur_weighted = _weighted_overlap_scores(cat_llm_norm, cat_heuristic, options)
+    if overlap_llm > overlap_heur_weighted:
         logger.info(
-            "Conflict: LLM category=%s, Heuristic=%s. Preferring LLM.",
+            "Conflict: LLM=%s, Heuristic=%s. Overlap favors LLM (%d vs %.2f).",
             cat_llm_norm,
             cat_heuristic,
+            overlap_llm,
+            overlap_heur_weighted,
         )
-        logger.info(
-            "CategoryConflict chosen=llm llm=%s heuristic=%s",
-            cat_llm_norm,
-            cat_heuristic,
-        )
+        _log_category_conflict("llm", cat_llm_norm, cat_heuristic)
         return cat_llm_norm
-    logger.info(
-        "Conflict: LLM category=%s, Heuristic=%s. Prioritizing heuristic.",
-        cat_llm_norm,
-        cat_heuristic,
-    )
-    logger.info(
-        "CategoryConflict chosen=heuristic llm=%s heuristic=%s",
-        cat_llm_norm,
-        cat_heuristic,
-    )
+    if overlap_heur_weighted > overlap_llm:
+        logger.info(
+            "Conflict: LLM=%s, Heur=%s. Overlap favors heuristic (%.2f vs %d).",
+            cat_llm_norm,
+            cat_heuristic,
+            overlap_heur_weighted,
+            overlap_llm,
+        )
+        _log_category_conflict("heuristic", cat_llm_norm, cat_heuristic)
+        return cat_heuristic
+    logger.info("Conflict: LLM=%s, Heuristic=%s. Overlap tie; using heuristic.", cat_llm_norm, cat_heuristic)
+    _log_category_conflict("heuristic", cat_llm_norm, cat_heuristic)
     return cat_heuristic
+
+
+def _weighted_overlap_scores(
+    cat_llm_norm: str,
+    cat_heuristic: str,
+    options: ConflictResolutionOptions,
+) -> tuple[int, float]:
+    ctx_tokens = _tokenize_for_overlap(options.context_for_overlap or "")
+    overlap_llm = _overlap_count(_tokenize_for_overlap(cat_llm_norm), ctx_tokens)
+    overlap_heur = _overlap_count(_tokenize_for_overlap(cat_heuristic), ctx_tokens)
+    score_bonus = _heuristic_score_bonus(options.heuristic_score, options.heuristic_score_weight)
+    return overlap_llm, overlap_heur + score_bonus
+
+
+def _heuristic_score_bonus(heuristic_score: float | None, heuristic_score_weight: float) -> float:
+    if heuristic_score_weight <= 0 or heuristic_score is None:
+        return 0.0
+    return heuristic_score_weight * heuristic_score
+
+
+def _preference_conflict_pick(cat_llm_norm: str, cat_heuristic: str, prefer_llm: bool) -> str:
+    chosen = "llm" if prefer_llm else "heuristic"
+    if prefer_llm:
+        logger.info("Conflict: LLM category=%s, Heuristic=%s. Preferring LLM.", cat_llm_norm, cat_heuristic)
+        _log_category_conflict(chosen, cat_llm_norm, cat_heuristic)
+        return cat_llm_norm
+    logger.info("Conflict: LLM category=%s, Heuristic=%s. Prioritizing heuristic.", cat_llm_norm, cat_heuristic)
+    _log_category_conflict(chosen, cat_llm_norm, cat_heuristic)
+    return cat_heuristic
+
+
+def _log_category_conflict(
+    chosen: str,
+    cat_llm_norm: str,
+    cat_heuristic: str,
+    *,
+    detail: str | None = None,
+) -> None:
+    chosen_label = f"{chosen} ({detail})" if detail else chosen
+    logger.info("CategoryConflict chosen=%s llm=%s heuristic=%s", chosen_label, cat_llm_norm, cat_heuristic)
 
 
 @dataclass(frozen=True)
@@ -661,65 +388,94 @@ class CategoryCombineParams:
     use_embeddings_for_conflict: bool = False
 
 
+@dataclass(frozen=True)
+class CategoryCombineOptions:
+    heuristic_score: float | None = None
+    heuristic_gap: float | None = None
+    params: CategoryCombineParams | None = None
+    context_for_overlap: str | None = None
+    category_parent_map: dict[str, str] | None = None
+
+
 def combine_categories(
     cat_llm: str,
     cat_heur: str,
-    *,
-    heuristic_score: float | None = None,
-    heuristic_gap: float | None = None,
-    params: CategoryCombineParams | None = None,
-    context_for_overlap: str | None = None,
-    category_parent_map: dict[str, str] | None = None,
+    options: CategoryCombineOptions | None = None,
+    **overrides: object,
 ) -> str:
     """Merge heuristic and LLM categories using configurable conflict resolution, parent matching, and overlap."""
-    if params is None:
-        params = CategoryCombineParams()
+    opts = merge_options(options or CategoryCombineOptions(), overrides)
+    params = opts.params or CategoryCombineParams()
     cat_llm_norm = normalize_llm_category(cat_llm)
+    early_result = _combine_early_result(cat_llm_norm, cat_heur, opts.heuristic_score, params)
+    if early_result is not None:
+        return early_result
+
+    override = _combine_apply_heuristic_override(
+        cat_heur,
+        cat_llm_norm,
+        opts,
+        params,
+    )
+    if override is not None:
+        return override
+    agreed = _combine_agreement_or_parent(cat_llm_norm, cat_heur, opts.category_parent_map)
+    if agreed is not None:
+        return agreed
+    return _combine_resolve_conflict(cat_llm_norm, cat_heur, _conflict_options(params, opts))
+
+
+def _is_valid_llm_category(cat_llm_norm: str) -> bool:
+    return cat_llm_norm not in {"document", "unknown", "na", ""}
+
+
+def _combine_early_result(
+    cat_llm_norm: str,
+    cat_heur: str,
+    heuristic_score: float | None,
+    params: CategoryCombineParams,
+) -> str | None:
     if cat_heur == "unknown":
-        valid = cat_llm_norm not in {"document", "unknown", "na", ""}
-        return cat_llm_norm if valid else cat_heur
+        return cat_llm_norm if _is_valid_llm_category(cat_llm_norm) else cat_heur
     if heuristic_score is not None and heuristic_score < params.min_heuristic_score:
-        # Low heuristic confidence can hand control to the LLM, but not to
-        # placeholder categories such as "document" or "unknown".
-        llm_valid = cat_llm_norm not in {"document", "unknown", "na", ""}
-        if llm_valid:
-            logger.info(
-                "Heuristic score %.2f below threshold %.2f. Preferring LLM category %s.",
-                heuristic_score,
-                params.min_heuristic_score,
-                cat_llm_norm,
-            )
-            return cat_llm_norm
+        return _low_score_category_pick(cat_llm_norm, cat_heur, heuristic_score, params.min_heuristic_score)
+    if not _is_valid_llm_category(cat_llm_norm):
+        return cat_heur
+    return None
+
+
+def _low_score_category_pick(
+    cat_llm_norm: str,
+    cat_heur: str,
+    heuristic_score: float,
+    min_heuristic_score: float,
+) -> str:
+    if _is_valid_llm_category(cat_llm_norm):
         logger.info(
-            "Heuristic score %.2f below threshold %.2f but LLM category is invalid (%s). Using heuristic.",
+            "Heuristic score %.2f below threshold %.2f. Preferring LLM category %s.",
             heuristic_score,
-            params.min_heuristic_score,
+            min_heuristic_score,
             cat_llm_norm,
         )
-        return cat_heur
-    if cat_llm_norm in {"document", "unknown", "na", ""}:
-        return cat_heur
-
-    r = _combine_apply_heuristic_override(
-        cat_heur,
+        return cat_llm_norm
+    logger.info(
+        "Heuristic score %.2f below threshold %.2f but LLM category is invalid (%s). Using heuristic.",
+        heuristic_score,
+        min_heuristic_score,
         cat_llm_norm,
-        heuristic_override_min_score=params.heuristic_override_min_score,
-        heuristic_override_min_gap=params.heuristic_override_min_gap,
-        heuristic_score=heuristic_score,
-        heuristic_gap=heuristic_gap,
     )
-    if r is not None:
-        return r
-    r = _combine_agreement_or_parent(cat_llm_norm, cat_heur, category_parent_map)
-    if r is not None:
-        return r
-    return _combine_resolve_conflict(
-        cat_llm_norm,
-        cat_heur,
+    return cat_heur
+
+
+def _conflict_options(
+    params: CategoryCombineParams,
+    options: CategoryCombineOptions,
+) -> ConflictResolutionOptions:
+    return ConflictResolutionOptions(
         prefer_llm=params.prefer_llm,
-        context_for_overlap=context_for_overlap,
+        context_for_overlap=options.context_for_overlap,
         use_embeddings_for_conflict=params.use_embeddings_for_conflict,
         use_keyword_overlap=params.use_keyword_overlap,
-        heuristic_score=heuristic_score,
+        heuristic_score=options.heuristic_score,
         heuristic_score_weight=params.heuristic_score_weight,
     )

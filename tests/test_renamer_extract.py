@@ -9,8 +9,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from ai_pdf_renamer.config import RenamerConfig
+from ai_pdf_renamer.llm_prompts import build_vision_filename_prompt
 from ai_pdf_renamer.pdf_extract import DEFAULT_MAX_CONTENT_TOKENS
+from ai_pdf_renamer.rename_ops import sanitize_filename_from_llm
 from ai_pdf_renamer.renamer_extract import (
+    ExtractionFunctions,
+    VisionExtractionRequest,
     _log_extraction_strategy,
     _try_vision_extraction,
     effective_max_tokens,
@@ -47,6 +51,32 @@ def test_effective_max_tokens_default(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _extraction_fns(
+    *,
+    image_fn=None,
+    pdf_to_text_fn=None,
+    pdf_to_text_with_ocr_fn=None,
+    prompt_fn=None,
+    sanitize_fn=None,
+) -> ExtractionFunctions:
+    return ExtractionFunctions(
+        image_fn=image_fn or (lambda _p: None),
+        pdf_to_text_fn=pdf_to_text_fn or (lambda _p, max_pages=0, max_tokens=0: ""),
+        pdf_to_text_with_ocr_fn=pdf_to_text_with_ocr_fn or (lambda _p, max_pages=0, max_tokens=0, language="de": ""),
+        prompt_fn=prompt_fn or build_vision_filename_prompt,
+        sanitize_fn=sanitize_fn or sanitize_filename_from_llm,
+    )
+
+
+def _vision_request(
+    path: Path,
+    config: RenamerConfig,
+    client: MagicMock,
+    **function_overrides,
+) -> VisionExtractionRequest:
+    return VisionExtractionRequest(path, config, client, _extraction_fns(**function_overrides))
+
+
 def test_vision_extraction_success() -> None:
     """Vision extraction succeeds: image_fn returns base64, client.complete_vision returns text."""
     client = MagicMock()
@@ -57,12 +87,14 @@ def test_vision_extraction_success() -> None:
     path = Path("/fake/doc.pdf")
 
     result = _try_vision_extraction(
-        path,
-        config,
-        client,
-        image_fn=lambda _p: "base64data",
-        prompt_fn=lambda _lang: "describe this",
-        sanitize_fn=lambda text: text,
+        _vision_request(
+            path,
+            config,
+            client,
+            image_fn=lambda _p: "base64data",
+            prompt_fn=lambda _lang: "describe this",
+            sanitize_fn=lambda text: text,
+        )
     )
 
     assert result == "Invoice_2024_Telekom"
@@ -86,12 +118,14 @@ def test_vision_extraction_no_image() -> None:
     path = Path("/fake/doc.pdf")
 
     result = _try_vision_extraction(
-        path,
-        config,
-        client,
-        image_fn=lambda _p: None,
-        prompt_fn=lambda _lang: "describe this",
-        sanitize_fn=lambda text: text,
+        _vision_request(
+            path,
+            config,
+            client,
+            image_fn=lambda _p: None,
+            prompt_fn=lambda _lang: "describe this",
+            sanitize_fn=lambda text: text,
+        )
     )
 
     assert result is None
@@ -108,12 +142,14 @@ def test_vision_extraction_empty_response() -> None:
     path = Path("/fake/doc.pdf")
 
     result = _try_vision_extraction(
-        path,
-        config,
-        client,
-        image_fn=lambda _p: "base64data",
-        prompt_fn=lambda _lang: "prompt",
-        sanitize_fn=lambda text: text,
+        _vision_request(
+            path,
+            config,
+            client,
+            image_fn=lambda _p: "base64data",
+            prompt_fn=lambda _lang: "prompt",
+            sanitize_fn=lambda text: text,
+        )
     )
 
     assert result is None
@@ -140,9 +176,11 @@ def test_extract_text_only() -> None:
     content, used_vision = extract_pdf_content_with(
         path,
         config,
-        pdf_first_page_to_image_base64_fn=lambda _p: None,
-        pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "Hello world from PDF",
-        pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        extraction_fns=_extraction_fns(
+            image_fn=lambda _p: None,
+            pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "Hello world from PDF",
+            pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        ),
         llm_client=client,
     )
 
@@ -169,8 +207,10 @@ def test_extract_text_only_does_not_create_llm_client_when_vision_unused(monkeyp
     content, used_vision = extract_pdf_content_with(
         Path("/fake/doc.pdf"),
         config,
-        pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "Hello world from PDF",
-        pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        extraction_fns=_extraction_fns(
+            pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "Hello world from PDF",
+            pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        ),
     )
 
     assert content == "Hello world from PDF"
@@ -196,9 +236,11 @@ def test_extract_vision_first() -> None:
     content, used_vision = extract_pdf_content_with(
         path,
         config,
-        pdf_first_page_to_image_base64_fn=lambda _p: "base64img",
-        pdf_to_text_fn=text_fn,
-        pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        extraction_fns=_extraction_fns(
+            image_fn=lambda _p: "base64img",
+            pdf_to_text_fn=text_fn,
+            pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        ),
         llm_client=client,
     )
 
@@ -229,9 +271,11 @@ def test_extract_vision_fallback() -> None:
     content, used_vision = extract_pdf_content_with(
         path,
         config,
-        pdf_first_page_to_image_base64_fn=lambda _p: "base64img",
-        pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "short",
-        pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        extraction_fns=_extraction_fns(
+            image_fn=lambda _p: "base64img",
+            pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "short",
+            pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        ),
         llm_client=client,
     )
 
@@ -258,12 +302,14 @@ def test_extract_vision_fallback_preserves_png_mime_type() -> None:
     content, used_vision = extract_pdf_content_with(
         Path("/fake/doc.pdf"),
         config,
-        pdf_first_page_to_image_base64_fn=lambda _p: {
-            "image_b64": "pngbase64",
-            "mime_type": "image/png",
-        },
-        pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "short",
-        pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        extraction_fns=_extraction_fns(
+            image_fn=lambda _p: {
+                "image_b64": "pngbase64",
+                "mime_type": "image/png",
+            },
+            pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "short",
+            pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        ),
         llm_client=client,
     )
 
@@ -299,9 +345,11 @@ def test_extract_vision_first_does_not_retry_vision_fallback() -> None:
     content, used_vision = extract_pdf_content_with(
         Path("/fake/doc.pdf"),
         config,
-        pdf_first_page_to_image_base64_fn=lambda _p: "base64img",
-        pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "short",
-        pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        extraction_fns=_extraction_fns(
+            image_fn=lambda _p: "base64img",
+            pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "short",
+            pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        ),
         llm_client=client,
     )
 
@@ -329,9 +377,11 @@ def test_extract_with_ocr() -> None:
     content, used_vision = extract_pdf_content_with(
         path,
         config,
-        pdf_first_page_to_image_base64_fn=lambda _p: None,
-        pdf_to_text_fn=text_fn,
-        pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "OCR extracted text",
+        extraction_fns=_extraction_fns(
+            image_fn=lambda _p: None,
+            pdf_to_text_fn=text_fn,
+            pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "OCR extracted text",
+        ),
         llm_client=client,
     )
 
@@ -360,9 +410,11 @@ def test_extract_no_content() -> None:
     content, used_vision = extract_pdf_content_with(
         path,
         config,
-        pdf_first_page_to_image_base64_fn=lambda _p: "base64img",
-        pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "",
-        pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        extraction_fns=_extraction_fns(
+            image_fn=lambda _p: "base64img",
+            pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "",
+            pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+        ),
         llm_client=client,
     )
 
@@ -380,9 +432,11 @@ def test_extract_logs_text_strategy(caplog: pytest.LogCaptureFixture) -> None:
         content, used_vision = extract_pdf_content_with(
             Path("/fake/doc.pdf"),
             config,
-            pdf_first_page_to_image_base64_fn=lambda _p: None,
-            pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "Hello world from PDF",
-            pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+            extraction_fns=_extraction_fns(
+                image_fn=lambda _p: None,
+                pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "Hello world from PDF",
+                pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+            ),
             llm_client=client,
         )
 
@@ -409,9 +463,11 @@ def test_extract_logs_vision_fallback_strategy(caplog: pytest.LogCaptureFixture)
         content, used_vision = extract_pdf_content_with(
             Path("/fake/doc.pdf"),
             config,
-            pdf_first_page_to_image_base64_fn=lambda _p: "base64img",
-            pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "short",
-            pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+            extraction_fns=_extraction_fns(
+                image_fn=lambda _p: "base64img",
+                pdf_to_text_fn=lambda _p, max_pages=0, max_tokens=0: "short",
+                pdf_to_text_with_ocr_fn=lambda _p, max_pages=0, max_tokens=0, language="de": "",
+            ),
             llm_client=client,
         )
 

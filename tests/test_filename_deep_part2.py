@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -14,44 +13,9 @@ import pytest
 from ai_pdf_renamer.config import RenamerConfig
 from ai_pdf_renamer.heuristics import (
     CategoryCombineParams,
-    HeuristicRule,
-    HeuristicScorer,
     _combine_resolve_conflict,
     combine_categories,
 )
-from ai_pdf_renamer.text_utils import Stopwords
-
-
-def _make_scorer(
-    categories: list[tuple[str, str, float]] | None = None,
-) -> HeuristicScorer:
-    """Build a HeuristicScorer from (regex, category, score) triples."""
-    if categories is None:
-        categories = [
-            (r"invoice", "invoice", 10.0),
-            (r"contract", "contract", 5.0),
-        ]
-    rules = [
-        HeuristicRule(pattern=re.compile(regex, re.IGNORECASE), category=cat, score=sc) for regex, cat, sc in categories
-    ]
-    return HeuristicScorer(rules=rules)
-
-
-def _make_llm_client() -> MagicMock:
-    """Return a MagicMock that satisfies LLMClient protocol."""
-    client = MagicMock()
-    client.model = "test-model"
-    client.base_url = "http://localhost:8080"
-    client.complete.return_value = '{"summary": "test"}'
-    client.complete_vision.return_value = '{"summary": "test"}'
-    return client
-
-
-def _empty_stopwords() -> Stopwords:
-    return Stopwords(words=set())
-
-
-REFERENCE_TODAY = date(2026, 4, 8)
 
 
 class TestIntegrationHeuristicOnlyRename:
@@ -68,7 +32,7 @@ class TestIntegrationHeuristicOnlyRename:
         doc.save(str(pdf_path))
         doc.close()
 
-        from ai_pdf_renamer.filename import generate_filename
+        from ai_pdf_renamer.filename import FilenameGenerationRequest, generate_filename
         from ai_pdf_renamer.pdf_extract import pdf_to_text
 
         content = pdf_to_text(pdf_path)
@@ -81,8 +45,10 @@ class TestIntegrationHeuristicOnlyRename:
         )
         filename, meta = generate_filename(
             content,
-            config=config,
-            today=date(2026, 3, 22),
+            FilenameGenerationRequest(
+                config=config,
+                today=date(2026, 3, 22),
+            ),
         )
         # Should have date
         assert "20260322" in filename
@@ -216,7 +182,7 @@ class TestHttpBackendTextModeEmptyChoices:
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
 
-        with patch.object(backend._session, "post", return_value=mock_response):
+        with patch.object(backend.session, "post", return_value=mock_response):
             result = backend.complete("test prompt")
         assert result == ""
 
@@ -229,7 +195,7 @@ class TestHttpBackendTextModeEmptyChoices:
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
 
-        with patch.object(backend._session, "post", return_value=mock_response):
+        with patch.object(backend.session, "post", return_value=mock_response):
             result = backend.complete("test prompt")
         assert result == ""
 
@@ -247,7 +213,7 @@ class TestHttpBackendTextModeNonDictChoice:
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
 
-        with patch.object(backend._session, "post", return_value=mock_response):
+        with patch.object(backend.session, "post", return_value=mock_response):
             result = backend.complete("test prompt")
         assert result == ""
 
@@ -261,7 +227,7 @@ class TestHttpBackendTextModeNonDictChoice:
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
 
-        with patch.object(backend._session, "post", return_value=mock_response):
+        with patch.object(backend.session, "post", return_value=mock_response):
             result = backend.complete("test prompt")
         assert result == ""
 

@@ -211,7 +211,7 @@ def _make_completions_response(text: str) -> MagicMock:
 
 def test_http_backend_chat_mode_sends_messages():
     backend = HttpLLMBackend(use_chat=True)
-    with patch.object(backend._session, "post", return_value=_make_chat_response("result")) as mock_post:
+    with patch.object(backend.session, "post", return_value=_make_chat_response("result")) as mock_post:
         result = backend.complete("test prompt")
     assert result == "result"
     payload = mock_post.call_args[1]["json"]
@@ -224,7 +224,7 @@ def test_http_backend_chat_mode_sends_messages():
 
 def test_http_backend_text_mode_sends_prompt():
     backend = HttpLLMBackend(use_chat=False)
-    with patch.object(backend._session, "post", return_value=_make_completions_response("result")) as mock_post:
+    with patch.object(backend.session, "post", return_value=_make_completions_response("result")) as mock_post:
         result = backend.complete("test prompt")
     assert result == "result"
     payload = mock_post.call_args[1]["json"]
@@ -281,7 +281,7 @@ def test_complete_json_with_retry_json_mode_passes_response_format():
 def test_http_backend_response_format_in_payload():
     """Verify response_format is included in the HTTP payload."""
     backend = HttpLLMBackend(use_chat=True)
-    with patch.object(backend._session, "post", return_value=_make_chat_response('{"ok": true}')) as mock_post:
+    with patch.object(backend.session, "post", return_value=_make_chat_response('{"ok": true}')) as mock_post:
         backend.complete("prompt", response_format={"type": "json_object"})
     payload = mock_post.call_args[1]["json"]
     assert payload["response_format"] == {"type": "json_object"}
@@ -290,7 +290,7 @@ def test_http_backend_response_format_in_payload():
 def test_http_backend_no_response_format_when_none():
     """Verify response_format is NOT included when None."""
     backend = HttpLLMBackend(use_chat=True)
-    with patch.object(backend._session, "post", return_value=_make_chat_response("result")) as mock_post:
+    with patch.object(backend.session, "post", return_value=_make_chat_response("result")) as mock_post:
         backend.complete("prompt")
     payload = mock_post.call_args[1]["json"]
     assert "response_format" not in payload
@@ -303,6 +303,7 @@ def test_http_backend_no_response_format_when_none():
 
 def test_generate_filename_single_call_path(monkeypatch):
     import ai_pdf_renamer.filename as filename_mod
+    import ai_pdf_renamer.filename_llm_metadata as filename_llm_metadata
     from ai_pdf_renamer.heuristics import HeuristicRule, HeuristicScorer
     from ai_pdf_renamer.text_utils import Stopwords
 
@@ -312,7 +313,7 @@ def test_generate_filename_single_call_path(monkeypatch):
         category="invoice",
         final_summary_tokens=("amazon", "electronics"),
     )
-    monkeypatch.setattr(filename_mod, "get_document_analysis", lambda *a, **k: analysis_result)
+    monkeypatch.setattr(filename_llm_metadata, "get_document_analysis", lambda *a, **k: analysis_result)
 
     scorer = HeuristicScorer(
         rules=[HeuristicRule(pattern=re.compile("invoice", re.IGNORECASE), category="invoice", score=10)]
@@ -320,11 +321,13 @@ def test_generate_filename_single_call_path(monkeypatch):
 
     name, _meta = filename_mod.generate_filename(
         "Invoice from Amazon 2024-01-09 for electronics purchase",
-        config=RenamerConfig(language="en", desired_case="kebabCase", use_single_llm_call=True),
-        llm_client=FakeLLMClient(""),
-        heuristic_scorer=scorer,
-        stopwords=Stopwords(words=set()),
-        today=REFERENCE_TODAY,
+        filename_mod.FilenameGenerationRequest(
+            config=RenamerConfig(language="en", desired_case="kebabCase", use_single_llm_call=True),
+            llm_client=FakeLLMClient(""),
+            heuristic_scorer=scorer,
+            stopwords=Stopwords(words=set()),
+            today=REFERENCE_TODAY,
+        ),
     )
     assert name
     assert "invoice" in name.lower()
