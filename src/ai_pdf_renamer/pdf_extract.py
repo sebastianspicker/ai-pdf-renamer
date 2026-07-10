@@ -522,7 +522,7 @@ def _metadata_result_from_doc(doc: Any) -> dict[str, object]:
 
 def _metadata_date_string(value: str | None) -> str | None:
     parsed = _parse_pdf_date(value)
-    return parsed.strftime("%Y-%m-%d") if parsed else None
+    return parsed.isoformat() if parsed else None
 
 
 def _extract_pages(doc: _fitz_mod.Document, path: Path, *, max_pages: int = 0) -> tuple[list[str], list[str]]:

@@ -170,7 +170,7 @@ def _best_date_candidate(candidates: list[_DateCandidate]) -> str | None:
     if not candidates:
         return None
     best = max(candidates, key=lambda candidate: (candidate.score, -candidate.start))
-    return best.value.strftime("%Y-%m-%d")
+    return best.value.isoformat()
 
 
 def _append_date_candidate(
@@ -379,7 +379,7 @@ def _best_metadata_date(pdf_metadata: dict[str, object] | None, *, today: date) 
             continue
         if best is None or candidate.score > best.score:
             best = candidate
-    return best.value.strftime("%Y-%m-%d") if best is not None else None
+    return best.value.isoformat() if best is not None else None
 
 
 def extract_date_from_content(
@@ -407,4 +407,4 @@ def extract_date_from_content(
         return parsed
     if parsed := _best_metadata_date(pdf_metadata, today=today):
         return parsed
-    return today.strftime("%Y-%m-%d")
+    return today.isoformat()

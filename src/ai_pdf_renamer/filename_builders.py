@@ -19,8 +19,6 @@ from .text_utils import convert_case, extract_structured_fields, split_to_tokens
 
 logger = logging.getLogger(__name__)
 
-_TIMESTAMP_FALLBACK_TIME_FORMAT = "%H%M%S"
-
 
 def _filename_sep(config: RenamerConfig) -> str:
     """Return filename part separator: '_' for snakeCase, '-' otherwise."""
@@ -48,7 +46,7 @@ def _build_timestamp_fallback_filename(
     """Build minimal filename: date + segment + HHMMSS when heuristic+LLM both fail."""
     if now is None:
         now = datetime.now()
-    time_str = now.strftime(_TIMESTAMP_FALLBACK_TIME_FORMAT)
+    time_str = f"{now.hour:02d}{now.minute:02d}{now.second:02d}"
     segment = (config.timestamp_fallback_segment or "document").strip() or "document"
     sep = _filename_sep(config)
     filename = sep.join([date_str, segment, time_str])

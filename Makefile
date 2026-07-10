@@ -38,7 +38,7 @@ hygiene-check:
 build-check:
 	rm -rf dist
 	$(UV) build --out-dir dist
-	@set -euo pipefail; \
+	@set -eu; \
 	ENV_DIR=$$(mktemp -d); \
 	trap 'rm -rf "$$ENV_DIR"' EXIT; \
 	set -- dist/*.whl; \

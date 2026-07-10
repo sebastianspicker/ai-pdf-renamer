@@ -11,7 +11,7 @@ from tests.conftest import make_tui_app as _make_app
 async def test_build_config_returns_renamer_config() -> None:
     """_build_config() returns a RenamerConfig instance."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         config = app.build_config(dry_run=True)
         assert isinstance(config, RenamerConfig)
         assert config.dry_run is True
@@ -22,7 +22,7 @@ async def test_build_config_maps_directory() -> None:
     from textual.widgets import Input
 
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.query_one("#directory", Input).value = "test-pdfs"
         config = app.build_config(dry_run=False)
         assert config.dry_run is False
@@ -33,7 +33,7 @@ async def test_build_config_maps_directory() -> None:
 async def test_build_config_dry_run_false() -> None:
     """_build_config with dry_run=False produces config.dry_run is False."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         config = app.build_config(dry_run=False)
         assert isinstance(config, RenamerConfig)
         assert config.dry_run is False
@@ -42,7 +42,7 @@ async def test_build_config_dry_run_false() -> None:
 async def test_build_config_manual_mode() -> None:
     """_build_config with manual_mode=True propagates the flag."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         config = app.build_config(dry_run=False, manual_mode=True)
         assert isinstance(config, RenamerConfig)
         assert config.manual_mode is True
@@ -52,7 +52,7 @@ async def test_build_config_manual_mode() -> None:
 async def test_run_worker_success() -> None:
     """_run_worker puts (True, 'Completed') when rename_pdfs_in_directory succeeds."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         config = app.build_config(dry_run=True)
 
         def mock_rename(directory: Any, *, config: Any, **kw: Any) -> None:
@@ -71,7 +71,7 @@ async def test_run_worker_success() -> None:
 async def test_run_worker_failure() -> None:
     """_run_worker puts (False, error_msg) when rename_pdfs_in_directory raises."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         config = app.build_config(dry_run=True)
 
         def mock_rename_fail(directory: Any, *, config: Any, **kw: Any) -> None:
@@ -88,7 +88,7 @@ async def test_run_worker_failure() -> None:
 async def test_start_run_empty_dir_logs_error() -> None:
     """_start_run with no directory writes error to RichLog and does not launch a thread."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.run_active = False
 
         with patch("ai_pdf_renamer.tui.threading.Thread") as mock_thread_cls:
@@ -101,7 +101,7 @@ async def test_start_run_valid_dir(tmp_path: Path) -> None:
     from textual.widgets import Input
 
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.query_one("#directory", Input).value = str(tmp_path)
         app.run_active = False
 
@@ -119,7 +119,7 @@ async def test_start_run_valid_dir(tmp_path: Path) -> None:
 async def test_start_run_already_running() -> None:
     """_start_run while already running writes a warning and does nothing else."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.run_active = True
         with patch("ai_pdf_renamer.tui.threading.Thread") as mock_thread_cls:
             app.start_run(dry_run=True)
@@ -130,7 +130,7 @@ async def test_start_run_already_running() -> None:
 async def test_process_one_no_file_set() -> None:
     """_process_one with no single_file path writes an error to the log."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.run_active = False
 
         with patch("ai_pdf_renamer.tui.suggest_rename_for_file") as mock_suggest:
@@ -146,7 +146,7 @@ async def test_process_one_success(tmp_path: Path) -> None:
     pdf_file.write_bytes(b"%PDF-1.4 minimal")
 
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.query_one("#single_file", Input).value = str(pdf_file)
         app.run_active = False
 
@@ -172,7 +172,7 @@ async def test_process_one_failure(tmp_path: Path) -> None:
     pdf_file.write_bytes(b"%PDF-1.4 minimal")
 
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.query_one("#single_file", Input).value = str(pdf_file)
         app.run_active = False
 
@@ -187,7 +187,7 @@ async def test_process_one_failure(tmp_path: Path) -> None:
 async def test_process_one_already_running() -> None:
     """_process_one while already running writes a warning and exits early."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.run_active = True
         with patch("ai_pdf_renamer.tui.suggest_rename_for_file") as mock_suggest:
             app.process_one()
@@ -202,7 +202,7 @@ async def test_process_one_not_pdf(tmp_path: Path) -> None:
     txt_file.write_text("not a PDF")
 
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.query_one("#single_file", Input).value = str(txt_file)
         app.run_active = False
 
@@ -219,7 +219,7 @@ async def test_process_one_skipped(tmp_path: Path) -> None:
     pdf_file.write_bytes(b"%PDF-1.4 minimal")
 
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.query_one("#single_file", Input).value = str(pdf_file)
         app.run_active = False
 
@@ -239,7 +239,7 @@ async def test_process_one_rename_fails(tmp_path: Path) -> None:
     pdf_file.write_bytes(b"%PDF-1.4 minimal")
 
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.query_one("#single_file", Input).value = str(pdf_file)
         app.run_active = False
 
@@ -264,7 +264,7 @@ async def test_process_one_nonexistent_file(tmp_path: Path) -> None:
     pdf_file = tmp_path / "ghost.pdf"
 
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.query_one("#single_file", Input).value = str(pdf_file)
         app.run_active = False
 
@@ -276,7 +276,7 @@ async def test_process_one_nonexistent_file(tmp_path: Path) -> None:
 async def test_preview_button_calls_start_run() -> None:
     """on_preview invokes _start_run(dry_run=True)."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         with patch.object(app, "start_run") as mock_start:
             app.on_preview()
             mock_start.assert_called_once_with(dry_run=True)
@@ -285,7 +285,7 @@ async def test_preview_button_calls_start_run() -> None:
 async def test_apply_button_calls_start_run() -> None:
     """on_apply invokes _start_run(dry_run=False)."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         with patch.object(app, "start_run") as mock_start:
             app.on_apply()
             mock_start.assert_called_once_with(dry_run=False)
@@ -294,7 +294,7 @@ async def test_apply_button_calls_start_run() -> None:
 async def test_one_button_calls_process_one() -> None:
     """on_one invokes _process_one()."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         with patch.object(app, "process_one") as mock_proc:
             app.on_one()
             mock_proc.assert_called_once()
@@ -303,7 +303,7 @@ async def test_one_button_calls_process_one() -> None:
 async def test_drain_log_queue_writes_lines() -> None:
     """_drain_log_queue reads queued lines and writes to RichLog."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.enqueue_log_queue_item("Processing 1/3: file1.pdf\n")
         app.enqueue_log_queue_item("Processing 2/3: file2.pdf\n")
         app.enqueue_log_queue_item(None)
@@ -318,7 +318,7 @@ async def test_drain_log_queue_writes_lines() -> None:
 async def test_drain_log_queue_failure_result() -> None:
     """_drain_log_queue handles failure result from the worker."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.enqueue_log_queue_item(None)
         app.enqueue_worker_result((False, "something broke"))
 
@@ -331,7 +331,7 @@ async def test_drain_log_queue_failure_result() -> None:
 async def test_drain_log_queue_reschedules_on_empty() -> None:
     """_drain_log_queue reschedules itself when the queue is empty."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         app.run_active = True
         with patch.object(app, "set_timer") as mock_timer:
             app.drain_log_queue()
@@ -342,7 +342,7 @@ async def test_drain_log_queue_reschedules_on_empty() -> None:
 async def test_get_bool_missing_widget_returns_default() -> None:
     """_get_bool returns default when the widget does not exist."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         assert app.get_bool("nonexistent_checkbox") is False
         assert app.get_bool("nonexistent_checkbox", True) is True
 
@@ -350,7 +350,7 @@ async def test_get_bool_missing_widget_returns_default() -> None:
 async def test_get_select_missing_widget_returns_default() -> None:
     """_get_select returns default when the widget does not exist."""
     app = _make_app()
-    async with app.run_test(size=(120, 40)) as _pilot:
+    async with app.run_test(size=(120, 40)):
         assert app.get_select("nonexistent_select") == ""
         assert app.get_select("nonexistent_select", "fallback") == "fallback"
 
