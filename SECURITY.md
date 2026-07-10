@@ -4,7 +4,7 @@
 
 The built-in LLM client sends requests only to the URL you configure. In the main CLI path, the default is the preset-driven local Ollama endpoint `http://127.0.0.1:11434/v1/completions`; the lower-level HTTP backend still falls back to `http://127.0.0.1:8080/v1/completions` for a plain llama.cpp server when no preset/default override is applied. To avoid routing this traffic through a proxy (e.g. `HTTP_PROXY`), the client uses `trust_env=False` so that PDF-derived prompt content stays on your machine.
 
-**If you use a custom HTTP client or run scripts that might inherit proxy settings:** set `NO_PROXY=127.0.0.1,localhost` (or `no_proxy` on some systems) so that requests to the local LLM endpoint are never sent via a proxy. Otherwise prompt content could leave your machine.
+**If you use a custom HTTP client or wrapper scripts that inherit proxy settings:** set `NO_PROXY=127.0.0.1,localhost` (or `no_proxy` on some systems) so that requests to the local LLM endpoint are never sent via a proxy. Route local LLM traffic through a proxy only when you explicitly trust that proxy to inspect PDF-derived prompt content.
 
 LLM HTTP error logs intentionally record status and error context without response bodies. Some OpenAI-compatible servers echo request prompts in error responses, so logging response bodies can persist PDF-derived text in local log files.
 
@@ -24,15 +24,25 @@ Use `--no-cache` for sensitive one-off runs, or keep `--cache-dir` on a private 
 
 ## Post-rename hook
 
-The optional post-rename hook (`AI_PDF_RENAMER_POST_RENAME_HOOK` or config) runs in a subprocess with **shell=False**. The hook string is **operator-defined** and runs with your privileges. Old path, new path, and metadata are passed via environment variables:
+The optional post-rename hook (`AI_PDF_RENAMER_POST_RENAME_HOOK` or config) supports HTTP(S) endpoints only. Local command hooks are refused and logged as warnings. Old path, new path, and metadata are sent as JSON fields:
 
-- `AI_PDF_RENAMER_OLD_PATH`
-- `AI_PDF_RENAMER_NEW_PATH`
-- `AI_PDF_RENAMER_META`
+- `old_path`
+- `new_path`
+- `meta`
 
-If shell metacharacters are detected in the configured command string, the tool explicitly invokes your local shell executable as a subprocess argument (`/bin/sh -c ...` on Unix, `cmd.exe /c ...` on Windows), still using `shell=False` for process creation.
+Plain HTTP is allowed only for literal loopback IPv4 or IPv6 endpoints, such as
+`http://127.0.0.1:8000/hook` or `http://[::1]:8000/hook`. Hostnames such as
+`localhost` are not accepted for plain HTTP because DNS resolution is outside
+the validation boundary. Use HTTPS for non-loopback hook receivers. Malformed
+URLs, URLs with embedded credentials, and local commands are rejected before a
+network session is created.
 
-**Do not** embed PDF content, filenames, or other untrusted input into the hook command string itself (in config or env). Use the provided environment variables inside your script when you need paths or metadata. Keep hook configuration under your control; if config/env is attacker-controlled, arbitrary command execution is possible.
+Send hook payloads only to receivers you operate or have explicitly approved for these document paths and metadata. The payload includes document-adjacent paths and metadata.
+Hook requests do not follow redirects, so an approved endpoint cannot redirect
+the payload to a URL outside this transport policy.
+
+Hook failures are non-fatal. Their log records intentionally omit the endpoint
+URL, request payload, document paths, metadata, and response body.
 
 ## Reporting a Vulnerability
 

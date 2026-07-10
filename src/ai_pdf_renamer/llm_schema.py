@@ -13,6 +13,50 @@ from .data_paths import data_dir, package_data_path
 
 logger = logging.getLogger(__name__)
 
+_SAFE_SCHEMA_PATH_SEGMENTS = {
+    "additionalProperties",
+    "allOf",
+    "anyOf",
+    "contains",
+    "else",
+    "if",
+    "items",
+    "not",
+    "oneOf",
+    "patternProperties",
+    "prefixItems",
+    "properties",
+    "then",
+    "type",
+}
+_SAFE_VALIDATORS = {
+    "additionalProperties",
+    "allOf",
+    "anyOf",
+    "contains",
+    "dependentRequired",
+    "enum",
+    "exclusiveMaximum",
+    "exclusiveMinimum",
+    "format",
+    "items",
+    "maxItems",
+    "maxLength",
+    "maxProperties",
+    "maximum",
+    "minItems",
+    "minLength",
+    "minProperties",
+    "minimum",
+    "multipleOf",
+    "not",
+    "oneOf",
+    "pattern",
+    "required",
+    "type",
+    "uniqueItems",
+}
+
 # Declarative schema for LLM document-analysis response (summary, keywords, category, final_summary_tokens).
 # Overridable via AI_PDF_RENAMER_DATA_DIR/llm_response_schema.json.
 LLM_RESPONSE_SCHEMA_DEFAULT: dict[str, object] = {
@@ -48,6 +92,26 @@ def _load_llm_response_schema() -> dict[str, object]:
     return LLM_RESPONSE_SCHEMA_DEFAULT
 
 
+def clear_llm_response_schema_cache() -> None:
+    """Clear the cached LLM response schema after tests or data-dir changes."""
+    _load_llm_response_schema.cache_clear()
+
+
+def _safe_validation_location(error: object) -> tuple[str, str]:
+    """Describe validator structure without rendering schema or instance values."""
+    raw_validator = getattr(error, "validator", None)
+    validator = raw_validator if isinstance(raw_validator, str) and raw_validator in _SAFE_VALIDATORS else "other"
+    path_parts: list[str] = []
+    for part in getattr(error, "absolute_schema_path", ()):
+        if isinstance(part, int):
+            path_parts.append("[index]")
+        elif isinstance(part, str) and part in _SAFE_SCHEMA_PATH_SEGMENTS:
+            path_parts.append(part)
+        else:
+            path_parts.append("<field>")
+    return validator, ".".join(path_parts) or "<root>"
+
+
 # Default values for LLM document analysis when parsing fails or fields are missing.
 DEFAULT_LLM_SUMMARY = "na"
 DEFAULT_LLM_CATEGORY = "unknown"
@@ -64,6 +128,65 @@ class DocumentAnalysisResult:
     final_summary_tokens: tuple[str, ...] | None = None
 
 
+def _validate_with_optional_jsonschema(parsed: dict[str, object]) -> None:
+    schema = _load_llm_response_schema()
+    try:
+        import jsonschema
+    except ImportError:
+        return
+    try:
+        jsonschema.validate(instance=parsed, schema=schema)
+    except jsonschema.ValidationError as error:
+        # Schema mismatches are recoverable because callers still apply
+        # local normalization/defaults. Never render the invalid instance or
+        # ValidationError text because either may contain document content.
+        validator, schema_path = _safe_validation_location(error)
+        logger.info(
+            "LLM response did not match schema (validator=%s, schema_path=%s).",
+            validator,
+            schema_path,
+        )
+
+
+def _normalized_summary(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return DEFAULT_LLM_SUMMARY
+    summary = value.strip()
+    return DEFAULT_LLM_SUMMARY if summary.lower() == "na" else summary
+
+
+def _normalized_keywords(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(str(item).strip() for item in value if item and str(item).strip())
+
+
+def _normalized_category(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return DEFAULT_LLM_CATEGORY
+    category = value.strip()
+    return DEFAULT_LLM_CATEGORY if category.lower() in ("na", "unknown", "document", "") else category
+
+
+def _clean_string_items(values: list[object]) -> tuple[str, ...]:
+    cleaned: list[str] = []
+    for item in values:
+        if not item:
+            continue
+        text = str(item).strip()
+        if text:
+            cleaned.append(text)
+    return tuple(cleaned)
+
+
+def _normalized_final_summary_tokens(value: object) -> tuple[str, ...] | None:
+    if isinstance(value, list):
+        return _clean_string_items(value)
+    if isinstance(value, str) and value.strip():
+        return tuple(token.strip() for token in value.split(",") if token.strip())
+    return None
+
+
 def validate_llm_document_result(parsed: dict[str, object]) -> DocumentAnalysisResult:
     """
     Validate and fill defaults for a parsed LLM document analysis dict.
@@ -71,52 +194,10 @@ def validate_llm_document_result(parsed: dict[str, object]) -> DocumentAnalysisR
     Uses declarative schema (llm_response_schema.json or default) for optional
     jsonschema validation; keeps existing defaults when validation fails or keys are missing.
     """
-    schema = _load_llm_response_schema()
-    try:
-        import jsonschema
-    except ImportError:
-        pass
-    else:
-        try:
-            jsonschema.validate(instance=parsed, schema=schema)
-        except jsonschema.ValidationError as e:
-            # Schema mismatches are recoverable because callers still apply
-            # local normalization/defaults, but they are useful diagnostics.
-            logger.info("LLM response did not match schema: %s", getattr(e, "message", str(e)))
-
-    summary = parsed.get("summary")
-    if isinstance(summary, str) and summary.strip():
-        summary = summary.strip()
-        if summary.lower() == "na":
-            summary = DEFAULT_LLM_SUMMARY
-    else:
-        summary = DEFAULT_LLM_SUMMARY
-
-    raw_keywords = parsed.get("keywords")
-    keywords = (
-        tuple(str(x).strip() for x in raw_keywords if x and str(x).strip()) if isinstance(raw_keywords, list) else ()
-    )
-
-    category = parsed.get("category")
-    if isinstance(category, str) and category.strip():
-        category = category.strip()
-        if category.lower() in ("na", "unknown", "document", ""):
-            category = DEFAULT_LLM_CATEGORY
-    else:
-        category = DEFAULT_LLM_CATEGORY
-
-    raw_fst = parsed.get("final_summary_tokens")
-    final_summary_tokens: tuple[str, ...] | None
-    if isinstance(raw_fst, list):
-        final_summary_tokens = tuple(str(x).strip() for x in raw_fst if x and str(x).strip())
-    elif isinstance(raw_fst, str) and raw_fst.strip():
-        final_summary_tokens = tuple(t.strip() for t in raw_fst.split(",") if t.strip())
-    else:
-        final_summary_tokens = None
-
+    _validate_with_optional_jsonschema(parsed)
     return DocumentAnalysisResult(
-        summary=summary,
-        keywords=keywords,
-        category=category,
-        final_summary_tokens=final_summary_tokens,
+        summary=_normalized_summary(parsed.get("summary")),
+        keywords=_normalized_keywords(parsed.get("keywords")),
+        category=_normalized_category(parsed.get("category")),
+        final_summary_tokens=_normalized_final_summary_tokens(parsed.get("final_summary_tokens")),
     )
