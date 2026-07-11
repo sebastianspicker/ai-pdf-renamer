@@ -13,6 +13,7 @@ def test_ci_runs_release_gate_without_path_trigger_exclusions() -> None:
     workflow = _read(".github/workflows/ci.yml")
 
     assert "paths-ignore:" not in workflow
+    assert "name: Python 3.11 (lint + tests)" in workflow
     assert "uv sync --frozen --extra dev --extra pdf --extra tui" in workflow
     assert "make release-check" in workflow
     assert "git ls-files | grep" not in workflow
