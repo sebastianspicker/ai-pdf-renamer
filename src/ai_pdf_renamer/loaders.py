@@ -45,6 +45,9 @@ def _stopwords_cached(path_str: str, _mtime: float = 0.0) -> Stopwords:
     return load_meta_stopwords(Path(path_str))
 
 
+stopwords_cached = _stopwords_cached
+
+
 def default_stopwords() -> Stopwords:
     path_str = str(data_path("meta_stopwords.json"))
     return _stopwords_cached(path_str, _file_mtime(path_str))
@@ -54,6 +57,9 @@ def default_stopwords() -> Stopwords:
 def _heuristic_scorer_cached(path_str: str, language: str, _mtime: float = 0.0) -> HeuristicScorer:
     rules = load_heuristic_rules_for_language(Path(path_str), language)
     return HeuristicScorer(rules)
+
+
+heuristic_scorer_cached = _heuristic_scorer_cached
 
 
 def default_heuristic_scorer(language: str = "de") -> HeuristicScorer:

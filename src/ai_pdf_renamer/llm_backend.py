@@ -21,6 +21,8 @@ from urllib.parse import urlsplit
 
 import requests
 
+from .options import merge_options
+
 if TYPE_CHECKING:
     from .config import RenamerConfig
 
@@ -30,6 +32,15 @@ logger = logging.getLogger(__name__)
 _DEFAULT_LLM_URL = "http://127.0.0.1:8080/v1/completions"
 _DEFAULT_LLM_MODEL = "default"
 _DEFAULT_LLM_TIMEOUT_S = 60.0
+
+
+@dataclass(frozen=True)
+class VisionCompletionOptions:
+    """Optional controls for image + text completions."""
+
+    model: str | None = None
+    image_mime_type: str = "image/jpeg"
+    timeout_s: float = 120.0
 
 
 # ---------------------------------------------------------------------------
@@ -60,10 +71,8 @@ class LLMClient(Protocol):
         self,
         image_b64: str,
         prompt: str,
-        *,
-        model: str | None = None,
-        image_mime_type: str = "image/jpeg",
-        timeout_s: float = 120.0,
+        options: VisionCompletionOptions | None = None,
+        **overrides: object,
     ) -> str: ...
 
     def close(self) -> None: ...
@@ -128,10 +137,10 @@ class HttpLLMBackend:
     model: str = _DEFAULT_LLM_MODEL
     timeout_s: float = _DEFAULT_LLM_TIMEOUT_S
     use_chat: bool = True
-    _session: requests.Session = field(default_factory=requests.Session, init=False, repr=False, compare=False)
+    session: requests.Session = field(default_factory=requests.Session, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self._session.trust_env = False  # Never route LLM traffic through proxy
+        self.session.trust_env = False  # Never route LLM traffic through proxy
 
     def _complete_text(
         self,
@@ -151,7 +160,7 @@ class HttpLLMBackend:
             payload["max_tokens"] = max_tokens
         if response_format is not None:
             payload["response_format"] = response_format
-        resp = self._session.post(self.base_url, json=payload, timeout=self.timeout_s)
+        resp = self.session.post(self.base_url, json=payload, timeout=self.timeout_s)
         resp.raise_for_status()
         data = resp.json()
         if not isinstance(data, dict):
@@ -196,7 +205,7 @@ class HttpLLMBackend:
             payload["max_tokens"] = max_tokens
         if response_format is not None:
             payload["response_format"] = response_format
-        resp = self._session.post(chat_url, json=payload, timeout=self.timeout_s)
+        resp = self.session.post(chat_url, json=payload, timeout=self.timeout_s)
         resp.raise_for_status()
         data = resp.json()
         if not isinstance(data, dict):
@@ -246,14 +255,13 @@ class HttpLLMBackend:
         self,
         image_b64: str,
         prompt: str,
-        *,
-        model: str | None = None,
-        image_mime_type: str = "image/jpeg",
-        timeout_s: float = 120.0,
+        options: VisionCompletionOptions | None = None,
+        **overrides: object,
     ) -> str:
         """Send image + text prompt to the OpenAI-compatible /v1/chat/completions endpoint."""
+        opts = merge_options(options or VisionCompletionOptions(), overrides)
         chat_url = _chat_url_from_completions_url(self.base_url)
-        vision_model = model or self.model
+        vision_model = opts.model or self.model
         payload = {
             "model": vision_model,
             "messages": [
@@ -263,7 +271,7 @@ class HttpLLMBackend:
                         {"type": "text", "text": prompt},
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:{image_mime_type};base64,{image_b64}"},
+                            "image_url": {"url": f"data:{opts.image_mime_type};base64,{image_b64}"},
                         },
                     ],
                 }
@@ -271,7 +279,7 @@ class HttpLLMBackend:
             "stream": False,
         }
         try:
-            resp = self._session.post(chat_url, json=payload, timeout=timeout_s)
+            resp = self.session.post(chat_url, json=payload, timeout=opts.timeout_s)
             resp.raise_for_status()
             data = resp.json()
             if not isinstance(data, dict):
@@ -283,7 +291,7 @@ class HttpLLMBackend:
 
     def close(self) -> None:
         try:
-            self._session.close()
+            self.session.close()
         except OSError as exc:
             logger.debug("Could not close LLM session cleanly: %s", exc)
 
@@ -300,7 +308,7 @@ LocalLLMClient = HttpLLMBackend
 class InProcessLLMBackend:
     """
     In-process LLM backend using llama-cpp-python.
-    Requires: pip install llama-cpp-python (or install with [llama-cpp] extra)
+    Requires: pip install llama-cpp-python
 
     No server needed. Loads a GGUF model directly into the process.
     """
@@ -332,6 +340,10 @@ class InProcessLLMBackend:
     @property
     def base_url(self) -> str:
         return f"file://{self._model_path}"
+
+    @property
+    def is_loaded(self) -> bool:
+        return hasattr(self, "_llama")
 
     def complete(
         self,
@@ -375,11 +387,10 @@ class InProcessLLMBackend:
         self,
         image_b64: str,
         prompt: str,
-        *,
-        model: str | None = None,
-        image_mime_type: str = "image/jpeg",
-        timeout_s: float = 120.0,
+        options: VisionCompletionOptions | None = None,
+        **overrides: object,
     ) -> str:
+        opts = merge_options(options or VisionCompletionOptions(), overrides)
         try:
             result = self._llama.create_chat_completion(
                 messages=[
@@ -389,7 +400,7 @@ class InProcessLLMBackend:
                             {"type": "text", "text": prompt},
                             {
                                 "type": "image_url",
-                                "image_url": {"url": f"data:{image_mime_type};base64,{image_b64}"},
+                                "image_url": {"url": f"data:{opts.image_mime_type};base64,{image_b64}"},
                             },
                         ],
                     }
@@ -428,6 +439,63 @@ def _warn_if_plaintext_remote(url: str, *, enforce: bool = False) -> None:
         logger.warning(msg)
 
 
+def _resolved_backend(config: RenamerConfig) -> str:
+    return _config_or_env(config.llm_backend, "AI_PDF_RENAMER_LLM_BACKEND", "http").lower()
+
+
+def _resolved_model_path(config: RenamerConfig) -> str:
+    return _config_or_env(config.llm_model_path, "AI_PDF_RENAMER_LLM_MODEL_PATH", "")
+
+
+def _resolved_timeout(config: RenamerConfig) -> float:
+    timeout_s = config.llm_timeout_s
+    if timeout_s is not None and timeout_s > 0:
+        return float(timeout_s)
+    try:
+        env_timeout = float(os.environ.get("AI_PDF_RENAMER_LLM_TIMEOUT", "") or 0)
+    except ValueError:
+        return _DEFAULT_LLM_TIMEOUT_S
+    return env_timeout if env_timeout > 0 else _DEFAULT_LLM_TIMEOUT_S
+
+
+def _should_use_in_process(backend: str, model_path: str) -> bool:
+    return backend == "in-process" or (backend == "auto" and bool(model_path))
+
+
+def _create_in_process_backend(
+    backend: str,
+    model_path: str,
+    *,
+    timeout_s: float,
+    use_chat: bool,
+) -> LLMClient | None:
+    if not _should_use_in_process(backend, model_path) or not model_path:
+        return None
+    try:
+        return InProcessLLMBackend(model_path, timeout_s=timeout_s, use_chat=use_chat)
+    except ImportError as exc:
+        if backend == "in-process":
+            raise
+        logger.warning("llama-cpp-python not available, falling back to HTTP: %s", exc)
+        return None
+
+
+def _create_http_backend(config: RenamerConfig, *, timeout_s: float, use_chat: bool) -> HttpLLMBackend:
+    base_url = _config_or_env(
+        config.llm_base_url,
+        "AI_PDF_RENAMER_LLM_URL",
+        _DEFAULT_LLM_URL,
+    )
+    model = _config_or_env(
+        config.llm_model,
+        "AI_PDF_RENAMER_LLM_MODEL",
+        _DEFAULT_LLM_MODEL,
+    )
+    require_https = config.require_https or _env_truthy("AI_PDF_RENAMER_REQUIRE_HTTPS")
+    _warn_if_plaintext_remote(base_url, enforce=require_https)
+    return HttpLLMBackend(base_url=base_url, model=model, timeout_s=timeout_s, use_chat=use_chat)
+
+
 def create_llm_client_from_config(config: RenamerConfig) -> LLMClient:
     """
     Build an LLM backend from config + env vars.
@@ -443,51 +511,10 @@ def create_llm_client_from_config(config: RenamerConfig) -> LLMClient:
       AI_PDF_RENAMER_LLM_MODEL     - model name for HTTP backend
       AI_PDF_RENAMER_LLM_TIMEOUT   - timeout in seconds
     """
-    backend_str = _config_or_env(
-        config.llm_backend,
-        "AI_PDF_RENAMER_LLM_BACKEND",
-        "http",
-    ).lower()
-
-    model_path = _config_or_env(
-        config.llm_model_path,
-        "AI_PDF_RENAMER_LLM_MODEL_PATH",
-        "",
-    )
-
-    # Resolve timeout
-    timeout_s = config.llm_timeout_s
-    if timeout_s is None or timeout_s <= 0:
-        try:
-            timeout_s = float(os.environ.get("AI_PDF_RENAMER_LLM_TIMEOUT", "") or 0)
-        except ValueError:
-            timeout_s = _DEFAULT_LLM_TIMEOUT_S
-        if timeout_s <= 0:
-            timeout_s = _DEFAULT_LLM_TIMEOUT_S
-
+    backend_str = _resolved_backend(config)
+    model_path = _resolved_model_path(config)
+    timeout_s = _resolved_timeout(config)
     use_chat = config.llm_use_chat_api
-
-    # In-process backend
-    use_in_process = backend_str == "in-process" or (backend_str == "auto" and bool(model_path))
-    if use_in_process and model_path:
-        try:
-            return InProcessLLMBackend(model_path, timeout_s=timeout_s, use_chat=use_chat)
-        except ImportError as exc:
-            if backend_str == "in-process":
-                raise
-            logger.warning("llama-cpp-python not available, falling back to HTTP: %s", exc)
-
-    # HTTP backend
-    base_url = _config_or_env(
-        config.llm_base_url,
-        "AI_PDF_RENAMER_LLM_URL",
-        _DEFAULT_LLM_URL,
+    return _create_in_process_backend(backend_str, model_path, timeout_s=timeout_s, use_chat=use_chat) or (
+        _create_http_backend(config, timeout_s=timeout_s, use_chat=use_chat)
     )
-    model = _config_or_env(
-        config.llm_model,
-        "AI_PDF_RENAMER_LLM_MODEL",
-        _DEFAULT_LLM_MODEL,
-    )
-    require_https = config.require_https or _env_truthy("AI_PDF_RENAMER_REQUIRE_HTTPS")
-    _warn_if_plaintext_remote(base_url, enforce=require_https)
-    return HttpLLMBackend(base_url=base_url, model=model, timeout_s=timeout_s, use_chat=use_chat)

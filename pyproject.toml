@@ -11,13 +11,20 @@ requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "sebastian" }]
 dependencies = [
-  "requests>=2.32.4",
+  "requests>=2.33.0",
   "rich>=13.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/sebastianspicker/AI-PDF-Renamer#readme"
+Source = "https://github.com/sebastianspicker/AI-PDF-Renamer"
+Issues = "https://github.com/sebastianspicker/AI-PDF-Renamer/issues"
+Changelog = "https://github.com/sebastianspicker/AI-PDF-Renamer/blob/main/CHANGELOG.md"
+Security = "https://github.com/sebastianspicker/AI-PDF-Renamer/security/policy"
+
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.0.0",
+  "pytest>=9.0.3",
   "pytest-asyncio>=0.23.0",
   "pytest-cov>=6.0.0",
   "ruff>=0.6.0",
@@ -34,12 +41,6 @@ tokens = [
 ocr = [
   "ocrmypdf>=14.0.0",
 ]
-embeddings = [
-  "sentence-transformers>=2.0.0",
-]
-llama-cpp = [
-  "llama-cpp-python>=0.2.0",
-]
 tui = [
   "textual>=0.40.0",
 ]
@@ -55,9 +56,6 @@ path = "src/ai_pdf_renamer/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ai_pdf_renamer"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/ai_pdf_renamer/data" = "ai_pdf_renamer/data"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -78,6 +76,9 @@ exclude_lines = [
   "if TYPE_CHECKING:",
   "if __name__ == .__main__.",
 ]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
 
 [tool.ruff]
 line-length = 120

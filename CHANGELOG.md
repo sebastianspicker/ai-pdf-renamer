@@ -5,6 +5,28 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Decomposed the CLI, filename, heuristic, LLM, renamer, text, and TUI runtime
+  modules while preserving the public API and command aliases.
+- Kept optional in-process `llama-cpp-python` support without bundling a
+  `llama-cpp` project extra.
+- Kept optional embedding-assisted conflict resolution without bundling a
+  `sentence-transformers` project extra.
+- Restricted post-rename hooks to HTTPS and loopback HTTP endpoints and
+  redacted schema-validation logs so document-derived values are never logged.
+- Made CI hygiene and secret scanning unconditional for applicable pushes and
+  pull requests.
+
+### Fixed
+
+- Removed duplicate wheel package-data inclusion and added installed-artifact
+  verification for the wheel, source distribution, and all four entry points.
+- Centralized tracked-path hygiene policy and added regression fixtures for
+  private, credential, document, cache, and agent-workspace paths.
+
 ## [0.2.0] - 2026-04-19
 
 ### Added
@@ -54,7 +76,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Tkinter GUI (`gui.py`) — replaced by TUI.
 - Ollama-specific code and global thread-local session management.
-- Internal documentation (AGENTS.md, BUGS_AND_FIXES.md, docs/, scripts/).
+- Superseded internal planning packets from the public documentation surface.
 - `requirements.txt` — use `pyproject.toml` optional dependency groups.
 
 ## [0.1.0] - 2026-03-01

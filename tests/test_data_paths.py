@@ -28,6 +28,13 @@ from ai_pdf_renamer.renamer_files import _is_safe_path, collect_pdf_files
 from ai_pdf_renamer.rules import ProcessingRules, load_processing_rules
 
 
+def _runtime_error_exc_info() -> tuple[type[RuntimeError], RuntimeError, object]:
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError as exc:
+        return type(exc), exc, exc.__traceback__
+
+
 def test_data_path_falls_back_to_package_data(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(data_paths, "data_dir", lambda: tmp_path)
 
@@ -43,7 +50,7 @@ def test_data_dir_uses_packaged_data_when_repo_root_not_found(monkeypatch) -> No
     expected = (module_file.parent / "data").resolve()
 
     monkeypatch.setattr(data_paths, "_discover_repo_root", lambda start=None: None)
-    monkeypatch.setattr(data_paths.Path, "cwd", classmethod(lambda cls: data_paths.Path("/tmp/not-used-cwd")))
+    monkeypatch.setattr(data_paths.Path, "cwd", classmethod(lambda cls: data_paths.Path("not-used-cwd")))
 
     resolved = data_paths.data_dir()
     assert resolved == expected
@@ -296,7 +303,6 @@ def test_file_mtime_missing() -> None:
 def test_structured_log_formatter_basic() -> None:
     """StructuredLogFormatter produces valid JSON with expected fields."""
     import json
-    import logging
 
     fmt = StructuredLogFormatter()
     record = logging.LogRecord(
@@ -311,16 +317,16 @@ def test_structured_log_formatter_basic() -> None:
 def test_structured_log_formatter_with_exception() -> None:
     """StructuredLogFormatter includes exception info."""
     import json
-    import logging
-    import sys
 
     fmt = StructuredLogFormatter()
-    try:
-        raise RuntimeError("boom")
-    except RuntimeError:
-        exc_info = sys.exc_info()
     record = logging.LogRecord(
-        name="mylogger", level=logging.ERROR, pathname="", lineno=0, msg="fail", args=(), exc_info=exc_info
+        name="mylogger",
+        level=logging.ERROR,
+        pathname="",
+        lineno=0,
+        msg="fail",
+        args=(),
+        exc_info=_runtime_error_exc_info(),
     )
     output = fmt.format(record)
     data = json.loads(output)
@@ -331,8 +337,6 @@ def test_structured_log_formatter_with_exception() -> None:
 
 def test_setup_logging_file_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """setup_logging handles OSError when log file can't be created."""
-    import logging
-
     # Clear existing handlers to force fresh setup
     root = logging.getLogger()
     original_handlers = root.handlers[:]

@@ -1,0 +1,9 @@
+name: "AI PDF Renamer CodeQL"
+
+paths-ignore:
+  - "docs/**"
+  - "vendor/**"
+  - "vendors/**"
+  - "third_party/**"
+  - "third-party/**"
+  - "external/**"

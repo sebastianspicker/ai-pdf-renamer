@@ -1,62 +1,11 @@
-# ruff: noqa: F401
-
 from __future__ import annotations
 
-import argparse
-import base64
-import contextlib
-import json
-import logging
-import os
-import re
 import sys
-import time
-from datetime import date
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
-
-from ai_pdf_renamer import pdf_extract
-from ai_pdf_renamer.config import RenamerConfig
-from ai_pdf_renamer.heuristics import (
-    HeuristicRule,
-    HeuristicScorer,
-    _combine_resolve_conflict,
-    _embedding_conflict_pick,
-    _load_category_aliases,
-    load_heuristic_rules,
-    load_heuristic_rules_for_language,
-)
-from ai_pdf_renamer.renamer import (
-    _apply_post_rename_actions,
-    _produce_rename_results,
-    _run_post_rename_hook,
-    _write_json_or_csv,
-    rename_pdfs_in_directory,
-    run_watch_loop,
-)
-
-
-def _cfg(**overrides: object) -> RenamerConfig:
-    """Build a RenamerConfig with sensible test defaults and overrides."""
-    defaults: dict[str, object] = {
-        "use_llm": False,
-        "use_single_llm_call": False,
-    }
-    defaults.update(overrides)
-    return RenamerConfig(**defaults)  # type: ignore[arg-type]
-
-
-def _make_fake_pdf(tmp_path: Path, name: str = "test.pdf", mtime: float | None = None) -> Path:
-    """Create a minimal PDF in tmp_path and optionally set its mtime."""
-    p = tmp_path / name
-    # Minimal valid PDF (enough to be treated as a file with .pdf extension)
-    p.write_bytes(b"%PDF-1.0\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n%%EOF\n")
-    if mtime is not None:
-        os.utime(p, (mtime, mtime))
-    return p
 
 
 class TestSummaryPromptChunkGerman:
@@ -194,7 +143,7 @@ class TestValidateResultJsonschemaAvailable:
         monkeypatch.setitem(sys.modules, "jsonschema", mock_jsonschema)
 
         # Clear lru_cache to ensure schema is freshly loaded
-        llm_schema._load_llm_response_schema.cache_clear()
+        llm_schema.clear_llm_response_schema_cache()
 
         parsed = {"summary": "Test summary", "keywords": ["a", "b"], "category": "finance"}
         result = llm_schema.validate_llm_document_result(parsed)
@@ -214,7 +163,7 @@ class TestValidateResultJsonschemaAvailable:
 
         monkeypatch.setitem(sys.modules, "jsonschema", mock_jsonschema)
 
-        llm_schema._load_llm_response_schema.cache_clear()
+        llm_schema.clear_llm_response_schema_cache()
 
         parsed = {"summary": "Test", "keywords": ["x"], "category": "report"}
         result = llm_schema.validate_llm_document_result(parsed)
@@ -282,11 +231,15 @@ class TestResolveDirsInteractiveDefault:
 
     def test_resolve_dirs_interactive_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Interactive mode, user presses Enter (empty) -> uses ./input_files default."""
-        import ai_pdf_renamer.cli as cli
+        from ai_pdf_renamer.cli_runtime import resolve_dirs
 
-        monkeypatch.setattr(cli, "_is_interactive", lambda: True)
         monkeypatch.setattr("builtins.input", lambda _prompt: "")
 
-        args = argparse.Namespace(dirs=None, single_file=None, manual_file=None, dirs_from_file=None)
-        dirs, _single_file = cli._resolve_dirs(args)
+        args = SimpleNamespace(dirs=None, single_file=None, manual_file=None, dirs_from_file=None)
+        dirs, _single_file = resolve_dirs(
+            args,
+            is_interactive=lambda: True,
+            console=MagicMock(),
+            logger=MagicMock(),
+        )
         assert dirs == [str(Path("./input_files").resolve())]

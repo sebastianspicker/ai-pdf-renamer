@@ -28,8 +28,7 @@ class TestNullProgressReporter:
 
     def test_exit_returns_none(self) -> None:
         r = _NullProgressReporter()
-        result = r.__exit__(None, None, None)
-        assert result is None
+        assert r.__exit__(None, None, None) is None
 
 
 class TestCreateProgressReporter:

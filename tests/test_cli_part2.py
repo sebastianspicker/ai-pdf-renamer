@@ -1,55 +1,19 @@
-# ruff: noqa: F401
-
 from __future__ import annotations
 
-import argparse
 import json
 import runpy
 import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 import ai_pdf_renamer.cli as cli_mod
-from ai_pdf_renamer.cli import _resolve_dirs, _resolve_option
+from ai_pdf_renamer.cli import _resolve_dirs
 from ai_pdf_renamer.config import RenamerConfig
-from ai_pdf_renamer.tui import _CSS, AIRenamerTUI
-
-_PATCHED_CSS = _CSS.replace("flex-wrap: wrap;", "")
-
-
-def _make_app(settings: dict[str, object] | None = None) -> AIRenamerTUI:
-    """Create an AIRenamerTUI with patched CSS and optional pre-loaded settings."""
-    if settings is not None:
-        with patch("ai_pdf_renamer.tui._load_settings", return_value=settings):
-            app = AIRenamerTUI()
-    else:
-        with patch("ai_pdf_renamer.tui._load_settings", return_value={}):
-            app = AIRenamerTUI()
-    app.CSS = _PATCHED_CSS  # type: ignore[assignment]
-    return app
-
-
-def _ns(**kwargs: Any) -> argparse.Namespace:
-    """Create an argparse.Namespace with sensible defaults for tests."""
-    defaults: dict[str, Any] = {
-        "dirs": None,
-        "dirs_from_file": None,
-        "single_file": None,
-        "manual_file": None,
-        "doctor": False,
-        "watch": False,
-        "watch_interval": 60,
-        "language": "de",
-        "desired_case": "kebabCase",
-        "project": "",
-        "version": "",
-        "config": None,
-    }
-    defaults.update(kwargs)
-    return argparse.Namespace(**defaults)
+from tests.conftest import make_cli_main_args
+from tests.conftest import make_cli_namespace as _ns
 
 
 class TestResolveDirs:
@@ -170,22 +134,7 @@ class TestMainErrorHandling:
         dir_b.mkdir()
 
         with pytest.raises(SystemExit) as exc_info:
-            cli_mod.main(
-                [
-                    "--watch",
-                    "--dir",
-                    str(dir_a),
-                    str(dir_b),
-                    "--language",
-                    "de",
-                    "--case",
-                    "kebabCase",
-                    "--project",
-                    "",
-                    "--version",
-                    "",
-                ]
-            )
+            cli_mod.main(make_cli_main_args(dir_a, dir_b, watch=True))
 
         # --watch with multiple dirs should exit with error
         assert "one directory" in str(exc_info.value).lower() or "only one" in str(exc_info.value).lower()
@@ -201,20 +150,7 @@ class TestMainErrorHandling:
         monkeypatch.setattr(cli_mod, "rename_pdfs_in_directory", _raise_fnf)
 
         with pytest.raises(SystemExit) as exc_info:
-            cli_mod.main(
-                [
-                    "--dir",
-                    str(tmp_path),
-                    "--language",
-                    "de",
-                    "--case",
-                    "kebabCase",
-                    "--project",
-                    "",
-                    "--version",
-                    "",
-                ]
-            )
+            cli_mod.main(make_cli_main_args(tmp_path))
 
         assert exc_info.value.code == 1
 
@@ -229,20 +165,7 @@ class TestMainErrorHandling:
         monkeypatch.setattr(cli_mod, "rename_pdfs_in_directory", _raise_ve)
 
         with pytest.raises(SystemExit) as exc_info:
-            cli_mod.main(
-                [
-                    "--dir",
-                    str(tmp_path),
-                    "--language",
-                    "de",
-                    "--case",
-                    "kebabCase",
-                    "--project",
-                    "",
-                    "--version",
-                    "",
-                ]
-            )
+            cli_mod.main(make_cli_main_args(tmp_path))
 
         assert exc_info.value.code == 1
 

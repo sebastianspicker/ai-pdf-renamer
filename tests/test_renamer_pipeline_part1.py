@@ -1,5 +1,3 @@
-# ruff: noqa: F401
-
 """Tests for renamer.py pipeline helper functions.
 
 Covers _sanitize_csv_cell, _write_json_or_csv, _write_summary_json,
@@ -8,41 +6,27 @@ and _write_rename_outputs without requiring full pipeline orchestration.
 
 from __future__ import annotations
 
-import contextlib
 import csv
 import json
-import logging
 import threading
-from concurrent.futures import Future
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 import ai_pdf_renamer.renamer as renamer
-from ai_pdf_renamer.config import RenamerConfig
-from ai_pdf_renamer.renamer import _sanitize_csv_cell, _write_json_or_csv, _write_rename_outputs, _write_summary_json
-
-
-def _make_config(**overrides: object) -> MagicMock:
-    """Build a MagicMock that behaves like RenamerConfig with sensible defaults."""
-    cfg = MagicMock()
-    cfg.export_metadata_path = overrides.get("export_metadata_path")
-    cfg.plan_file_path = overrides.get("plan_file_path")
-    cfg.summary_json_path = overrides.get("summary_json_path")
-    cfg.dry_run = overrides.get("dry_run", False)
-    return cfg
-
-
-def _cfg(**overrides: Any) -> RenamerConfig:
-    """Build a RenamerConfig with sensible test defaults."""
-    defaults: dict[str, Any] = {
-        "use_llm": False,
-        "use_single_llm_call": False,
-    }
-    defaults.update(overrides)
-    return RenamerConfig(**defaults)
+from ai_pdf_renamer.renamer import (
+    RenameOutputData,
+    RenameSummaryData,
+    _sanitize_csv_cell,
+    _write_json_or_csv,
+    _write_rename_outputs,
+    _write_summary_json,
+)
+from tests.conftest import make_config as _cfg
+from tests.conftest import make_renamer_output_config as _make_config
+from tests.conftest import make_summary_data, patch_renamer_process_result
+from tests.conftest import write_dummy_pdf as _write_dummy_pdf
 
 
 class TestSanitizeCsvCell:
@@ -118,13 +102,15 @@ class TestWriteSummaryJson:
         out = tmp_path / "summary.json"
         _write_summary_json(
             out,
-            directory=tmp_path,
-            processed=10,
-            renamed=7,
-            skipped=2,
-            failed=1,
-            dry_run=False,
-            failures=[{"file": "bad.pdf", "error": "oops"}],
+            RenameSummaryData(
+                directory=tmp_path,
+                processed=10,
+                renamed=7,
+                skipped=2,
+                failed=1,
+                dry_run=False,
+                failures=[{"file": "bad.pdf", "error": "oops"}],
+            ),
         )
         data = json.loads(out.read_text(encoding="utf-8"))
         assert data["processed"] == 10
@@ -140,13 +126,7 @@ class TestWriteSummaryJson:
         # When path is None, nothing should be written and no error raised.
         _write_summary_json(
             None,
-            directory=tmp_path,
-            processed=0,
-            renamed=0,
-            skipped=0,
-            failed=0,
-            dry_run=True,
-            failures=[],
+            make_summary_data(tmp_path),
         )
 
 
@@ -172,13 +152,7 @@ class TestWriteRenameOutputs:
         _write_rename_outputs(
             cfg,
             tmp_path,
-            export_rows=rows,
-            plan_entries=[],
-            processed_count=1,
-            renamed_count=1,
-            skipped_count=0,
-            failed_count=0,
-            failure_details=[],
+            RenameOutputData(export_rows=rows, processed_count=1, renamed_count=1),
         )
         data = json.loads(export_path.read_text(encoding="utf-8"))
         assert len(data) == 1
@@ -191,13 +165,7 @@ class TestWriteRenameOutputs:
         _write_rename_outputs(
             cfg,
             tmp_path,
-            export_rows=[],
-            plan_entries=entries,
-            processed_count=1,
-            renamed_count=0,
-            skipped_count=0,
-            failed_count=0,
-            failure_details=[],
+            RenameOutputData(plan_entries=entries, processed_count=1),
         )
         data = json.loads(plan_path.read_text(encoding="utf-8"))
         assert len(data) == 1
@@ -213,13 +181,7 @@ class TestWriteRenameOutputs:
         _write_rename_outputs(
             cfg,
             tmp_path,
-            export_rows=[],
-            plan_entries=[],
-            processed_count=0,
-            renamed_count=0,
-            skipped_count=0,
-            failed_count=0,
-            failure_details=[],
+            RenameOutputData(),
         )
         # With empty rows, neither export nor plan file should be written.
         assert not export_path.exists()
@@ -229,8 +191,7 @@ class TestWriteRenameOutputs:
 class TestProcessOneFile:
     def test_process_one_file_success(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Extraction returns content; processing returns a valid result."""
-        pdf = tmp_path / "invoice.pdf"
-        pdf.write_bytes(b"%PDF-1.4 dummy")
+        pdf = _write_dummy_pdf(tmp_path / "invoice.pdf")
         cfg = _cfg()
 
         monkeypatch.setattr(
@@ -238,21 +199,15 @@ class TestProcessOneFile:
             "_extract_pdf_content",
             lambda path, config: ("sample text about an invoice", False),
         )
-        monkeypatch.setattr(
+        patch_renamer_process_result(
+            monkeypatch,
             renamer,
-            "_process_content_to_result",
-            lambda file_path, content, config, rules=None, used_vision=False: (
-                file_path,
-                "20260101-invoice-sample",
-                {"category": "invoice"},
-                None,
-            ),
+            "20260101-invoice-sample",
+            meta={"category": "invoice"},
         )
 
-        result = renamer._process_one_file(pdf, cfg)
-        path_out, new_base, meta, exc = result
+        new_base, meta, exc = renamer.suggest_rename_for_file(pdf, cfg)
 
-        assert path_out == pdf
         assert new_base == "20260101-invoice-sample"
         assert meta == {"category": "invoice"}
         assert exc is None
@@ -269,10 +224,8 @@ class TestProcessOneFile:
             lambda path, config: (_ for _ in ()).throw(RuntimeError("extraction failed")),
         )
 
-        result = renamer._process_one_file(pdf, cfg)
-        path_out, new_base, meta, exc = result
+        new_base, meta, exc = renamer.suggest_rename_for_file(pdf, cfg)
 
-        assert path_out == pdf
         assert new_base is None
         assert meta is None
         assert isinstance(exc, RuntimeError)
@@ -295,10 +248,8 @@ class TestProcessOneFile:
 
         monkeypatch.setattr(renamer, "_process_content_to_result", _raise_on_process)
 
-        result = renamer._process_one_file(pdf, cfg)
-        path_out, new_base, meta, exc = result
+        new_base, meta, exc = renamer.suggest_rename_for_file(pdf, cfg)
 
-        assert path_out == pdf
         assert new_base is None
         assert meta is None
         assert isinstance(exc, ValueError)
@@ -316,29 +267,30 @@ class TestProcessOneFile:
             lambda path, config: ("   ", False),
         )
 
-        result = renamer._process_one_file(pdf, cfg)
-        path_out, new_base, meta, exc = result
+        new_base, meta, exc = renamer.suggest_rename_for_file(pdf, cfg)
 
-        assert path_out == pdf
         assert new_base is None
         assert meta is None
         assert exc is None
 
-    def test_process_one_file_stop_requested(self, tmp_path: Path) -> None:
+    def test_process_one_file_stop_requested(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """When stop_event is set, returns early without extracting."""
-        pdf = tmp_path / "doc.pdf"
-        pdf.write_bytes(b"%PDF-1.4 dummy")
+        pdf = _write_dummy_pdf(tmp_path / "doc.pdf")
+        calls: dict[str, int] = {"extract": 0}
+
+        def fake_extract(*args: Any, **kwargs: Any) -> tuple[str, bool]:
+            calls["extract"] += 1
+            return ("content", False)
+
+        monkeypatch.setattr(renamer, "_extract_pdf_content", fake_extract)
         stop_event = threading.Event()
         stop_event.set()
         cfg = _cfg(stop_event=stop_event)
 
-        result = renamer._process_one_file(pdf, cfg)
-        path_out, new_base, meta, exc = result
+        renamed = renamer.rename_pdfs_in_directory(tmp_path, config=cfg, files_override=[pdf])
 
-        assert path_out == pdf
-        assert new_base is None
-        assert meta is None
-        assert exc is None
+        assert renamed == set()
+        assert calls["extract"] == 0
 
 
 class TestSuggestRenameForFile:
@@ -353,15 +305,11 @@ class TestSuggestRenameForFile:
             "_extract_pdf_content",
             lambda path, config: ("Contract for services dated 2025-06-15", False),
         )
-        monkeypatch.setattr(
+        patch_renamer_process_result(
+            monkeypatch,
             renamer,
-            "_process_content_to_result",
-            lambda file_path, content, config, rules=None, used_vision=False: (
-                file_path,
-                "20250615-contract-services",
-                {"category": "contract", "summary": "services contract"},
-                None,
-            ),
+            "20250615-contract-services",
+            meta={"category": "contract", "summary": "services contract"},
         )
         monkeypatch.setattr(renamer, "load_processing_rules", lambda path, **kwargs: None)
 
@@ -422,16 +370,7 @@ class TestSuggestRenameForFile:
             lambda path, config: ("valid content", False),
         )
         inner_exc = RuntimeError("generate failed")
-        monkeypatch.setattr(
-            renamer,
-            "_process_content_to_result",
-            lambda file_path, content, config, rules=None, used_vision=False: (
-                file_path,
-                None,
-                None,
-                inner_exc,
-            ),
-        )
+        patch_renamer_process_result(monkeypatch, renamer, None, error=inner_exc)
         monkeypatch.setattr(renamer, "load_processing_rules", lambda path, **kwargs: None)
 
         new_base, meta, exc = renamer.suggest_rename_for_file(pdf, cfg)
@@ -439,302 +378,3 @@ class TestSuggestRenameForFile:
         assert new_base is None
         assert meta is None
         assert exc is inner_exc
-
-
-class TestProduceRenameResults:
-    def test_produce_results_sequential(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """workers=1: all files processed sequentially via prefetch path."""
-        files = []
-        for i in range(3):
-            p = tmp_path / f"file{i}.pdf"
-            p.write_bytes(b"%PDF-1.4 dummy")
-            files.append(p)
-
-        cfg = _cfg(workers=1)
-
-        call_log: list[Path] = []
-
-        def fake_extract(path: Path, config: RenamerConfig) -> tuple[str, bool]:
-            call_log.append(path)
-            return (f"content of {path.name}", False)
-
-        monkeypatch.setattr(renamer, "_extract_pdf_content", fake_extract)
-        monkeypatch.setattr(
-            renamer,
-            "_process_content_to_result",
-            lambda file_path, content, config, rules=None, used_vision=False: (
-                file_path,
-                f"renamed-{file_path.stem}",
-                {"category": "test"},
-                None,
-            ),
-        )
-
-        results = renamer._produce_rename_results(files, cfg, rules=None)
-
-        assert len(results) == 3
-        for i, (path_out, new_base, meta, exc) in enumerate(results):
-            assert path_out == files[i]
-            assert new_base == f"renamed-{files[i].stem}"
-            assert meta == {"category": "test"}
-            assert exc is None
-
-    def test_produce_results_parallel(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """workers=2: results collected from ThreadPoolExecutor."""
-        files = []
-        for i in range(4):
-            p = tmp_path / f"doc{i}.pdf"
-            p.write_bytes(b"%PDF-1.4 dummy")
-            files.append(p)
-
-        cfg = _cfg(workers=2)
-
-        def fake_process(
-            file_path: Path, config: RenamerConfig, rules: Any = None
-        ) -> tuple[Path, str | None, dict[str, object] | None, BaseException | None]:
-            return (file_path, f"parallel-{file_path.stem}", {"worker": "pool"}, None)
-
-        monkeypatch.setattr(renamer, "_process_one_file", fake_process)
-
-        results = renamer._produce_rename_results(files, cfg, rules=None)
-
-        assert len(results) == 4
-        returned_paths = {r[0] for r in results}
-        assert returned_paths == set(files)
-        for _path_out, new_base, meta, exc in results:
-            assert new_base is not None
-            assert new_base.startswith("parallel-")
-            assert meta == {"worker": "pool"}
-            assert exc is None
-
-    def test_produce_results_parallel_with_exception(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """workers=2: when _process_one_file raises inside the future, error is captured."""
-        files = []
-        for i in range(2):
-            p = tmp_path / f"err{i}.pdf"
-            p.write_bytes(b"%PDF-1.4 dummy")
-            files.append(p)
-
-        cfg = _cfg(workers=2)
-
-        def fake_process(
-            file_path: Path, config: RenamerConfig, rules: Any = None
-        ) -> tuple[Path, str | None, dict[str, object] | None, BaseException | None]:
-            raise RuntimeError(f"worker error for {file_path.name}")
-
-        monkeypatch.setattr(renamer, "_process_one_file", fake_process)
-
-        results = renamer._produce_rename_results(files, cfg, rules=None)
-
-        assert len(results) == 2
-        for _path_out, new_base, meta, exc in results:
-            assert new_base is None
-            assert meta is None
-            assert isinstance(exc, RuntimeError)
-            assert "worker error" in str(exc)
-
-    def test_produce_results_sequential_extraction_error(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """workers=1: extraction error for one file does not stop other files."""
-        files = []
-        for i in range(3):
-            p = tmp_path / f"mix{i}.pdf"
-            p.write_bytes(b"%PDF-1.4 dummy")
-            files.append(p)
-
-        cfg = _cfg(workers=1)
-
-        def fake_extract(path: Path, config: RenamerConfig) -> tuple[str, bool]:
-            if path.name == "mix1.pdf":
-                raise RuntimeError("corrupt PDF")
-            return ("good content", False)
-
-        monkeypatch.setattr(renamer, "_extract_pdf_content", fake_extract)
-        monkeypatch.setattr(
-            renamer,
-            "_process_content_to_result",
-            lambda file_path, content, config, rules=None, used_vision=False: (
-                file_path,
-                f"ok-{file_path.stem}",
-                {},
-                None,
-            ),
-        )
-
-        results = renamer._produce_rename_results(files, cfg, rules=None)
-
-        assert len(results) == 3
-        # mix0 and mix2 succeed, mix1 fails
-        assert results[0][1] == "ok-mix0"
-        assert results[0][3] is None
-        assert results[1][1] is None
-        assert isinstance(results[1][3], RuntimeError)
-        assert results[2][1] == "ok-mix2"
-        assert results[2][3] is None
-
-
-class TestRenamePdfsStopEvent:
-    def test_rename_pdfs_stop_event_skips_processing(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """When stop_event is already set, processing loop exits before any renames."""
-        pdf = tmp_path / "doc.pdf"
-        pdf.write_bytes(b"%PDF-1.4 dummy")
-
-        stop_event = threading.Event()
-        stop_event.set()
-
-        summary_path = tmp_path / "summary.json"
-        cfg = _cfg(
-            dry_run=True,
-            summary_json_path=str(summary_path),
-            stop_event=stop_event,
-        )
-
-        # _produce_rename_results returns one result, but the apply loop should
-        # break immediately because stop_event is set.
-        monkeypatch.setattr(
-            renamer,
-            "_produce_rename_results",
-            lambda *a, **k: [(pdf, "new-name", {}, None)],
-        )
-
-        renamer.rename_pdfs_in_directory(tmp_path, config=cfg)
-
-        data = json.loads(summary_path.read_text(encoding="utf-8"))
-        # Stop event was set, so processed should be 0 (loop breaks immediately).
-        assert data["processed"] == 0
-        assert data["renamed"] == 0
-
-
-class TestWriteSummaryJson_merged:
-    def test_write_summary_json_with_failures(self, tmp_path: Path) -> None:
-        """Verify JSON structure includes failure_details list."""
-        summary_path = tmp_path / "summary.json"
-        failures = [
-            {"file": "/tmp/bad1.pdf", "error": "corrupt header"},
-            {"file": "/tmp/bad2.pdf", "error": "timeout contacting LLM"},
-        ]
-
-        renamer._write_summary_json(
-            summary_path,
-            directory=tmp_path,
-            processed=5,
-            renamed=2,
-            skipped=1,
-            failed=2,
-            dry_run=False,
-            failures=failures,
-        )
-
-        data = json.loads(summary_path.read_text(encoding="utf-8"))
-
-        assert data["processed"] == 5
-        assert data["renamed"] == 2
-        assert data["skipped"] == 1
-        assert data["failed"] == 2
-        assert data["dry_run"] is False
-        assert data["directory"] == str(tmp_path)
-        assert len(data["failures"]) == 2
-        assert data["failures"][0]["file"] == "/tmp/bad1.pdf"
-        assert data["failures"][0]["error"] == "corrupt header"
-        assert data["failures"][1]["file"] == "/tmp/bad2.pdf"
-        assert data["failures"][1]["error"] == "timeout contacting LLM"
-
-    def test_write_summary_json_none_path(self) -> None:
-        """When summary_path is None, no file is written (no-op)."""
-        # Should not raise.
-        renamer._write_summary_json(
-            None,
-            directory=Path("/tmp"),
-            processed=0,
-            renamed=0,
-            skipped=0,
-            failed=0,
-            dry_run=True,
-            failures=[],
-        )
-
-    def test_write_summary_json_creates_parent_dirs(self, tmp_path: Path) -> None:
-        """Parent directories are created if they don't exist."""
-        summary_path = tmp_path / "nested" / "deep" / "summary.json"
-
-        renamer._write_summary_json(
-            summary_path,
-            directory=tmp_path,
-            processed=1,
-            renamed=1,
-            skipped=0,
-            failed=0,
-            dry_run=True,
-            failures=[],
-        )
-
-        assert summary_path.exists()
-        data = json.loads(summary_path.read_text(encoding="utf-8"))
-        assert data["processed"] == 1
-        assert data["dry_run"] is True
-
-
-class TestPostRenameHookHttp:
-    def test_hook_http_remote_warns(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
-    ) -> None:
-        """Hook URL with non-loopback http:// host logs an 'unencrypted' warning."""
-        old = tmp_path / "old.pdf"
-        new = tmp_path / "new.pdf"
-        old.write_bytes(b"%PDF-1.4 dummy")
-        meta: dict[str, object] = {"category": "invoice"}
-
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-
-        mock_session = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.post = MagicMock(return_value=mock_resp)
-
-        with (
-            patch("requests.Session", return_value=mock_session),
-            caplog.at_level(logging.WARNING, logger="ai_pdf_renamer.renamer"),
-        ):
-            renamer._run_post_rename_hook(
-                "http://192.168.1.1:8080/hook",
-                old,
-                new,
-                meta,
-            )
-
-        assert any("unencrypted" in rec.message.lower() for rec in caplog.records), (
-            f"Expected 'unencrypted' warning in log records: {[r.message for r in caplog.records]}"
-        )
-
-    def test_hook_http_post_with_meta(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """Hook URL with loopback host posts JSON payload with old_path, new_path, and meta."""
-        old = tmp_path / "old.pdf"
-        new = tmp_path / "new.pdf"
-        old.write_bytes(b"%PDF-1.4 dummy")
-        meta: dict[str, object] = {"category": "invoice", "amount": "100.00"}
-
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-
-        mock_session = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.post = MagicMock(return_value=mock_resp)
-
-        with patch("requests.Session", return_value=mock_session):
-            renamer._run_post_rename_hook(
-                "http://127.0.0.1:8080/hook",
-                old,
-                new,
-                meta,
-            )
-
-        mock_session.post.assert_called_once()
-        call_args = mock_session.post.call_args
-        assert call_args[0][0] == "http://127.0.0.1:8080/hook"
-        payload = call_args[1]["json"]
-        assert payload["old_path"] == str(old)
-        assert payload["new_path"] == str(new)
-        assert payload["meta"] == meta
-        assert payload["meta"]["category"] == "invoice"
-        assert payload["meta"]["amount"] == "100.00"

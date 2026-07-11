@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from .config import RenamerConfig
@@ -23,6 +24,30 @@ from .rename_ops import sanitize_filename_from_llm
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ExtractionFunctions:
+    image_fn: Callable[..., str | dict[str, str] | None]
+    pdf_to_text_fn: Callable[..., str]
+    pdf_to_text_with_ocr_fn: Callable[..., str]
+    prompt_fn: Callable[..., str] = build_vision_filename_prompt
+    sanitize_fn: Callable[..., str] = sanitize_filename_from_llm
+
+
+@dataclass(frozen=True)
+class VisionExtractionRequest:
+    path: Path
+    config: RenamerConfig
+    client: LLMClient
+    extraction_fns: ExtractionFunctions
+
+
+@dataclass(frozen=True)
+class VisionAttempt:
+    content: str | None
+    client: LLMClient | None
+    attempted: bool
+
+
 def effective_max_tokens(config: RenamerConfig) -> int:
     """Max tokens for PDF extraction from config or env (AI_PDF_RENAMER_MAX_TOKENS)."""
     max_tok: int | None = config.max_tokens_for_extraction
@@ -37,17 +62,9 @@ def effective_max_tokens(config: RenamerConfig) -> int:
     return DEFAULT_MAX_CONTENT_TOKENS
 
 
-def _try_vision_extraction(
-    path: Path,
-    config: RenamerConfig,
-    client: LLMClient,
-    *,
-    image_fn: Callable[..., str | dict[str, str] | None] = pdf_first_page_to_image_payload,
-    prompt_fn: Callable[..., str] = build_vision_filename_prompt,
-    sanitize_fn: Callable[..., str] = sanitize_filename_from_llm,
-) -> str | None:
+def _try_vision_extraction(request: VisionExtractionRequest) -> str | None:
     """Try vision extraction on first page. Returns sanitized text or None on failure."""
-    image_data = image_fn(path)
+    image_data = request.extraction_fns.image_fn(request.path)
     if not image_data:
         return None
     if isinstance(image_data, dict):
@@ -58,10 +75,10 @@ def _try_vision_extraction(
         image_mime_type = "image/jpeg"
     if not image_b64:
         return None
-    model = config.vision_model or client.model
-    prompt = prompt_fn(config.language)
-    timeout = (config.llm_timeout_s or 60.0) * 2
-    vision_text = client.complete_vision(
+    model = request.config.vision_model or request.client.model
+    prompt = request.extraction_fns.prompt_fn(request.config.language)
+    timeout = (request.config.llm_timeout_s or 60.0) * 2
+    vision_text = request.client.complete_vision(
         image_b64,
         prompt,
         model=model,
@@ -69,7 +86,7 @@ def _try_vision_extraction(
         timeout_s=max(60.0, timeout),
     )
     if vision_text:
-        return sanitize_fn(vision_text)
+        return request.extraction_fns.sanitize_fn(vision_text)
     return None
 
 
@@ -123,9 +140,11 @@ def extract_pdf_content(path: Path, config: RenamerConfig) -> tuple[str, bool]:
     return extract_pdf_content_with(
         path,
         config,
-        pdf_first_page_to_image_base64_fn=pdf_first_page_to_image_base64,
-        pdf_to_text_fn=pdf_to_text,
-        pdf_to_text_with_ocr_fn=pdf_to_text_with_ocr,
+        extraction_fns=ExtractionFunctions(
+            image_fn=pdf_first_page_to_image_base64,
+            pdf_to_text_fn=pdf_to_text,
+            pdf_to_text_with_ocr_fn=pdf_to_text_with_ocr,
+        ),
     )
 
 
@@ -133,9 +152,7 @@ def extract_pdf_content_with(
     path: Path,
     config: RenamerConfig,
     *,
-    pdf_first_page_to_image_base64_fn: Callable[..., str | dict[str, str] | None] = pdf_first_page_to_image_payload,
-    pdf_to_text_fn: Callable[..., str] = pdf_to_text,
-    pdf_to_text_with_ocr_fn: Callable[..., str] = pdf_to_text_with_ocr,
+    extraction_fns: ExtractionFunctions | None = None,
     llm_client: LLMClient | None = None,
 ) -> tuple[str, bool]:
     """Extract content using the configured strategy order.
@@ -149,61 +166,112 @@ def extract_pdf_content_with(
     `used_vision` is `True` when any vision-based extraction path was selected,
     including both `vision_first` and `vision_fallback`.
     """
-    client = llm_client
-    tried_vision = False
+    extraction_fns = extraction_fns or ExtractionFunctions(
+        image_fn=pdf_first_page_to_image_payload,
+        pdf_to_text_fn=pdf_to_text,
+        pdf_to_text_with_ocr_fn=pdf_to_text_with_ocr,
+    )
+    vision_first_result = _run_vision_first(path, config, llm_client, extraction_fns)
+    if vision_first_result.content is not None:
+        return (vision_first_result.content, True)
 
-    if config.vision_first:
-        if client is None:
-            client = create_llm_client_from_config(config)
-        tried_vision = True
-        _log_extraction_strategy(path, "vision_first", outcome="attempt")
-        result = _try_vision_extraction(
-            path,
-            config,
-            client,
-            image_fn=pdf_first_page_to_image_base64_fn,
-        )
-        if result:
-            _log_extraction_strategy(path, "vision_first", outcome="selected")
-            return (result, True)
-        _log_extraction_strategy(path, "vision_first", outcome="fall_back_to_primary")
+    return _extract_primary_or_fallback(
+        path,
+        config,
+        extraction_fns,
+        client=vision_first_result.client,
+        tried_vision=vision_first_result.attempted,
+    )
 
+
+def _run_vision_first(
+    path: Path,
+    config: RenamerConfig,
+    client: LLMClient | None,
+    extraction_fns: ExtractionFunctions,
+) -> VisionAttempt:
+    if not config.vision_first:
+        return VisionAttempt(None, client, False)
+    client = _ensure_llm_client(config, client)
+    _log_extraction_strategy(path, "vision_first", outcome="attempt")
+    content = _try_vision_extraction(VisionExtractionRequest(path, config, client, extraction_fns))
+    if content:
+        _log_extraction_strategy(path, "vision_first", outcome="selected")
+        return VisionAttempt(content, client, True)
+    _log_extraction_strategy(path, "vision_first", outcome="fall_back_to_primary")
+    return VisionAttempt(None, client, True)
+
+
+def _extract_primary_or_fallback(
+    path: Path,
+    config: RenamerConfig,
+    extraction_fns: ExtractionFunctions,
+    *,
+    client: LLMClient | None,
+    tried_vision: bool,
+) -> tuple[str, bool]:
     content, primary_strategy = _extract_primary_content(
         path,
         config,
-        pdf_to_text_fn=pdf_to_text_fn,
-        pdf_to_text_with_ocr_fn=pdf_to_text_with_ocr_fn,
+        pdf_to_text_fn=extraction_fns.pdf_to_text_fn,
+        pdf_to_text_with_ocr_fn=extraction_fns.pdf_to_text_with_ocr_fn,
     )
-
     content_length = len(content.strip())
-    if not tried_vision and config.use_vision_fallback and content_length < config.vision_fallback_min_text_len:
-        if client is None:
-            client = create_llm_client_from_config(config)
-        _log_extraction_strategy(
-            path,
-            "vision_fallback",
-            outcome="attempt",
-            text_length=content_length,
-            threshold=config.vision_fallback_min_text_len,
-        )
-        result = _try_vision_extraction(
-            path,
-            config,
-            client,
-            image_fn=pdf_first_page_to_image_base64_fn,
-        )
-        if result:
-            _log_extraction_strategy(
-                path,
-                "vision_fallback",
-                outcome="selected",
-                text_length=content_length,
-                threshold=config.vision_fallback_min_text_len,
-            )
-            return (result, True)
+    if _should_try_vision_fallback(config, tried_vision, content_length):
+        fallback = _run_vision_fallback(path, config, extraction_fns, client, content_length=content_length)
+        if fallback is not None:
+            return (fallback, True)
         _log_extraction_strategy(path, primary_strategy, outcome="selected_after_failed_vision_fallback")
         return (content, False)
+    _log_primary_selection(path, config, primary_strategy, content_length=content_length, tried_vision=tried_vision)
+    return (content, False)
 
+
+def _ensure_llm_client(config: RenamerConfig, client: LLMClient | None) -> LLMClient:
+    if client is not None:
+        return client
+    return create_llm_client_from_config(config)
+
+
+def _should_try_vision_fallback(config: RenamerConfig, tried_vision: bool, content_length: int) -> bool:
+    return not tried_vision and config.use_vision_fallback and content_length < config.vision_fallback_min_text_len
+
+
+def _run_vision_fallback(
+    path: Path,
+    config: RenamerConfig,
+    extraction_fns: ExtractionFunctions,
+    client: LLMClient | None,
+    *,
+    content_length: int,
+) -> str | None:
+    client = _ensure_llm_client(config, client)
+    _log_vision_fallback(path, config, outcome="attempt", text_length=content_length)
+    content = _try_vision_extraction(VisionExtractionRequest(path, config, client, extraction_fns))
+    if content:
+        _log_vision_fallback(path, config, outcome="selected", text_length=content_length)
+        return content
+    return None
+
+
+def _log_vision_fallback(path: Path, config: RenamerConfig, *, outcome: str, text_length: int) -> None:
+    _log_extraction_strategy(
+        path,
+        "vision_fallback",
+        outcome=outcome,
+        text_length=text_length,
+        threshold=config.vision_fallback_min_text_len,
+    )
+
+
+def _log_primary_selection(
+    path: Path,
+    config: RenamerConfig,
+    primary_strategy: str,
+    *,
+    content_length: int,
+    tried_vision: bool,
+) -> None:
     if tried_vision and config.use_vision_fallback and content_length < config.vision_fallback_min_text_len:
         _log_extraction_strategy(
             path,
@@ -212,7 +280,5 @@ def extract_pdf_content_with(
             text_length=content_length,
             threshold=config.vision_fallback_min_text_len,
         )
-        return (content, False)
-
+        return
     _log_extraction_strategy(path, primary_strategy, outcome="selected", text_length=content_length)
-    return (content, False)

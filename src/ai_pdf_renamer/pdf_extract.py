@@ -11,8 +11,10 @@ import contextlib
 import logging
 import os
 import re
+import sys
 import tempfile
 import threading
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -47,23 +49,31 @@ _tiktoken_lock = threading.Lock()
 
 
 def _token_count(text: str) -> int:
-    global _tiktoken_encoding
-    if _tiktoken_encoding is None:
+    module = sys.modules[__name__]
+    encoding = module.__dict__["_tiktoken_encoding"]
+    if encoding is None:
         with _tiktoken_lock:
-            if _tiktoken_encoding is None:  # double-checked locking
+            encoding = module.__dict__["_tiktoken_encoding"]
+            if encoding is None:  # double-checked locking
                 try:
                     import tiktoken
 
-                    _tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
+                    encoding = tiktoken.get_encoding("cl100k_base")
                 except (ImportError, LookupError):
-                    _tiktoken_encoding = _TIKTOKEN_MISSING
-    if _tiktoken_encoding is not None and _tiktoken_encoding is not _TIKTOKEN_MISSING:
+                    encoding = _TIKTOKEN_MISSING
+                module.__dict__["_tiktoken_encoding"] = encoding
+    if encoding is not None and encoding is not _TIKTOKEN_MISSING:
         try:
-            return len(_tiktoken_encoding.encode(text))
+            return len(encoding.encode(text))
         except (AttributeError, RuntimeError, ValueError):
             pass
     # Fallback heuristic: ~4 chars per token for typical text.
     return max(1, len(text) // 4)
+
+
+def estimate_token_count(text: str) -> int:
+    """Estimate token count for extracted PDF text."""
+    return _token_count(text)
 
 
 def _shrink_to_token_limit(text: str, *, max_tokens: int) -> str:
@@ -97,6 +107,11 @@ def _shrink_to_token_limit(text: str, *, max_tokens: int) -> str:
     return text
 
 
+def shrink_to_token_limit(text: str, *, max_tokens: int) -> str:
+    """Return text shortened to the configured token budget."""
+    return _shrink_to_token_limit(text, max_tokens=max_tokens)
+
+
 def pdf_to_text(
     filepath: str | Path | None,
     *,
@@ -109,52 +124,122 @@ def pdf_to_text(
     """
     if filepath is None:
         return ""
+    fitz = _required_fitz_module()
+    path = Path(filepath)
+    pieces, errors, page_count = _extract_pdf_text_from_document(fitz, path, max_pages=max_pages)
+    return _finalize_pdf_text(path, pieces, errors, page_count, max_tokens=max_tokens)
+
+
+def _required_fitz_module() -> Any:
     try:
         import fitz
     except Exception as exc:  # pragma: no cover
         raise RuntimeError("PyMuPDF is required for PDF extraction. Install with: pip install -e '.[pdf]'") from exc
+    return fitz
 
-    path = Path(filepath)
+
+def _optional_fitz_module() -> Any | None:
     try:
-        doc = fitz.open(path)
+        import fitz
+    except ImportError:
+        return None
+    return fitz
+
+
+def _close_document(doc: Any) -> None:
+    closer = getattr(doc, "close", None)
+    if callable(closer):
+        closer()
+
+
+def _open_pdf_for_text(fitz: Any, path: Path) -> Any:
+    try:
+        return fitz.open(path)
     except (RuntimeError, OSError, ValueError) as exc:
         raise OSError(f"Could not open PDF file {path.name}: {exc}") from exc
 
+
+def _extract_pdf_text_from_document(fitz: Any, path: Path, *, max_pages: int) -> tuple[list[str], list[str], int]:
+    doc = _open_pdf_for_text(fitz, path)
     page_count = getattr(doc, "page_count", 0) or 0
     if max_pages > 0:
         page_count = min(page_count, max_pages)
     try:
         if getattr(doc, "is_encrypted", False):
             logger.warning("PDF %s is encrypted/password-protected. Skipping text extraction.", path.name)
-            return ""
+            return [], [], page_count
         pieces, errors = _extract_pages(doc, path, max_pages=max_pages)
+        return pieces, errors, page_count
     finally:
-        closer = getattr(doc, "close", None)
-        if callable(closer):
-            closer()
+        _close_document(doc)
 
+
+def _finalize_pdf_text(
+    path: Path,
+    pieces: list[str],
+    errors: list[str],
+    page_count: int,
+    *,
+    max_tokens: int,
+) -> str:
     content = "\n".join(pieces).strip()
-    if not content:
-        if errors and page_count > 0:
-            raise RuntimeError(
-                f"Extraction failed for {path.name}: {len(errors)} error(s) occurred during page processing. "
-                f"First error: {errors[0]}"
-            )
-        if page_count > 0:
-            msg = (
-                f"No text extracted from {path.name} ({page_count} page(s)). "
-                "File may be encrypted, image-only, or extraction failed for all pages."
-            )
-            # Differentiate: If file size is significant but no text, it's likely image/encrypted.
-            try:
-                if path.stat().st_size > 1024:
-                    raise ValueError(f"{msg} Consider using --ocr.")
-            except OSError as exc:
-                logger.debug("Could not stat %s for size check: %s", path.name, exc)
-            logger.warning(msg)
-        return ""
+    if content:
+        return _shrink_to_token_limit(content, max_tokens=max_tokens)
+    _handle_empty_pdf_text(path, errors, page_count)
+    return ""
 
-    return _shrink_to_token_limit(content, max_tokens=max_tokens)
+
+def _handle_empty_pdf_text(path: Path, errors: list[str], page_count: int) -> None:
+    if errors and page_count > 0:
+        raise RuntimeError(
+            f"Extraction failed for {path.name}: {len(errors)} error(s) occurred during page processing. "
+            f"First error: {errors[0]}"
+        )
+    if page_count <= 0:
+        return
+    msg = (
+        f"No text extracted from {path.name} ({page_count} page(s)). "
+        "File may be encrypted, image-only, or extraction failed for all pages."
+    )
+    if _looks_like_image_only_pdf(path):
+        raise ValueError(f"{msg} Consider using --ocr.")
+    logger.warning(msg)
+
+
+def _looks_like_image_only_pdf(path: Path) -> bool:
+    try:
+        return path.stat().st_size > 1024
+    except OSError as exc:
+        logger.debug("Could not stat %s for size check: %s", path.name, exc)
+        return False
+
+
+def _vision_render_payload(rendered: tuple[bytes, str] | None) -> dict[str, str] | None:
+    if rendered is None:
+        return None
+    image_bytes, mime_type = rendered
+    if not image_bytes:
+        return None
+    return {
+        "image_b64": base64.b64encode(image_bytes).decode("ascii"),
+        "mime_type": mime_type,
+    }
+
+
+def _open_pdf_for_vision(fitz: Any, path: Path) -> Any | None:
+    try:
+        return fitz.open(path)
+    except (RuntimeError, OSError, ValueError) as exc:
+        logger.debug("Could not open PDF for vision render %s: %s", path.name, exc)
+        return None
+
+
+def _render_vision_payload(doc: Any, path: Path, *, dpi: int) -> dict[str, str] | None:
+    try:
+        return _vision_render_payload(_render_first_page_for_vision(doc, path, dpi=dpi))
+    except (RuntimeError, OSError, ValueError) as exc:
+        logger.debug("Vision render failed for %s: %s", path.name, exc)
+        return None
 
 
 def pdf_first_page_to_image_base64(
@@ -173,6 +258,31 @@ def pdf_first_page_to_image_base64(
     return image_payload["image_b64"]
 
 
+def _encode_pixmap_for_vision(pix: Any) -> tuple[bytes, str] | None:
+    if hasattr(pix, "tobytes"):
+        try:
+            return (pix.tobytes(output="jpeg", jpg_quality=85), "image/jpeg")
+        except (TypeError, ValueError):
+            return (pix.tobytes(output="png"), "image/png")
+    if hasattr(pix, "getImageData"):
+        return (pix.getImageData("jpeg"), "image/jpeg")
+    if hasattr(pix, "getPNGData"):
+        return (pix.getPNGData(), "image/png")
+    return None
+
+
+def _render_first_page_for_vision(doc: Any, path: Path, *, dpi: int) -> tuple[bytes, str] | None:
+    if getattr(doc, "is_encrypted", False):
+        logger.debug("PDF %s is encrypted; skipping vision render.", path.name)
+        return None
+    page_count = getattr(doc, "page_count", 0) or 0
+    if page_count == 0:
+        return None
+    page = doc.load_page(0)
+    pix = page.get_pixmap(dpi=dpi, alpha=False)
+    return _encode_pixmap_for_vision(pix)
+
+
 def pdf_first_page_to_image_payload(
     filepath: str | Path | None,
     *,
@@ -181,56 +291,17 @@ def pdf_first_page_to_image_payload(
     """Render the first page and preserve the actual MIME type for vision requests."""
     if filepath is None:
         return None
-    try:
-        import fitz
-    except ImportError:
+    fitz = _optional_fitz_module()
+    if fitz is None:
         return None
     path = Path(filepath)
-    try:
-        doc = fitz.open(path)
-    except (RuntimeError, OSError, ValueError) as exc:
-        logger.debug("Could not open PDF for vision render %s: %s", path.name, exc)
+    doc = _open_pdf_for_vision(fitz, path)
+    if doc is None:
         return None
     try:
-        if getattr(doc, "is_encrypted", False):
-            logger.debug("PDF %s is encrypted; skipping vision render.", path.name)
-            return None
-        page_count = getattr(doc, "page_count", 0) or 0
-        if page_count == 0:
-            return None
-        page = doc.load_page(0)
-        pix = page.get_pixmap(dpi=dpi, alpha=False)
-        # Prefer JPEG for smaller payload, but keep the real MIME type on fallback paths.
-        image_bytes: bytes
-        mime_type: str
-        if hasattr(pix, "tobytes"):
-            try:
-                image_bytes = pix.tobytes(output="jpeg", jpg_quality=85)
-                mime_type = "image/jpeg"
-            except (TypeError, ValueError):
-                image_bytes = pix.tobytes(output="png")
-                mime_type = "image/png"
-        elif hasattr(pix, "getImageData"):
-            image_bytes = pix.getImageData("jpeg")
-            mime_type = "image/jpeg"
-        elif hasattr(pix, "getPNGData"):
-            image_bytes = pix.getPNGData()
-            mime_type = "image/png"
-        else:
-            return None
-        if not image_bytes:
-            return None
-        return {
-            "image_b64": base64.b64encode(image_bytes).decode("ascii"),
-            "mime_type": mime_type,
-        }
-    except (RuntimeError, OSError, ValueError) as exc:
-        logger.debug("Vision render failed for %s: %s", path.name, exc)
-        return None
+        return _render_vision_payload(doc, path, dpi=dpi)
     finally:
-        closer = getattr(doc, "close", None)
-        if callable(closer):
-            closer()
+        _close_document(doc)
 
 
 def _ocr_language_code(lang: str) -> str:
@@ -259,8 +330,33 @@ def pdf_to_text_with_ocr(
     ocrmypdf and system Tesseract. Falls back to non-OCR extraction on
     missing dependency or OCR failure.
     """
+    text = _initial_text_for_ocr(filepath, max_tokens=max_tokens, max_pages=max_pages)
+    if not _should_attempt_ocr(filepath, text, min_chars_for_ocr=min_chars_for_ocr):
+        return text
+    ocrmypdf = _ocrmypdf_module_or_none()
+    if ocrmypdf is None:
+        return text
+
+    if filepath is None:
+        return text
+    path = Path(filepath)
+    if not path.exists() or not path.is_file():
+        return text
+    return _ocr_text_or_original(
+        ocrmypdf,
+        OcrExtractionRequest(
+            path=path,
+            original_text=text,
+            max_tokens=max_tokens,
+            max_pages=max_pages,
+            language=language,
+        ),
+    )
+
+
+def _initial_text_for_ocr(filepath: str | Path | None, *, max_tokens: int, max_pages: int) -> str:
     try:
-        text = pdf_to_text(
+        return pdf_to_text(
             filepath,
             max_tokens=max_tokens,
             max_pages=max_pages,
@@ -268,47 +364,90 @@ def pdf_to_text_with_ocr(
     except (RuntimeError, ValueError) as exc:
         # Extraction failed entirely — proceed to OCR if available
         logger.info("Text extraction failed for %s, will try OCR: %s", filepath, exc)
-        text = ""
-    if not filepath or len(text.strip()) >= min_chars_for_ocr:
-        return text
+        return ""
 
+
+def _should_attempt_ocr(
+    filepath: str | Path | None,
+    text: str,
+    *,
+    min_chars_for_ocr: int,
+) -> bool:
+    return bool(filepath) and len(text.strip()) < min_chars_for_ocr
+
+
+def _ocrmypdf_module_or_none() -> Any | None:
     try:
         import ocrmypdf
     except ImportError:
         logger.warning(
             "OCR requested but ocrmypdf not installed. Install with: pip install -e '.[ocr]' (and install Tesseract)."
         )
-        return text
+        return None
+    return ocrmypdf
 
-    path = Path(filepath)
-    if not path.exists() or not path.is_file():
-        return text
 
+@dataclass(frozen=True)
+class OcrExtractionRequest:
+    path: Path
+    original_text: str
+    max_tokens: int
+    max_pages: int
+    language: str
+
+
+def _ocr_text_or_original(
+    ocrmypdf: Any,
+    request: OcrExtractionRequest,
+) -> str:
     tmp = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, prefix="ai_pdf_renamer_ocr_") as f:
-            tmp = Path(f.name)
-        ocrmypdf.ocr(
-            str(path),
-            str(tmp),
-            language=_ocr_language_code(language),
+        tmp = _create_ocr_temp_path()
+        _run_ocr_to_temp(ocrmypdf, request.path, tmp, language=request.language)
+        text_ocr = _extract_ocr_temp_text(
+            tmp,
+            request.path,
+            max_tokens=request.max_tokens,
+            max_pages=request.max_pages,
         )
-        # ocrmypdf typically renames its own temp output into `tmp`, creating a new inode
-        # with umask-based permissions. Restore 0600 so the OCR output isn't world-readable
-        # on multi-user systems. Swallow OSError for cross-platform compatibility.
-        with contextlib.suppress(OSError):
-            tmp.chmod(0o600)
-        text_ocr = pdf_to_text(tmp, max_tokens=max_tokens, max_pages=max_pages)
-        if text_ocr.strip():
-            logger.info("OCR produced %s chars for %s", len(text_ocr.strip()), path.name)
+        if text_ocr is not None:
             return text_ocr
     except (RuntimeError, OSError, ValueError) as exc:
-        logger.warning("OCR failed for %s: %s. Using original extraction.", path, exc)
+        logger.warning("OCR failed for %s: %s. Using original extraction.", request.path, exc)
     finally:
-        if tmp is not None and tmp.exists():
-            with contextlib.suppress(OSError):
-                tmp.unlink()
-    return text
+        _remove_ocr_temp_path(tmp)
+    return request.original_text
+
+
+def _create_ocr_temp_path() -> Path:
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, prefix="ai_pdf_renamer_ocr_") as f:
+        return Path(f.name)
+
+
+def _run_ocr_to_temp(ocrmypdf: Any, path: Path, tmp: Path, *, language: str) -> None:
+    ocrmypdf.ocr(
+        str(path),
+        str(tmp),
+        language=_ocr_language_code(language),
+    )
+    # ocrmypdf typically renames its own temp output into `tmp`, creating a new inode
+    # with umask-based permissions. Restore 0600 so the OCR output isn't world-readable.
+    with contextlib.suppress(OSError):
+        tmp.chmod(0o600)
+
+
+def _extract_ocr_temp_text(tmp: Path, source_path: Path, *, max_tokens: int, max_pages: int) -> str | None:
+    text_ocr = pdf_to_text(tmp, max_tokens=max_tokens, max_pages=max_pages)
+    if not text_ocr.strip():
+        return None
+    logger.info("OCR produced %s chars for %s", len(text_ocr.strip()), source_path.name)
+    return text_ocr
+
+
+def _remove_ocr_temp_path(tmp: Path | None) -> None:
+    if tmp is not None and tmp.exists():
+        with contextlib.suppress(OSError):
+            tmp.unlink()
 
 
 def _parse_pdf_date(value: str | None) -> date | None:
@@ -327,45 +466,63 @@ def _parse_pdf_date(value: str | None) -> date | None:
         return None
 
 
+def parse_pdf_date(value: str | None) -> date | None:
+    """Parse a PDF metadata date string to a date when possible."""
+    return _parse_pdf_date(value)
+
+
 def get_pdf_metadata(filepath: str | Path | None) -> dict[str, object]:
     """
     Read PDF metadata (Title, Author, CreationDate, ModDate) without extracting text.
     Returns dict with keys: title (str), author (str), creation_date (YYYY-MM-DD or None),
     mod_date (YYYY-MM-DD or None). Empty dict on error or missing PyMuPDF.
     """
-    result: dict[str, object] = {
+    result = _empty_pdf_metadata()
+    if not filepath:
+        return result
+    fitz = _optional_fitz_module()
+    if fitz is None:
+        return result
+    path = Path(filepath)
+    doc = _open_pdf_for_metadata(fitz, path)
+    if doc is None:
+        return result
+    try:
+        return _metadata_result_from_doc(doc)
+    finally:
+        _close_document(doc)
+
+
+def _empty_pdf_metadata() -> dict[str, object]:
+    return {
         "title": "",
         "author": "",
         "creation_date": None,
         "mod_date": None,
     }
-    if not filepath:
-        return result
+
+
+def _open_pdf_for_metadata(fitz: Any, path: Path) -> Any | None:
     try:
-        import fitz
-    except ImportError:
-        return result
-    path = Path(filepath)
-    try:
-        doc = fitz.open(path)
+        return fitz.open(path)
     except (RuntimeError, OSError, ValueError) as exc:
         logger.debug("Could not open PDF for metadata %s: %s", path, exc)
-        return result
-    try:
-        meta = doc.metadata or {}
-        result["title"] = (meta.get("title") or "").strip()
-        result["author"] = (meta.get("author") or "").strip()
-        for key, out_key in (
-            ("creationDate", "creation_date"),
-            ("modDate", "mod_date"),
-        ):
-            d = _parse_pdf_date(meta.get(key))
-            result[out_key] = d.strftime("%Y-%m-%d") if d else None
-    finally:
-        closer = getattr(doc, "close", None)
-        if callable(closer):
-            closer()
+        return None
+
+
+def _metadata_result_from_doc(doc: Any) -> dict[str, object]:
+    meta = doc.metadata or {}
+    result = _empty_pdf_metadata()
+    result["title"] = (meta.get("title") or "").strip()
+    result["author"] = (meta.get("author") or "").strip()
+    result["creation_date"] = _metadata_date_string(meta.get("creationDate"))
+    result["mod_date"] = _metadata_date_string(meta.get("modDate"))
     return result
+
+
+def _metadata_date_string(value: str | None) -> str | None:
+    parsed = _parse_pdf_date(value)
+    return parsed.isoformat() if parsed else None
 
 
 def _extract_pages(doc: _fitz_mod.Document, path: Path, *, max_pages: int = 0) -> tuple[list[str], list[str]]:
@@ -404,3 +561,8 @@ def _extract_pages(doc: _fitz_mod.Document, path: Path, *, max_pages: int = 0) -
             logger.info("Page %s in %s yields no text.", page_number, path)
 
     return pieces, errors
+
+
+def extract_pages(doc: Any, path: Path, *, max_pages: int = 0) -> tuple[list[str], list[str]]:
+    """Extract text fragments and page-level errors from an opened PDF document."""
+    return _extract_pages(doc, path, max_pages=max_pages)

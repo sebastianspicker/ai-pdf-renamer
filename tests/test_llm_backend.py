@@ -75,7 +75,7 @@ def _make_completions_response(text: str) -> MagicMock:
 def test_http_backend_complete_text_mode_ok():
     """Legacy text completions mode (use_chat=False)."""
     backend = HttpLLMBackend(use_chat=False)
-    with patch.object(backend._session, "post", return_value=_make_completions_response("hello")) as mock_post:
+    with patch.object(backend.session, "post", return_value=_make_completions_response("hello")) as mock_post:
         result = backend.complete("test prompt")
     assert result == "hello"
     mock_post.assert_called_once()
@@ -84,7 +84,7 @@ def test_http_backend_complete_text_mode_ok():
 def test_http_backend_complete_chat_mode_ok():
     """Default chat completions mode (use_chat=True)."""
     backend = HttpLLMBackend(use_chat=True)
-    with patch.object(backend._session, "post", return_value=_make_chat_response("hello chat")) as mock_post:
+    with patch.object(backend.session, "post", return_value=_make_chat_response("hello chat")) as mock_post:
         result = backend.complete("test prompt")
     assert result == "hello chat"
     url_called = mock_post.call_args[0][0]
@@ -94,7 +94,7 @@ def test_http_backend_complete_chat_mode_ok():
 def test_http_backend_complete_chat_mode_with_response_format():
     """Chat mode with response_format parameter."""
     backend = HttpLLMBackend(use_chat=True)
-    with patch.object(backend._session, "post", return_value=_make_chat_response('{"summary":"test"}')) as mock_post:
+    with patch.object(backend.session, "post", return_value=_make_chat_response('{"summary":"test"}')) as mock_post:
         result = backend.complete("test prompt", response_format={"type": "json_object"})
     assert '"summary"' in result
     payload = mock_post.call_args[1]["json"]
@@ -106,7 +106,7 @@ def test_http_backend_complete_empty_choices():
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
     resp.json.return_value = {"choices": []}
-    with patch.object(backend._session, "post", return_value=resp):
+    with patch.object(backend.session, "post", return_value=resp):
         result = backend.complete("test prompt")
     assert result == ""
 
@@ -115,7 +115,7 @@ def test_http_backend_complete_network_error():
     import requests
 
     backend = HttpLLMBackend()
-    with patch.object(backend._session, "post", side_effect=requests.ConnectionError("refused")):
+    with patch.object(backend.session, "post", side_effect=requests.ConnectionError("refused")):
         result = backend.complete("test prompt")
     assert result == ""
 
@@ -127,7 +127,7 @@ def test_http_backend_complete_bad_json():
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
     resp.json.side_effect = json_mod.JSONDecodeError("bad json", "", 0)
-    with patch.object(backend._session, "post", return_value=resp):
+    with patch.object(backend.session, "post", return_value=resp):
         result = backend.complete("test prompt")
     assert result == ""
 
@@ -143,7 +143,7 @@ def test_http_backend_http_error_does_not_log_response_body(caplog: pytest.LogCa
     response.raise_for_status.side_effect = requests.HTTPError("500 Server Error", response=response)
 
     with (
-        patch.object(backend._session, "post", return_value=response),
+        patch.object(backend.session, "post", return_value=response),
         caplog.at_level(logging.WARNING, logger="ai_pdf_renamer.llm_backend"),
     ):
         result = backend.complete(f"Summarize this PDF text: {sentinel}")
@@ -167,7 +167,7 @@ def _make_chat_response(content: str) -> MagicMock:
 
 def test_http_backend_complete_vision_ok():
     backend = HttpLLMBackend()
-    with patch.object(backend._session, "post", return_value=_make_chat_response("vision result")) as mock_post:
+    with patch.object(backend.session, "post", return_value=_make_chat_response("vision result")) as mock_post:
         result = backend.complete_vision("base64data", "describe this")
     assert result == "vision result"
     # Should hit /v1/chat/completions
@@ -179,7 +179,7 @@ def test_http_backend_complete_vision_failure():
     import requests
 
     backend = HttpLLMBackend()
-    with patch.object(backend._session, "post", side_effect=requests.ConnectionError("no")):
+    with patch.object(backend.session, "post", side_effect=requests.ConnectionError("no")):
         result = backend.complete_vision("b64", "prompt")
     assert result == ""
 
@@ -188,7 +188,7 @@ def test_http_complete_vision_success():
     """Mock requests.Session.post to return valid chat completion JSON with image content."""
     backend = HttpLLMBackend()
     mock_resp = _make_chat_response("This document is an invoice dated 2024-01-15.")
-    with patch.object(backend._session, "post", return_value=mock_resp) as mock_post:
+    with patch.object(backend.session, "post", return_value=mock_resp) as mock_post:
         result = backend.complete_vision("aW1hZ2VkYXRh", "Describe the contents of this PDF page.")
     assert result == "This document is an invoice dated 2024-01-15."
     # Verify the payload structure contains image_url content
@@ -201,7 +201,7 @@ def test_http_complete_vision_success():
 
 def test_http_complete_vision_uses_png_data_url_mime() -> None:
     backend = HttpLLMBackend()
-    with patch.object(backend._session, "post", return_value=_make_chat_response("ok")) as mock_post:
+    with patch.object(backend.session, "post", return_value=_make_chat_response("ok")) as mock_post:
         backend.complete_vision("pngdata", "describe this", image_mime_type="image/png")
 
     payload = mock_post.call_args[1]["json"]
@@ -214,7 +214,7 @@ def test_http_complete_vision_failure_returns_empty():
     import requests as req_mod
 
     backend = HttpLLMBackend()
-    with patch.object(backend._session, "post", side_effect=req_mod.ConnectionError("Connection refused")):
+    with patch.object(backend.session, "post", side_effect=req_mod.ConnectionError("Connection refused")):
         result = backend.complete_vision("b64data", "describe this")
     assert result == ""
 
@@ -227,7 +227,7 @@ def test_http_complete_vision_invalid_json():
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
     resp.json.side_effect = json_mod.JSONDecodeError("Expecting value", "", 0)
-    with patch.object(backend._session, "post", return_value=resp):
+    with patch.object(backend.session, "post", return_value=resp):
         result = backend.complete_vision("b64data", "describe this")
     assert result == ""
 
@@ -235,7 +235,7 @@ def test_http_complete_vision_invalid_json():
 def test_http_complete_vision_uses_model_override():
     """Verify that model='llava' param is passed through in the payload."""
     backend = HttpLLMBackend()
-    with patch.object(backend._session, "post", return_value=_make_chat_response("ok")) as mock_post:
+    with patch.object(backend.session, "post", return_value=_make_chat_response("ok")) as mock_post:
         backend.complete_vision("b64data", "describe this", model="llava")
     payload = mock_post.call_args[1]["json"]
     assert payload["model"] == "llava"
@@ -244,7 +244,7 @@ def test_http_complete_vision_uses_model_override():
 def test_http_complete_vision_timeout_passthrough():
     """Verify timeout_s is passed to session.post."""
     backend = HttpLLMBackend()
-    with patch.object(backend._session, "post", return_value=_make_chat_response("ok")) as mock_post:
+    with patch.object(backend.session, "post", return_value=_make_chat_response("ok")) as mock_post:
         backend.complete_vision("b64data", "describe this", timeout_s=42.5)
     assert mock_post.call_args[1]["timeout"] == 42.5
 
@@ -418,8 +418,8 @@ def test_http_backend_close():
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def mock_llama_cpp(monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, MagicMock]:
+@pytest.fixture(name="mock_llama_cpp")
+def mock_llama_cpp_fixture(monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, MagicMock]:
     """Inject a mock llama_cpp module and return (mock_module, mock_llama_instance)."""
     mock_module = MagicMock()
     mock_instance = MagicMock()
@@ -430,10 +430,11 @@ def mock_llama_cpp(monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, MagicMoc
 
 def test_in_process_backend_init(mock_llama_cpp: tuple[MagicMock, MagicMock]) -> None:
     """Mock llama_cpp.Llama, verify model loaded."""
-    mock_module, mock_instance = mock_llama_cpp
-    backend = InProcessLLMBackend("/tmp/model.gguf")
-    mock_module.Llama.assert_called_once_with(model_path="/tmp/model.gguf", verbose=False)
-    assert backend._llama is mock_instance
+    mock_module, _mock_instance = mock_llama_cpp
+    model_path = "model.gguf"
+    backend = InProcessLLMBackend(model_path)
+    mock_module.Llama.assert_called_once_with(model_path=model_path, verbose=False)
+    assert backend.is_loaded is True
 
 
 def test_in_process_backend_complete_chat(mock_llama_cpp: tuple[MagicMock, MagicMock]) -> None:
@@ -442,7 +443,7 @@ def test_in_process_backend_complete_chat(mock_llama_cpp: tuple[MagicMock, Magic
     mock_instance.create_chat_completion.return_value = {
         "choices": [{"message": {"content": "chat reply"}}],
     }
-    backend = InProcessLLMBackend("/tmp/model.gguf", use_chat=True)
+    backend = InProcessLLMBackend("model.gguf", use_chat=True)
     result = backend.complete("test prompt")
     assert result == "chat reply"
     mock_instance.create_chat_completion.assert_called_once()
@@ -454,7 +455,7 @@ def test_in_process_backend_complete_text(mock_llama_cpp: tuple[MagicMock, Magic
     mock_instance.create_completion.return_value = {
         "choices": [{"text": "text reply"}],
     }
-    backend = InProcessLLMBackend("/tmp/model.gguf", use_chat=False)
+    backend = InProcessLLMBackend("model.gguf", use_chat=False)
     result = backend.complete("test prompt")
     assert result == "text reply"
     mock_instance.create_completion.assert_called_once()
@@ -464,7 +465,7 @@ def test_in_process_backend_complete_error(mock_llama_cpp: tuple[MagicMock, Magi
     """Mock create_chat_completion to raise RuntimeError. Verify returns ''."""
     _mock_module, mock_instance = mock_llama_cpp
     mock_instance.create_chat_completion.side_effect = RuntimeError("model crash")
-    backend = InProcessLLMBackend("/tmp/model.gguf", use_chat=True)
+    backend = InProcessLLMBackend("model.gguf", use_chat=True)
     result = backend.complete("test prompt")
     assert result == ""
 
@@ -475,7 +476,7 @@ def test_in_process_backend_complete_vision(mock_llama_cpp: tuple[MagicMock, Mag
     mock_instance.create_chat_completion.return_value = {
         "choices": [{"message": {"content": "I see a document"}}],
     }
-    backend = InProcessLLMBackend("/tmp/model.gguf")
+    backend = InProcessLLMBackend("model.gguf")
     result = backend.complete_vision("aW1hZ2VkYXRh", "Describe this image")
     assert result == "I see a document"
     call_kwargs = mock_instance.create_chat_completion.call_args
@@ -493,7 +494,7 @@ def test_in_process_backend_complete_vision_uses_png_data_url_mime(
         "choices": [{"message": {"content": "I see a document"}}],
     }
 
-    backend = InProcessLLMBackend("/tmp/model.gguf")
+    backend = InProcessLLMBackend("model.gguf")
     backend.complete_vision("aW1hZ2VkYXRh", "Describe this image", image_mime_type="image/png")
 
     call_kwargs = mock_instance.create_chat_completion.call_args
@@ -505,25 +506,25 @@ def test_in_process_backend_complete_vision_uses_png_data_url_mime(
 def test_in_process_backend_close(mock_llama_cpp: tuple[MagicMock, MagicMock]) -> None:
     """Verify del self._llama called."""
     _mock_module, _mock_instance = mock_llama_cpp
-    backend = InProcessLLMBackend("/tmp/model.gguf")
-    assert hasattr(backend, "_llama")
+    backend = InProcessLLMBackend("model.gguf")
+    assert backend.is_loaded is True
     backend.close()
-    assert not hasattr(backend, "_llama")
+    assert backend.is_loaded is False
 
 
 def test_in_process_backend_missing_llama_cpp(monkeypatch: pytest.MonkeyPatch) -> None:
     """Mock llama_cpp import to fail. Verify ImportError raised."""
     monkeypatch.setitem(sys.modules, "llama_cpp", None)
     with pytest.raises(ImportError, match="llama-cpp-python"):
-        InProcessLLMBackend("/tmp/model.gguf")
+        InProcessLLMBackend("model.gguf")
 
 
 def test_in_process_backend_properties(mock_llama_cpp: tuple[MagicMock, MagicMock]) -> None:
     """Verify model and base_url properties."""
     _mock_module, _mock_instance = mock_llama_cpp
-    backend = InProcessLLMBackend("/tmp/model.gguf")
-    assert backend.model == "/tmp/model.gguf"
-    assert backend.base_url == "file:///tmp/model.gguf"
+    backend = InProcessLLMBackend("model.gguf")
+    assert backend.model == "model.gguf"
+    assert backend.base_url == "file://model.gguf"
 
 
 # ---------------------------------------------------------------------------

@@ -10,14 +10,11 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import subprocess
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ai_pdf_renamer.config import RenamerConfig
 from ai_pdf_renamer.renamer import (
     _interactive_rename_prompt,
     _run_post_rename_hook,
@@ -25,18 +22,7 @@ from ai_pdf_renamer.renamer import (
     rename_pdfs_in_directory,
     run_watch_loop,
 )
-
-
-def _cfg(**overrides: Any) -> RenamerConfig:
-    """Build a RenamerConfig with sensible test defaults."""
-    defaults: dict[str, Any] = {
-        "use_llm": False,
-        "use_single_llm_call": False,
-        "dry_run": False,
-    }
-    defaults.update(overrides)
-    return RenamerConfig(**defaults)
-
+from tests.conftest import make_config, patch_pdf_metadata_save_context
 
 # ---------------------------------------------------------------------------
 # _write_pdf_title_metadata
@@ -53,18 +39,7 @@ class TestWritePdfTitleMetadata:
         tmp_pdf = tmp_path / "tmp.pdf"
         tmp_pdf.write_bytes(b"%PDF-1.4 saved content")
 
-        mock_doc = MagicMock()
-        mock_fitz = MagicMock()
-        mock_fitz.open.return_value = mock_doc
-
-        mock_tempfile = MagicMock()
-        mock_tempfile.mkstemp.return_value = (99, str(tmp_pdf))
-
-        with (
-            patch.dict("sys.modules", {"fitz": mock_fitz, "tempfile": mock_tempfile}),
-            patch("ai_pdf_renamer.renamer.os.close") as mock_os_close,
-            patch("ai_pdf_renamer.renamer.os.replace") as mock_os_replace,
-        ):
+        with patch_pdf_metadata_save_context(tmp_pdf) as (mock_doc, mock_fitz, mock_os_close, mock_os_replace):
             _write_pdf_title_metadata(pdf, "My Title")
 
         mock_fitz.open.assert_called_once_with(pdf)
@@ -130,65 +105,37 @@ class TestRunPostRenameHook:
         mock_session.__exit__ = MagicMock(return_value=False)
 
         with patch("ai_pdf_renamer.renamer.requests.Session", return_value=mock_session):
-            _run_post_rename_hook("http://localhost:9999/hook", old, new, meta)
+            _run_post_rename_hook("http://127.0.0.1:9999/hook", old, new, meta)
 
         mock_session.post.assert_called_once()
         call_args = mock_session.post.call_args
-        assert call_args[0][0] == "http://localhost:9999/hook"
+        assert call_args[0][0] == "http://127.0.0.1:9999/hook"
         payload = call_args[1]["json"]
         assert payload["old_path"] == str(old)
         assert payload["new_path"] == str(new)
         assert payload["meta"] == meta
 
-    def test_hook_shell_command(self, tmp_path: Path) -> None:
-        """Simple command without metacharacters: shell=False, args from shlex.split."""
+    def test_hook_shell_command(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """Local command hook values are rejected."""
         old = tmp_path / "old.pdf"
         new = tmp_path / "new.pdf"
         meta: dict[str, object] = {}
 
-        with patch("ai_pdf_renamer.renamer.subprocess.run") as mock_run:
+        with caplog.at_level(logging.WARNING, logger="ai_pdf_renamer.renamer"):
             _run_post_rename_hook("echo hello world", old, new, meta)
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args
-        assert call_args[1]["shell"] is False
-        assert call_args[0][0] == ["echo", "hello", "world"]
+        assert any("Local post-rename hook commands are disabled" in record.message for record in caplog.records)
 
-    def test_hook_with_metacharacters(self, tmp_path: Path) -> None:
-        """Command containing pipe should use shell invocation path."""
+    def test_hook_with_metacharacters(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """Command containing shell metacharacters should not execute."""
         old = tmp_path / "old.pdf"
         new = tmp_path / "new.pdf"
         meta: dict[str, object] = {}
 
-        with patch("ai_pdf_renamer.renamer.subprocess.run") as mock_run:
+        with caplog.at_level(logging.WARNING, logger="ai_pdf_renamer.renamer"):
             _run_post_rename_hook("echo hello | grep hello", old, new, meta)
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args
-        # shell=False is always passed, but the args list should contain the shell executable
-        assert call_args[1]["shell"] is False
-        args = call_args[0][0]
-        # The args should be [shell_exe, "-c", cmd] on unix
-        assert len(args) == 3
-        assert args[1] == "-c"
-        assert "echo hello | grep hello" in args[2]
-
-    def test_hook_timeout(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        """subprocess.run raises TimeoutExpired: verify warning logged."""
-        old = tmp_path / "old.pdf"
-        new = tmp_path / "new.pdf"
-        meta: dict[str, object] = {}
-
-        with (
-            patch(
-                "ai_pdf_renamer.renamer.subprocess.run",
-                side_effect=subprocess.TimeoutExpired(cmd="slow", timeout=120),
-            ),
-            caplog.at_level(logging.WARNING, logger="ai_pdf_renamer.renamer"),
-        ):
-            _run_post_rename_hook("slow_command", old, new, meta)
-
-        assert any("timed out" in record.message for record in caplog.records)
+        assert any("Local post-rename hook commands are disabled" in record.message for record in caplog.records)
 
     def test_hook_http_failure(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """requests post raises ConnectionError: verify warning logged."""
@@ -275,7 +222,7 @@ class TestRenamePdfsInDirectory:
     def test_rename_no_files(self, tmp_path: Path) -> None:
         """Empty directory: verify summary written with 0 counts."""
         summary = tmp_path / "summary.json"
-        cfg = _cfg(summary_json_path=str(summary))
+        cfg = make_config(summary_json_path=str(summary))
 
         rename_pdfs_in_directory(tmp_path, config=cfg)
 
@@ -290,7 +237,7 @@ class TestRenamePdfsInDirectory:
         pdf = tmp_path / "bad.pdf"
         pdf.write_bytes(b"%PDF-1.4 dummy")
         summary = tmp_path / "summary.json"
-        cfg = _cfg(summary_json_path=str(summary))
+        cfg = make_config(summary_json_path=str(summary))
 
         error_result = [(pdf, None, None, ValueError("something went wrong"))]
 
@@ -310,7 +257,7 @@ class TestRenamePdfsInDirectory:
         pdf = tmp_path / "test.pdf"
         pdf.write_bytes(b"%PDF-1.4 dummy")
         summary = tmp_path / "summary.json"
-        cfg = _cfg(summary_json_path=str(summary), dry_run=True)
+        cfg = make_config(summary_json_path=str(summary), dry_run=True)
 
         results = [(pdf, "renamed-doc", {"category": "test"}, None)]
 
@@ -332,7 +279,7 @@ class TestRenamePdfsInDirectory:
         """ValueError with 'Invalid JSON in data file' should propagate (re-raised)."""
         pdf = tmp_path / "test.pdf"
         pdf.write_bytes(b"%PDF-1.4 dummy")
-        cfg = _cfg()
+        cfg = make_config()
 
         error_result = [(pdf, None, None, ValueError("Invalid JSON in data file: bad.json"))]
 
@@ -353,7 +300,7 @@ class TestRenamePdfsInDirectory:
 class TestRunWatchLoop:
     def test_watch_loop_stops_on_keyboard_interrupt(self, tmp_path: Path) -> None:
         """Mock time.sleep to raise KeyboardInterrupt. Verify clean exit."""
-        cfg = _cfg()
+        cfg = make_config()
 
         call_count = 0
 

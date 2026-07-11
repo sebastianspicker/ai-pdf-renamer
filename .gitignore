@@ -9,7 +9,6 @@ venv/
 .env/
 .env
 .env.*
-!.env.example
 .direnv/
 .envrc
 
@@ -28,6 +27,9 @@ __pypackages__/
 .cache/
 .hypothesis/
 .nox/
+.pyre/
+.pytype/
+.ipynb_checkpoints/
 .coverage
 .coverage.*
 coverage.xml
@@ -43,6 +45,9 @@ pytest.xml
 error.log
 *.log
 logs/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
 
 # Debugging/refactoring artifacts
 *.tmp
@@ -61,6 +66,7 @@ logs/
 *.trace
 *.dump
 *.dmp
+.tmp/
 tmp/
 temp/
 reports/
@@ -74,6 +80,12 @@ scratch/
 # Local folders and PDF test artifacts (may contain private PDFs)
 input_files/
 *.pdf
+rename.log
+rename-*.log
+metadata.csv
+metadata.json
+summary.json
+plan.json
 
 # Secrets and credentials
 *.pem
@@ -95,6 +107,10 @@ Thumbs.db
 .cursor/
 .claude/
 .kilo/
+.AppleDouble
+.LSOverride
+._*
+Desktop.ini
 
 # Local process artifacts (do not commit)
 DECISIONS.md
@@ -106,9 +122,12 @@ validation.md
 HANDOFF.md
 progress.md
 
-# Repo-agent, audit, and local harness workspace
+# Repo-agent, analysis, audit, and local harness workspaces
 .agents/
 .codex/
+.codacy/
+.codegraph/
+.serena/
 .github/codex/
 .github/workflows/codex.yml
 AGENTS.md
@@ -119,7 +138,16 @@ AUDIT.md
 debug-log/
 docs/agent/
 docs/source-audit/
+docs/archive/
 docs/deprecated/
+docs/status/
+docs/ledgers/
+docs/reports/
+docs/tmp/
 docs/audit-*/
 docs/repo-core-and-function-index.md
+/archive/
+status.md
+*-status.md
+*-ledger.md
 scripts/topology_inventory.sh

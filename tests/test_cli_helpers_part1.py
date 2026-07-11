@@ -1,5 +1,3 @@
-# ruff: noqa: F401
-
 """Tests for cli.py helper functions: config loading, override maps, and doctor checks."""
 
 from __future__ import annotations
@@ -10,7 +8,6 @@ import json
 import logging
 import queue
 import re
-import tempfile
 import types
 from pathlib import Path
 from typing import Any
@@ -26,32 +23,12 @@ from ai_pdf_renamer.cli import (
 )
 from ai_pdf_renamer.heuristics import (
     HeuristicRule,
-    HeuristicScorer,
-    _combine_resolve_conflict,
-    _tokenize_for_overlap,
-    load_heuristic_rules,
-    normalize_llm_category,
 )
-from ai_pdf_renamer.tui import _CSS, SETTINGS_PATH, AIRenamerTUI, _load_settings, _QueueHandler, _save_settings
+from ai_pdf_renamer.tui import SETTINGS_PATH, _load_settings, _QueueHandler, _save_settings
 
 
 def _raise_os_error(*args: Any, **kwargs: Any) -> Any:
     raise OSError("Simulated read error")
-
-
-_PATCHED_CSS = _CSS.replace("flex-wrap: wrap;", "")
-
-
-def _make_app(settings: dict[str, object] | None = None) -> AIRenamerTUI:
-    """Create an AIRenamerTUI with patched CSS and optional pre-loaded settings."""
-    if settings is not None:
-        with patch("ai_pdf_renamer.tui._load_settings", return_value=settings):
-            app = AIRenamerTUI()
-    else:
-        with patch("ai_pdf_renamer.tui._load_settings", return_value={}):
-            app = AIRenamerTUI()
-    app.CSS = _PATCHED_CSS  # type: ignore[assignment]
-    return app
 
 
 class TestLoadConfigFile:

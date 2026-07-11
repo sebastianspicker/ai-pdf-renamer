@@ -141,6 +141,41 @@ def _resolve_precedence(*values: Any) -> Any:
     return None
 
 
+def _set_if_unset(data: dict[str, Any], key: str, value: Any) -> None:
+    if data.get(key) in (None, ""):
+        data[key] = value
+
+
+def _apply_named_preset(data: dict[str, Any], preset: str) -> None:
+    if preset == "scanned":
+        data["use_vision_fallback"] = True
+        data["simple_naming_mode"] = True
+    elif preset == "high-confidence-heuristic":
+        _set_if_unset(data, "skip_llm_category_if_heuristic_score_ge", 0.5)
+        _set_if_unset(data, "skip_llm_category_if_heuristic_gap_ge", 0.3)
+    elif preset == "fast":
+        data["use_llm"] = False
+        _set_if_unset(data, "min_heuristic_score", 0.6)
+        _set_if_unset(data, "min_heuristic_score_gap", 0.25)
+    elif preset == "accurate":
+        data["use_llm"] = True
+        data["use_single_llm_call"] = False
+        data["use_embeddings_for_conflict"] = True
+        _set_if_unset(data, "min_heuristic_score", 0.1)
+        _set_if_unset(data, "min_heuristic_score_gap", 0.0)
+    elif preset == "batch":
+        data["use_cache"] = True
+        _set_if_unset(data, "workers", 4)
+        _set_if_unset(data, "cache_dir", str(default_cache_dir()))
+
+
+def _resolve_llm_preset_defaults(llm_preset: str | None) -> dict[str, object]:
+    effective_preset = llm_preset if llm_preset in _LLM_PRESET_DEFAULTS else "apple-silicon"
+    if llm_preset is not None and llm_preset != effective_preset:
+        logger.warning("Unknown llm_preset=%r; falling back to %r", llm_preset, effective_preset)
+    return _LLM_PRESET_DEFAULTS[effective_preset]
+
+
 def _resolve_presets(raw_data: Mapping[str, Any], file_cfg: Mapping[str, Any]) -> _PresetResolution:
     """Apply named preset defaults once and return resolved LLM hardware defaults."""
     data = dict(raw_data)
@@ -148,44 +183,14 @@ def _resolve_presets(raw_data: Mapping[str, Any], file_cfg: Mapping[str, Any]) -
     preset = _str(_resolve_precedence(data.get("preset"), file_cfg.get("preset")), "")
     if preset:
         data.setdefault("preset", preset)
-    if preset == "scanned":
-        data["use_vision_fallback"] = True
-        data["simple_naming_mode"] = True
-    elif preset == "high-confidence-heuristic":
-        if data.get("skip_llm_category_if_heuristic_score_ge") in (None, ""):
-            data["skip_llm_category_if_heuristic_score_ge"] = 0.5
-        if data.get("skip_llm_category_if_heuristic_gap_ge") in (None, ""):
-            data["skip_llm_category_if_heuristic_gap_ge"] = 0.3
-    elif preset == "fast":
-        data["use_llm"] = False
-        if data.get("min_heuristic_score") in (None, ""):
-            data["min_heuristic_score"] = 0.6
-        if data.get("min_heuristic_score_gap") in (None, ""):
-            data["min_heuristic_score_gap"] = 0.25
-    elif preset == "accurate":
-        data["use_llm"] = True
-        data["use_single_llm_call"] = False
-        data["use_embeddings_for_conflict"] = True
-        if data.get("min_heuristic_score") in (None, ""):
-            data["min_heuristic_score"] = 0.1
-        if data.get("min_heuristic_score_gap") in (None, ""):
-            data["min_heuristic_score_gap"] = 0.0
-    elif preset == "batch":
-        data["use_cache"] = True
-        if data.get("workers") in (None, ""):
-            data["workers"] = 4
-        if data.get("cache_dir") in (None, ""):
-            data["cache_dir"] = str(default_cache_dir())
+        _apply_named_preset(data, preset)
 
     llm_preset = _normalize_str_or_none(_resolve_precedence(data.get("llm_preset"), file_cfg.get("llm_preset")))
     if llm_preset is not None:
         data.setdefault("llm_preset", llm_preset)
-    effective_preset = llm_preset if llm_preset in _LLM_PRESET_DEFAULTS else "apple-silicon"
-    if llm_preset is not None and llm_preset != effective_preset:
-        logger.warning("Unknown llm_preset=%r; falling back to %r", llm_preset, effective_preset)
     return _PresetResolution(
         data=data,
-        llm_defaults=_LLM_PRESET_DEFAULTS[effective_preset],
+        llm_defaults=_resolve_llm_preset_defaults(llm_preset),
     )
 
 
@@ -210,14 +215,7 @@ def _validate_config_kwargs(kwargs: Mapping[str, Any]) -> list[str]:
     return errors
 
 
-def _build_core_options(data: dict[str, Any]) -> dict[str, Any]:
-    """Language, case, project, version, date settings, heuristic tuning, and general flags."""
-    skip_llm_score = _optional_float(data.get("skip_llm_category_if_heuristic_score_ge"))
-    skip_llm_gap = _optional_float(data.get("skip_llm_category_if_heuristic_gap_ge"))
-    date_locale = _str(data.get("date_locale"), "dmy").lower()
-    category_display = _str(data.get("category_display"), "specific").lower()
-
-    # --- heuristic override ---
+def _heuristic_override_options(data: dict[str, Any]) -> dict[str, float | None]:
     heuristic_override_min_score = _optional_float(data.get("heuristic_override_min_score"))
     heuristic_override_min_gap = _optional_float(data.get("heuristic_override_min_gap"))
     if _bool(data.get("no_heuristic_override"), False):
@@ -226,21 +224,34 @@ def _build_core_options(data: dict[str, Any]) -> dict[str, Any]:
     elif heuristic_override_min_score is None and heuristic_override_min_gap is None:
         heuristic_override_min_score = 0.55
         heuristic_override_min_gap = 0.3
+    return {
+        "heuristic_override_min_score": heuristic_override_min_score,
+        "heuristic_override_min_gap": heuristic_override_min_gap,
+    }
 
-    # --- prefer LLM vs heuristic ---
+
+def _prefer_llm_category(data: dict[str, Any]) -> bool:
     prefer_llm_category = _bool(data.get("prefer_llm_category"), True)
     if _bool(data.get("prefer_heuristic"), False):
         prefer_llm_category = False
+    return prefer_llm_category
 
+
+def _core_identity_options(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "language": _str(data.get("language"), "de"),
         "desired_case": _str(data.get("desired_case"), "kebabCase"),
         "project": _str(data.get("project"), ""),
         "version": _str(data.get("version"), ""),
-        "prefer_llm_category": prefer_llm_category,
-        "date_locale": date_locale,
+        "prefer_llm_category": _prefer_llm_category(data),
+        "date_locale": _str(data.get("date_locale"), "dmy").lower(),
         "date_prefer_leading_chars": _int_with_default(data.get("date_prefer_leading_chars"), 8000),
         "use_pdf_metadata_for_date": _bool(data.get("use_pdf_metadata_for_date"), True),
+    }
+
+
+def _core_scoring_options(data: dict[str, Any]) -> dict[str, Any]:
+    return {
         "min_heuristic_score_gap": _float_with_default(data.get("min_heuristic_score_gap"), 0.0),
         "min_heuristic_score": _float_with_default(data.get("min_heuristic_score"), 0.0),
         "title_weight_region": _int_with_default(data.get("title_weight_region"), 2000),
@@ -248,17 +259,21 @@ def _build_core_options(data: dict[str, Any]) -> dict[str, Any]:
         "max_score_per_category": _optional_float(data.get("max_score_per_category")),
         "use_keyword_overlap_for_category": _bool(data.get("use_keyword_overlap_for_category"), True),
         "use_embeddings_for_conflict": _bool(data.get("use_embeddings_for_conflict"), False),
-        "category_display": category_display,
-        "skip_llm_category_if_heuristic_score_ge": skip_llm_score,
-        "skip_llm_category_if_heuristic_gap_ge": skip_llm_gap,
+        "category_display": _str(data.get("category_display"), "specific").lower(),
+        "skip_llm_category_if_heuristic_score_ge": _optional_float(data.get("skip_llm_category_if_heuristic_score_ge")),
+        "skip_llm_category_if_heuristic_gap_ge": _optional_float(data.get("skip_llm_category_if_heuristic_gap_ge")),
         "heuristic_suggestions_top_n": _int_with_default(data.get("heuristic_suggestions_top_n"), 5),
         "heuristic_score_weight": _float_with_default(data.get("heuristic_score_weight"), 0.15),
-        "heuristic_override_min_score": heuristic_override_min_score,
-        "heuristic_override_min_gap": heuristic_override_min_gap,
         "use_constrained_llm_category": _bool(data.get("use_constrained_llm_category"), True),
         "heuristic_leading_chars": _int_with_default(data.get("heuristic_leading_chars"), 0),
         "heuristic_long_doc_chars_threshold": _int_with_default(data.get("heuristic_long_doc_chars_threshold"), 40000),
         "heuristic_long_doc_leading_chars": _int_with_default(data.get("heuristic_long_doc_leading_chars"), 12000),
+        **_heuristic_override_options(data),
+    }
+
+
+def _core_runtime_options(data: dict[str, Any]) -> dict[str, Any]:
+    return {
         "skip_if_already_named": _bool(data.get("skip_if_already_named"), False),
         "use_llm": _bool(data.get("use_llm"), True),
         "lenient_llm_json": _bool(data.get("lenient_llm_json"), False),
@@ -271,15 +286,33 @@ def _build_core_options(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_llm_options(
+def _build_core_options(data: dict[str, Any]) -> dict[str, Any]:
+    """Language, case, project, version, date settings, heuristic tuning, and general flags."""
+    return {
+        **_core_identity_options(data),
+        **_core_scoring_options(data),
+        **_core_runtime_options(data),
+    }
+
+
+def _llm_backend_options(
     data: dict[str, Any],
     preset_defaults: dict[str, object],
     env_map: Mapping[str, str],
     file_cfg: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """LLM backend, URL, model, timeout, chat API, JSON mode, and preset."""
-    llm_preset = _normalize_str_or_none(data.get("llm_preset"))
+    return {
+        **_llm_backend_identity_options(data, env_map, file_cfg),
+        **_llm_connection_options(data, preset_defaults, env_map, file_cfg),
+        **_llm_security_options(data, env_map, file_cfg),
+    }
 
+
+def _llm_backend_identity_options(
+    data: dict[str, Any],
+    env_map: Mapping[str, str],
+    file_cfg: Mapping[str, Any],
+) -> dict[str, Any]:
     return {
         "llm_backend": _str(
             _resolve_precedence(
@@ -290,6 +323,23 @@ def _build_llm_options(
             ),
             "http",
         ),
+        "llm_model_path": _normalize_str_or_none(
+            _resolve_precedence(
+                data.get("llm_model_path"),
+                env_map.get("AI_PDF_RENAMER_LLM_MODEL_PATH"),
+                file_cfg.get("llm_model_path"),
+            )
+        ),
+    }
+
+
+def _llm_connection_options(
+    data: dict[str, Any],
+    preset_defaults: dict[str, object],
+    env_map: Mapping[str, str],
+    file_cfg: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
         "llm_base_url": _normalize_str_or_none(
             _resolve_precedence(
                 data.get("llm_base_url"),
@@ -313,13 +363,15 @@ def _build_llm_options(
                 file_cfg.get("llm_timeout_s"),
             )
         ),
-        "llm_model_path": _normalize_str_or_none(
-            _resolve_precedence(
-                data.get("llm_model_path"),
-                env_map.get("AI_PDF_RENAMER_LLM_MODEL_PATH"),
-                file_cfg.get("llm_model_path"),
-            )
-        ),
+    }
+
+
+def _llm_security_options(
+    data: dict[str, Any],
+    env_map: Mapping[str, str],
+    file_cfg: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
         "require_https": _bool(
             _resolve_precedence(
                 data.get("require_https"),
@@ -328,10 +380,34 @@ def _build_llm_options(
             ),
             False,
         ),
+    }
+
+
+def _llm_call_options(data: dict[str, Any]) -> dict[str, Any]:
+    return {
         "use_single_llm_call": _bool(data.get("use_single_llm_call"), True),
         "llm_use_chat_api": _bool(data.get("llm_use_chat_api"), True),
         "llm_json_mode": _bool(data.get("llm_json_mode"), True),
-        "llm_preset": llm_preset,
+        "llm_preset": _normalize_str_or_none(data.get("llm_preset")),
+    }
+
+
+def _llm_cache_options(data: dict[str, Any], env_map: Mapping[str, str]) -> dict[str, Any]:
+    return {
+        "use_cache": _bool(data.get("use_cache"), True),
+        "cache_dir": _normalize_path_or_none(
+            _resolve_precedence(data.get("cache_dir"), env_map.get("AI_PDF_RENAMER_CACHE_DIR"))
+        ),
+    }
+
+
+def _llm_context_options(
+    data: dict[str, Any],
+    preset_defaults: dict[str, object],
+    env_map: Mapping[str, str],
+    file_cfg: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
         "max_context_chars": _positive_int_or_none(
             _resolve_precedence(
                 data.get("max_context_chars"),
@@ -340,10 +416,21 @@ def _build_llm_options(
                 preset_defaults["max_context_chars"],
             )
         ),
-        "use_cache": _bool(data.get("use_cache"), True),
-        "cache_dir": _normalize_path_or_none(
-            _resolve_precedence(data.get("cache_dir"), env_map.get("AI_PDF_RENAMER_CACHE_DIR"))
-        ),
+    }
+
+
+def _build_llm_options(
+    data: dict[str, Any],
+    preset_defaults: dict[str, object],
+    env_map: Mapping[str, str],
+    file_cfg: Mapping[str, Any],
+) -> dict[str, Any]:
+    """LLM backend, URL, model, timeout, chat API, JSON mode, and preset."""
+    return {
+        **_llm_backend_options(data, preset_defaults, env_map, file_cfg),
+        **_llm_call_options(data),
+        **_llm_context_options(data, preset_defaults, env_map, file_cfg),
+        **_llm_cache_options(data, env_map),
     }
 
 
@@ -424,6 +511,19 @@ def _build_output_options(
     }
 
 
+def _merge_config_parts(parts: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
+    """Merge config sections and fail on accidental duplicate keys."""
+    kwargs: dict[str, Any] = {}
+    seen_keys: dict[str, str] = {}
+    for part_name, part_dict in parts:
+        for key in part_dict:
+            if key in seen_keys:
+                raise RuntimeError(f"Config key {key!r} defined in both {seen_keys[key]} and {part_name}")
+            seen_keys[key] = part_name
+        kwargs.update(part_dict)
+    return kwargs
+
+
 def build_config(
     raw: Mapping[str, Any],
     *,
@@ -447,15 +547,7 @@ def build_config(
     output = _build_output_options(data, defaults, env_map)
 
     # --- Merge into one dict (detect accidental key overlaps) ---
-    kwargs: dict[str, Any] = {}
-    _parts = [("core", core), ("llm", llm), ("extraction", extraction), ("output", output)]
-    _seen_keys: dict[str, str] = {}
-    for part_name, part_dict in _parts:
-        for k in part_dict:
-            if k in _seen_keys:
-                raise RuntimeError(f"Config key {k!r} defined in both {_seen_keys[k]} and {part_name}")
-            _seen_keys[k] = part_name
-        kwargs.update(part_dict)
+    kwargs = _merge_config_parts([("core", core), ("llm", llm), ("extraction", extraction), ("output", output)])
 
     # Manual mode implies interactive behavior.
     if kwargs["manual_mode"]:
