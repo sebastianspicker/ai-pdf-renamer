@@ -1,16 +1,28 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27.1"]
 build-backend = "hatchling.build"
 
 [project]
-name = "ai-pdf-renamer"
+name = "folionym"
 dynamic = ["version"]
-description = "Rename PDFs based on extracted text, heuristic scoring, and an optional local LLM."
+description = "Local-first PDF naming with deterministic heuristics, OCR, and optional HTTP LLM enrichment."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 license = { file = "LICENSE" }
 authors = [{ name = "sebastian" }]
+keywords = ["pdf", "file-renaming", "local-llm", "ocr", "textual"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Utilities",
+  "Typing :: Typed",
+]
 dependencies = [
+  "PyYAML>=6.0.0",
   "requests>=2.33.0",
   "rich>=13.0.0",
 ]
@@ -21,6 +33,7 @@ Source = "https://github.com/sebastianspicker/AI-PDF-Renamer"
 Issues = "https://github.com/sebastianspicker/AI-PDF-Renamer/issues"
 Changelog = "https://github.com/sebastianspicker/AI-PDF-Renamer/blob/main/CHANGELOG.md"
 Security = "https://github.com/sebastianspicker/AI-PDF-Renamer/security/policy"
+Documentation = "https://github.com/sebastianspicker/AI-PDF-Renamer/tree/main/docs"
 
 [project.optional-dependencies]
 dev = [
@@ -44,18 +57,50 @@ ocr = [
 tui = [
   "textual>=0.40.0",
 ]
+web = [
+  "fastapi>=0.139.2,<1",
+  "pymupdf>=1.23.0",
+  "uvicorn>=0.51.0,<1",
+]
 
 [project.scripts]
-ai-pdf-renamer = "ai_pdf_renamer.cli:main"
-ai-pdf-renamer-tui = "ai_pdf_renamer.tui:main"
-ai-pdf-renamer-gui = "ai_pdf_renamer.tui:main"
-ai-pdf-renamer-undo = "ai_pdf_renamer.undo_cli:main"
+folionym = "folionym.cli:main"
+folionym-tui = "folionym.tui:main"
+folionym-undo = "folionym.undo_cli:main"
+folionym-web = "folionym.web_cli:main"
 
 [tool.hatch.version]
-path = "src/ai_pdf_renamer/__init__.py"
+path = "src/folionym/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+# Build isolation may omit `.git`, so VCS ignores are not a safe release boundary.
+include = [
+  "/CHANGELOG.md",
+  "/CONTRIBUTING.md",
+  "/DESIGN.md",
+  "/LICENSE",
+  "/Makefile",
+  "/PRODUCT.md",
+  "/README.md",
+  "/RELEASING.md",
+  "/SECURITY.md",
+  "/docs/README.md",
+  "/docs/frontend.md",
+  "/docs/releases",
+  "/docs/screenshots",
+  "/docs/tui.md",
+  "/frontend",
+  "/pyproject.toml",
+  "/scripts/capture_tui_screenshots.py",
+  "/scripts/repository_hygiene.py",
+  "/scripts/verify_distributions.py",
+  "/src/folionym",
+  "/tests",
+  "/uv.lock",
+]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ai_pdf_renamer"]
+packages = ["src/folionym"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -65,7 +110,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
-source = ["ai_pdf_renamer"]
+source = ["folionym"]
 branch = true
 
 [tool.coverage.report]
@@ -82,22 +127,22 @@ exclude_dirs = ["tests"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "S", "PT", "SIM", "RUF"]
+select = ["E", "F", "I", "B", "C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "UP", "S", "PT", "SIM", "RUF"]
 ignore = [
   # Allow explicit exception chaining omissions in a small codebase.
   "B904",
-  # subprocess/exec — flagged in CLI tool code that needs it.
+  # subprocess/exec: flagged in CLI tool code that needs it.
   "S603", "S607",
   # assert in tests is fine.
   "S101",
-  # Hardcoded password/token bindings — false positives on config field names.
+  # Hardcoded password/token bindings: false positives on config field names.
   "S105", "S106",
-  # Ambiguous unicode characters — intentional German text (umlauts etc.).
+  # Ambiguous unicode characters: intentional German text (umlauts etc.).
   "RUF001", "RUF002",
-  # Composite assertions in tests — not worth splitting.
+  # Composite assertions in tests: not worth splitting.
   "PT018",
 ]
 
@@ -108,17 +153,19 @@ ignore = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 strict = true
 warn_return_any = true
 warn_unused_ignores = true
+explicit_package_bases = true
+mypy_path = ["src", "scripts"]
 exclude = []
 # Optional deps not always installed in CI or dev environments.
 [[tool.mypy.overrides]]
-module = ["fitz", "tiktoken", "ocrmypdf", "sentence_transformers", "llama_cpp", "textual", "textual.*", "rich", "rich.*", "jsonschema"]
+module = ["fitz", "tiktoken", "ocrmypdf", "textual", "textual.*", "rich", "rich.*"]
 ignore_missing_imports = true
-# TUI module depends on optional, untyped textual — relax checks that fire on Any base classes/decorators.
+# TUI module depends on optional, untyped textual; relax checks that fire on Any base classes/decorators.
 [[tool.mypy.overrides]]
-module = ["ai_pdf_renamer.tui"]
+module = ["folionym.tui"]
 disallow_subclassing_any = false
 disallow_untyped_decorators = false

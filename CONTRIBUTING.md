@@ -1,108 +1,148 @@
-# Contributing to AI-PDF-Renamer
+# Contributing to Folionym
 
-Thank you for your interest in contributing. This document covers local setup, checks, and conventions.
+## Development setup
 
-## Local setup
+Folionym requires CPython 3.14. The repository and CI use Python 3.14.6.
+Install Python dependencies, all optional extras, and frontend dependencies:
 
 ```bash
-uv sync --extra dev --extra pdf --extra tui
+make install-dev
 ```
 
-Optional extras beyond the default contributor setup: `--extra tokens` for token
-counting and `--extra ocr` for OCR support. The in-process LLM backend can use
-`llama-cpp-python` when installed manually, but the project does not bundle it as
-an optional extra.
+This target runs `uv sync --all-extras` and `npm ci` in `frontend/`.
 
-## Run checks
+## Repository orientation
 
-Before submitting a pull request, run:
+Start with these files:
+
+1. `pyproject.toml` and `Makefile` define dependencies, packaging, and checks.
+2. `src/folionym/cli.py` and `src/folionym/config_resolver.py` normalize CLI,
+   environment, and file configuration.
+3. `src/folionym/renamer.py` orchestrates discovery, proposal calculation, and
+   sequential rename handling.
+4. `src/folionym/filename.py` constructs names.
+5. `src/folionym/rename_ops.py` contains the filesystem mutation boundary.
+6. `src/folionym/web_app.py`, `src/folionym/web_runtime.py`, and
+   `src/folionym/frontend_service.py` implement the browser service.
+7. `src/folionym/tui.py` and the other `tui_*` modules implement the terminal
+   interface.
+8. `tests/contracts/test_repo_contracts.py` pins documentation, package, and public
+   interface contracts.
+
+The package uses a `src` layout. Import public objects from their owning
+modules. Do not introduce compatibility re-exports without a documented API
+requirement.
+
+Tests are grouped by execution boundary:
+
+| Path | Scope |
+| --- | --- |
+| `tests/unit/` | focused module behavior and edge cases |
+| `tests/integration/` | workflows that cross module or interface boundaries |
+| `tests/contracts/` | repository, CI, distribution, documentation, and asset contracts |
+| `tests/e2e/` | installed-command and subprocess workflows |
+| `frontend/src/*.test.tsx` | co-located Vitest component tests |
+
+Keep reusable pytest fixtures in `tests/conftest.py` and narrow helper seams in
+`tests/helpers.py`. Test outputs and browser failure artifacts are ignored;
+test source is not.
+
+## Change workflow
+
+1. Reproduce the current behavior or failing case.
+2. Make the smallest change that fixes the owning code path.
+3. Add or update tests that exercise observable behavior.
+4. Run the narrowest relevant test or check.
+5. Run the broad local gate before opening a pull request.
+
+Useful focused commands:
+
+```bash
+make lint
+make typecheck
+make test
+make frontend-check
+make e2e
+```
+
+`make format` applies Ruff formatting. Review its diff before including it in a
+change.
+
+The broad gate is:
 
 ```bash
 make release-check
 ```
 
-Clean ignored local artifacts (optional but recommended before reviews):
+It includes frontend type checking, Vitest, the Vite build, repository hygiene,
+Ruff format and lint checks, strict mypy, coverage-gated Python tests, package
+builds, and installed-wheel verification. CI runs the Linux Python 3.14.6 release gate
+and macOS and Windows targeted smoke jobs.
+
+The end-to-end CLI tests are separate from `release-check`:
 
 ```bash
-make clean
+make e2e
 ```
 
-`make release-check` runs the same hygiene, lint, type-check, and coverage-gated test commands as CI.
-CI still adds `uv sync --frozen --extra dev --extra pdf --extra tui` and a single Python 3.11 job, so local runs are close parity rather than byte-for-byte identical.
-Run `make typecheck` alone to run `mypy` in isolation. Fix any reported issues locally first.
+## Frontend and screenshot changes
 
-## Architecture overview
+The browser source is in `frontend/`. Use:
 
-Suggested first code pass for a new maintainer:
+```bash
+cd frontend
+npm run typecheck
+npm run test
+npm run build
+```
 
-1. `README.md` for user-facing behavior and operational defaults.
-2. `pyproject.toml`, `Makefile`, and `.github/workflows/ci.yml` for packaging and verification.
-3. `src/ai_pdf_renamer/cli.py` and `src/ai_pdf_renamer/config_resolver.py` for runtime input normalization.
-4. `src/ai_pdf_renamer/renamer.py`, `src/ai_pdf_renamer/filename.py`, and `src/ai_pdf_renamer/rename_ops.py` for the main side-effect path.
-5. `tests/test_repo_contracts.py` for documentation contracts that must stay aligned with behavior.
+The Vite build writes to `src/folionym/web_dist/`, which is packaged with the
+wheel.
 
-Key source modules under `src/ai_pdf_renamer/`:
+When a visible TUI change makes the tracked captures stale, refresh them from
+the repository root:
 
-| Module | Purpose |
-| --- | --- |
-| `cli.py` / `cli_runtime.py` / `cli_parser.py` / `cli_parser_sections.py` | CLI entry point, runtime dispatch, and argument parsing |
-| `config.py` / `config_resolver.py` | Config dataclass and normalization |
-| `renamer.py` | Public orchestration surface and compatibility imports |
-| `renamer_files.py` | PDF file collection |
-| `renamer_discovery.py` | Directory discovery helpers |
-| `renamer_extract.py` | Extraction helpers |
-| `renamer_hooks.py` | HTTP(S) post-rename hook handling |
-| `renamer_lookup.py` | Category override lookup helpers |
-| `renamer_output.py` | CSV / JSON output and CSV injection sanitization |
-| `renamer_progress.py` | Rich / null progress reporter abstraction |
-| `renamer_watch.py` | Watch-mode loop helpers |
-| `llm_backend.py` | LLM backend abstraction (HTTP / in-process) |
-| `llm.py` | LLM helper functions (summary, category, keywords) |
-| `llm_prompts.py` / `llm_parsing.py` | Prompt templates and JSON parsing |
-| `filename.py` / `filename_builders.py` / `filename_metadata.py` / `filename_llm_metadata.py` / `filename_models.py` | Filename generation pipeline, metadata extraction, LLM metadata normalization, and request/result models |
-| `heuristics.py` / `heuristic_scoring.py` | Heuristic scoring engine |
-| `pdf_extract.py` | PDF text / image extraction |
-| `rules.py` | Processing rules engine |
-| `text_utils.py` / `text_dates.py` / `text_tokens.py` / `text_structured.py` | Text normalization, date extraction, token/case helpers, and structured-field extraction |
-| `tui.py` / `tui_forms.py` | Terminal UI (Textual) and form composition |
-| `tui_assets.py` | TUI constants, CSS, and log-line formatters |
-| `data/` | Bundled JSON data files |
+```bash
+make docs-screenshots
+```
 
-Data flow: `cli.py` builds a `RenamerConfig` -> `renamer.py` iterates PDFs
-(collecting via `renamer_files.py`) -> `renamer_extract.py` extracts text ->
-`filename.py` generates a filename (using heuristics plus optional LLM) ->
-`rename_ops.py` performs the rename. Progress is reported via
-`renamer_progress.py`, output is written via `renamer_output.py`, HTTP(S)
-post-rename hooks are handled via `renamer_hooks.py`, and category overrides are
-resolved via `renamer_lookup.py`.
+The capture uses fixture paths and an isolated settings file. Review all three
+SVG changes.
 
-## Scope and alignment
+## Code and documentation standards
 
-- **Features and behavior changes:** Open an issue for discussion before implementing large changes.
-- **Bugs:** Open a GitHub issue and link it in your PR.
-- **Data files:** Only allowlisted filenames are resolved (no path traversal). See `src/ai_pdf_renamer/data_paths.py`.
+- Target Python 3.14 and keep mypy strict checks passing.
+- Use Ruff for Python formatting and linting.
+- Keep user-facing behavior, defaults, paths, and commands consistent across
+  code, tests, and documentation.
+- Use direct technical language. Do not add claims that are not supported by
+  implementation or verification.
+- Add new runtime dependencies only after maintainer agreement.
+- Keep large behavior or public API changes in a focused issue or proposal
+  before implementation.
 
-## Code style
+## Sensitive data
 
-- Python 3.11.
-- Format with Ruff: `ruff format .`
-- Lint with Ruff: `ruff check .`
-- Type-checked with mypy strict: `mypy src/ai_pdf_renamer/` (required, enforced in CI).
+Do not commit:
 
-## Security
+- PDFs or extracted document content
+- filenames, paths, metadata, or summaries from private documents
+- model request or response bodies
+- local logs, caches, exports, rename logs, or backup files
+- credentials, tokens, private environment files, or machine-specific state
 
-- Do not commit PDFs or sensitive content. Use `input_files/` locally (it is gitignored).
-- Security vulnerabilities: see [SECURITY.md](SECURITY.md) for reporting. Do not disclose in public issues.
+Use fixture data in tests and screenshots. Follow [SECURITY.md](SECURITY.md)
+for transport and reporting requirements.
 
 ## Pull requests
 
-- Use the pull request template; describe what changed and why.
-- Keep PRs focused. For large changes, consider splitting into smaller steps.
-- Ensure all checks pass and the branch is up to date with the target branch.
-- Do not include PDFs, extracted document text, prompts/responses, local logs,
-  caches, rename ledgers, or agent working files in a PR.
+- Use the pull request template.
+- Describe the user-visible behavior and the checks you ran.
+- Keep unrelated formatting and refactoring out of the change.
+- Link relevant issues.
+- Do not tag or publish a release from an ordinary pull request.
+- Follow [RELEASING.md](RELEASING.md) only when preparing an authorized
+  release.
 
-## Questions
-
-- Open a GitHub issue for questions or discussion.
-- See [README.md](README.md) for primary project documentation.
+Report security vulnerabilities through the private channel in
+[SECURITY.md](SECURITY.md), not through a public issue.

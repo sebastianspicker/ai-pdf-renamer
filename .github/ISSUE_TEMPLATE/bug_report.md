@@ -30,6 +30,7 @@ What actually happened.
 
 ## Environment
 
+- Folionym version or commit:
 - OS:
 - Python:
 - Install method:
@@ -37,5 +38,5 @@ What actually happened.
 
 ## Logs
 
-Paste only redacted logs. Remove paths, filenames, document text, prompts,
-responses, summaries, keywords, and secrets before posting.
+Paste only redacted logs. Remove paths, filenames, document text, model request
+or response content, summaries, keywords, and secrets before posting.

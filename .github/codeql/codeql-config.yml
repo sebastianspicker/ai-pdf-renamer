@@ -1,4 +1,4 @@
-name: "AI PDF Renamer CodeQL"
+name: "Folionym CodeQL"
 
 paths-ignore:
   - "docs/**"

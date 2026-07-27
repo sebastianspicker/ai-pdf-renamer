@@ -3,6 +3,7 @@ name: Security
 on:
   push:
     branches: ["main", "dev"]
+    tags: ["v*"]
   pull_request:
     branches: ["main", "dev"]
   schedule:
@@ -70,14 +71,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.11"
+          python-version: "3.14.6"
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install and audit
         run: |
           set -euo pipefail
           python -m pip install -U pip pip-audit
-          python -m pip install -e '.[pdf]'
+          python -m pip install -e '.[pdf,tokens,ocr,tui]'
           pip-audit
 
   trufflehog:

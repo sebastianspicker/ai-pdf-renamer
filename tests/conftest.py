@@ -1,3 +1,5 @@
+"""Shared deterministic fixtures and builders used across the test suite."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,14 +12,14 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from ai_pdf_renamer.config import RenamerConfig
+from folionym.config import RenamerConfig, build_config_from_flat_dict
 
 if TYPE_CHECKING:
     from unittest.mock import MagicMock
 
-    from ai_pdf_renamer.heuristics import HeuristicScorer
-    from ai_pdf_renamer.text_utils import Stopwords
-    from ai_pdf_renamer.tui import AIRenamerTUI
+    from folionym.heuristics import HeuristicScorer
+    from folionym.text_utils import Stopwords
+    from folionym.tui import FolionymTUI
 
 
 REFERENCE_TODAY = date(2026, 4, 8)
@@ -31,7 +33,7 @@ def make_config(**overrides: Any) -> RenamerConfig:
         "dry_run": False,
     }
     defaults.update(overrides)
-    return RenamerConfig(**defaults)
+    return build_config_from_flat_dict(defaults)
 
 
 def make_fake_pdf(tmp_path: Path, name: str = "test.pdf", mtime: float | None = None) -> Path:
@@ -51,6 +53,25 @@ def write_dummy_pdf(path: Path, payload: bytes = b"%PDF-1.4 dummy") -> Path:
     return path
 
 
+def make_pdf_symlink(
+    tmp_path: Path,
+    *,
+    target_name: str = "target.pdf",
+    link_name: str = "link.pdf",
+) -> tuple[Path, Path]:
+    """Create a PDF and a symlink to it, or skip where symlinks are unavailable."""
+    target = write_dummy_pdf(tmp_path / target_name, b"%PDF")
+    link = tmp_path / link_name
+    try:
+        link.symlink_to(target)
+    except (
+        NotImplementedError,
+        OSError,
+    ):
+        pytest.skip("symlinks are unavailable on this platform")
+    return (target, link)
+
+
 def make_pdf_to_text_sequence(*responses: str) -> Callable[..., str]:
     """Build a pdf_to_text stub that returns responses in order, then repeats the last one."""
     pending = iter(responses)
@@ -62,16 +83,9 @@ def make_pdf_to_text_sequence(*responses: str) -> Callable[..., str]:
     return fake_pdf_to_text
 
 
-def make_renamer_output_config(**overrides: object) -> MagicMock:
-    """Build a MagicMock that behaves like RenamerConfig output settings."""
-    from unittest.mock import MagicMock
-
-    cfg = MagicMock()
-    cfg.export_metadata_path = overrides.get("export_metadata_path")
-    cfg.plan_file_path = overrides.get("plan_file_path")
-    cfg.summary_json_path = overrides.get("summary_json_path")
-    cfg.dry_run = overrides.get("dry_run", False)
-    return cfg
+def make_renamer_output_config(**overrides: object) -> RenamerConfig:
+    """Build grouped output configuration for output-writer tests."""
+    return make_config(**overrides)
 
 
 def make_summary_data(
@@ -79,7 +93,7 @@ def make_summary_data(
     **overrides: object,
 ) -> object:
     """Build summary data for rename summary writer tests."""
-    from ai_pdf_renamer.renamer_output import RenameSummaryData
+    from folionym.renamer_output import RenameSummaryData
 
     values: dict[str, object] = {
         "directory": directory,
@@ -102,15 +116,15 @@ def make_summary_data(
     )
 
 
-def make_tui_app(settings: dict[str, object] | None = None) -> AIRenamerTUI:
-    """Create an AIRenamerTUI with patched CSS and optional pre-loaded settings."""
+def make_tui_app(settings: dict[str, object] | None = None) -> FolionymTUI:
+    """Create an FolionymTUI with patched CSS and optional pre-loaded settings."""
     from unittest.mock import patch
 
-    from ai_pdf_renamer.tui import AIRenamerTUI
+    from folionym.tui import FolionymTUI
 
-    with patch("ai_pdf_renamer.tui._load_settings", return_value=settings or {}):
-        app = AIRenamerTUI()
-    app.CSS = AIRenamerTUI.CSS.replace("flex-wrap: wrap;", "")  # type: ignore[assignment]
+    with patch("folionym.tui._load_settings", return_value=settings or {}):
+        app = FolionymTUI()
+    app.CSS = FolionymTUI.CSS.replace("flex-wrap: wrap;", "")  # type: ignore[assignment]
     return app
 
 
@@ -158,7 +172,7 @@ def make_heuristic_scorer(
     categories: list[tuple[str, str, float]] | None = None,
 ) -> HeuristicScorer:
     """Build a HeuristicScorer from (regex, category, score) triples."""
-    from ai_pdf_renamer.heuristics import HeuristicRule, HeuristicScorer
+    from folionym.heuristics import HeuristicRule, HeuristicScorer
 
     if categories is None:
         categories = [
@@ -186,14 +200,14 @@ def make_llm_client() -> MagicMock:
 
 def empty_stopwords() -> Stopwords:
     """Return an empty Stopwords instance for filename tests."""
-    from ai_pdf_renamer.text_utils import Stopwords
+    from folionym.text_utils import Stopwords
 
     return Stopwords(words=set())
 
 
 def rename_pdf(src: Path, base: str, **overrides: Any) -> tuple[bool, Path]:
     """Call apply_single_rename with common test defaults."""
-    from ai_pdf_renamer.rename_ops import apply_single_rename
+    from folionym.rename_ops import RenameApplyOptions, apply_single_rename
 
     defaults: dict[str, Any] = {
         "plan_file_path": None,
@@ -204,7 +218,7 @@ def rename_pdf(src: Path, base: str, **overrides: Any) -> tuple[bool, Path]:
         "max_filename_chars": None,
     }
     defaults.update(overrides)
-    return apply_single_rename(src, base, **defaults)
+    return apply_single_rename(src, base, RenameApplyOptions(**defaults))
 
 
 def make_fitz_doc(
@@ -257,8 +271,8 @@ def patch_pdf_metadata_save_context(
 
     with (
         patch.dict(sys.modules, {"fitz": mock_fitz, "tempfile": mock_tempfile}),
-        patch("ai_pdf_renamer.renamer.os.close") as mock_os_close,
-        patch("ai_pdf_renamer.renamer.os.replace") as mock_os_replace,
+        patch("folionym.renamer.os.close") as mock_os_close,
+        patch("folionym.renamer.os.replace") as mock_os_replace,
     ):
         yield mock_doc, mock_fitz, mock_os_close, mock_os_replace
 
@@ -286,29 +300,6 @@ def make_http_hook_session(*, post_side_effect: BaseException | None = None) -> 
     else:
         mock_session.post.side_effect = post_side_effect
     return mock_session
-
-
-def patch_renamer_process_result(
-    monkeypatch: Any,
-    renamer_module: object,
-    new_base: object,
-    *,
-    meta: dict[str, object] | None = None,
-    error: BaseException | None = None,
-) -> None:
-    """Patch renamer._process_content_to_result for pipeline tests."""
-
-    def fake_process(
-        file_path: Path,
-        content: str,
-        config: object,
-        rules: object | None = None,
-        used_vision: bool = False,
-    ) -> tuple[Path, str | None, dict[str, object] | None, BaseException | None]:
-        base = new_base(file_path) if callable(new_base) else new_base
-        return (file_path, base, meta, error)  # type: ignore[return-value]
-
-    monkeypatch.setattr(renamer_module, "_process_content_to_result", fake_process)
 
 
 @pytest.fixture

@@ -1,18 +1,78 @@
 # Security Policy
 
+## Supported versions
+
+| Version | Support |
+| --- | --- |
+| Current `0.4.0` alpha line | Security fixes during active alpha development |
+| Earlier development milestones | Not supported |
+
+Alpha compatibility is intentionally limited. If a prerelease exists, upgrade
+to the newest published prerelease before reporting a defect unless the issue
+prevents that upgrade. Otherwise, include the candidate version or commit you
+tested.
+
 ## Local LLM traffic
 
-The built-in LLM client sends requests only to the URL you configure. In the main CLI path, the default is the preset-driven local Ollama endpoint `http://127.0.0.1:11434/v1/completions`; the lower-level HTTP backend still falls back to `http://127.0.0.1:8080/v1/completions` for a plain llama.cpp server when no preset/default override is applied. To avoid routing this traffic through a proxy (e.g. `HTTP_PROXY`), the client uses `trust_env=False` so that PDF-derived prompt content stays on your machine.
+The built-in HTTP-only LLM client accepts structurally valid HTTP(S) endpoint
+URLs. It rejects missing or malformed authorities, embedded credentials,
+unsupported schemes, unsafe characters, and invalid ports or hostnames before
+creating a request. Text, chat, vision, and diagnostic requests do not follow
+redirects.
 
-**If you use a custom HTTP client or wrapper scripts that inherit proxy settings:** set `NO_PROXY=127.0.0.1,localhost` (or `no_proxy` on some systems) so that requests to the local LLM endpoint are never sent via a proxy. Route local LLM traffic through a proxy only when you explicitly trust that proxy to inspect PDF-derived prompt content.
+In the main CLI path, the default is the preset-driven local Ollama endpoint
+`http://127.0.0.1:11434/v1/completions`; the HTTP client falls back to
+`http://127.0.0.1:8080/v1/completions` when no preset or explicit override is
+applied. The client uses `trust_env=False` so proxy environment variables do
+not reroute PDF-derived model request content.
 
-LLM HTTP error logs intentionally record status and error context without response bodies. Some OpenAI-compatible servers echo request prompts in error responses, so logging response bodies can persist PDF-derived text in local log files.
+Custom HTTP clients or wrapper scripts may inherit proxy settings. Set
+`NO_PROXY=127.0.0.1,localhost` when required, and route local LLM traffic
+through a proxy only when that proxy is allowed to inspect PDF-derived content.
 
-The in-process backend (`--llm-backend in-process`) loads a GGUF model directly into the process using `llama-cpp-python` and makes no network requests at all.
+LLM error logs omit endpoint URLs, request exception details, response bodies,
+and document-derived payloads. Some OpenAI-compatible servers echo request
+content in error responses, so response bodies must not be written to logs.
 
-**If you configure a non-loopback LLM endpoint** (anything other than `127.0.0.1`, `::1`, or `localhost`), use HTTPS (`https://`) to protect PDF content in transit. Plain HTTP to a remote host will transmit document text unencrypted; the tool logs a WARNING in this case but does not block the request.
+The release does not support local model-loading or embedding backends. Keep
+document-derived model request content within an endpoint and network boundary you
+explicitly trust.
 
-**If you configure a non-loopback post-rename hook URL**, the same applies: use HTTPS to protect the metadata payload (old path, new path, category, summary) in transit.
+For a non-loopback LLM endpoint, use HTTPS to protect PDF content in transit.
+Plain HTTP to a remote host transmits document text unencrypted. The default
+policy logs a warning; `--require-https` or `FOLIONYM_REQUIRE_HTTPS=1` rejects
+the configuration. Literal loopback addresses, including `127.0.0.0/8` and
+`::1`, and the exact hostname `localhost` may use HTTP.
+
+For a non-loopback post-rename hook URL, use HTTPS to protect the metadata
+payload in transit. Hook HTTP policy is stricter and accepts plain HTTP only
+for literal loopback IP addresses.
+
+## Local browser frontend
+
+`folionym-web` binds only to `127.0.0.1`. Its API requires a process-local,
+HTTP-only same-site cookie, a recognized loopback Host header, same-origin
+mutations, and JSON request bodies. Responses set a restrictive Content
+Security Policy and disable framing. The folder navigator returns directory
+names and direct PDF counts to the local browser, not PDF contents.
+
+The browser frontend does not make a configured non-loopback model endpoint
+local. Before the first Preview for each exact external endpoint, it requires
+the operator to acknowledge that document-derived content may leave the
+machine.
+
+## Input and resource boundaries
+
+Folionym processes PDFs and invokes optional native PDF and OCR tooling with the
+current user's operating-system permissions. It does not sandbox parsers or OCR
+processes. Use documents from a trusted source or an isolated account when the
+input may be hostile.
+
+The alpha has no hard input-byte limit, no maximum worker count, and no
+application-level OCR timeout. Page extraction is unlimited unless
+`--max-pages-for-extraction` is set. Large, malformed, or adversarial files can
+consume substantial CPU, memory, disk space, or process time. Run one Folionym
+process per target directory and apply explicit limits for untrusted workloads.
 
 ## Logs and local caches
 
@@ -24,7 +84,7 @@ Use `--no-cache` for sensitive one-off runs, or keep `--cache-dir` on a private 
 
 ## Post-rename hook
 
-The optional post-rename hook (`AI_PDF_RENAMER_POST_RENAME_HOOK` or config) supports HTTP(S) endpoints only. Local command hooks are refused and logged as warnings. Old path, new path, and metadata are sent as JSON fields:
+The optional post-rename hook (`FOLIONYM_POST_RENAME_HOOK` or config) supports HTTP(S) endpoints only. Local command hooks are refused and logged as warnings. Old path, new path, and metadata are sent as JSON fields:
 
 - `old_path`
 - `new_path`
@@ -44,10 +104,14 @@ the payload to a URL outside this transport policy.
 Hook failures are non-fatal. Their log records intentionally omit the endpoint
 URL, request payload, document paths, metadata, and response body.
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
 If you discover a security vulnerability, please avoid creating a public issue.
-Instead, open a private security advisory on GitHub if available.
+Instead, use the repository's
+[private security-advisory form](https://github.com/sebastianspicker/AI-PDF-Renamer/security/advisories/new)
+when it is available to your GitHub account.
 
-If that is not possible, open an issue with minimal details and mark it
-as security-related so it can be triaged quickly.
+If private advisories are unavailable, do not put vulnerability details,
+document samples, paths, logs, or reproduction payloads in a public issue.
+Open a minimal issue asking the maintainer to arrange a private reporting
+channel, then wait for that channel before sharing technical details.
