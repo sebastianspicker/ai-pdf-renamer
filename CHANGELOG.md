@@ -7,31 +7,63 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+Target prerelease: `0.4.0a1`. These entries remain unreleased until the exact
+candidate commit is tagged and published as a GitHub prerelease.
+
+### Added
+
+- Linux full-gate CI plus targeted macOS and Windows smoke coverage on exact
+  CPython 3.14.6.
+- A reproducible, privacy-safe public TUI screenshot workflow, alpha release
+  notes, structured GitHub release-note categories, and a maintainer
+  prerelease checklist.
+- Alpha package metadata and repository contracts for the public docs,
+  screenshots, workflows, and built distributions.
+
 ### Changed
 
+- Rebranded the product, distribution, Python package, command-line tools,
+  environment variables, local state paths, documentation, and release assets
+  as Folionym.
+- Raised the supported interpreter floor to Python 3.14 and release verification
+  to exact CPython 3.14.6 using the standard GIL build.
+- Made PyYAML a core runtime dependency for documented YAML configuration.
 - Decomposed the CLI, filename, heuristic, LLM, renamer, text, and TUI runtime
-  modules while preserving the public API and command aliases.
-- Kept optional in-process `llama-cpp-python` support without bundling a
-  `llama-cpp` project extra.
-- Kept optional embedding-assisted conflict resolution without bundling a
-  `sentence-transformers` project extra.
-- Restricted post-rename hooks to HTTPS and loopback HTTP endpoints and
-  redacted schema-validation logs so document-derived values are never logged.
+  modules around canonical request/configuration objects and module-owned APIs.
+- Restricted post-rename hooks to HTTPS and literal-loopback HTTP endpoints and
+  redacted schema-validation logs so document-derived values are not exposed.
+- Restricted LLM endpoints to structurally valid HTTP(S) URLs while retaining
+  the documented warning for remote plain HTTP and optional HTTPS enforcement.
 - Made CI hygiene and secret scanning unconditional for applicable pushes and
   pull requests.
+- Added Ruff complexity guards (`C901`, `PLR0911`, `PLR0912`, `PLR0913`, and
+  `PLR0915`) and aligned mypy with Python 3.14.
 
 ### Fixed
 
 - Removed duplicate wheel package-data inclusion and added installed-artifact
   verification for the wheel, source distribution, and all four entry points.
 - Centralized tracked-path hygiene policy and added regression fixtures for
-  private, credential, document, cache, and agent-workspace paths.
+  private, credential, document, cache, and local automation paths.
+- Switched response-cache identity to full-file hashing with change detection.
+- Moved TUI work to managed Textual workers with cancellation-aware shutdown.
+- Disabled redirects for LLM and diagnostic POST requests and redacted endpoint
+  and request details from LLM failure logs.
+- Corrected the Textual worker-message types used by the strict mypy gate.
+
+### Removed
+
+- The obsolete GUI command alias and the former Python compatibility façade.
+- Local model-loading, automatic backend selection, embedding-assisted
+  conflict resolution, and their retired configuration fields.
 
 ## [0.2.0] - 2026-04-19
 
+Development milestone; it was not published as a GitHub release.
+
 ### Added
 
-- `--require-https` flag and `AI_PDF_RENAMER_REQUIRE_HTTPS` env var for HTTPS enforcement.
+- `--require-https` flag and `FOLIONYM_REQUIRE_HTTPS` env var for HTTPS enforcement.
 - `CategoryCombineParams` frozen dataclass for category merge configuration.
 - Path traversal validation in rename operations.
 - Thread-safe tiktoken initialization with double-checked locking.
@@ -40,7 +72,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Single-call LLM mode for combined summary/keywords/category extraction.
 - Chat API mode with JSON response format support.
 - LLM hardware presets: `apple-silicon` (default) and `gpu`.
-- Terminal UI (`ai-pdf-renamer-tui`) replacing Tkinter GUI.
+- Terminal UI (`folionym-tui`) replacing Tkinter GUI.
 - Vision fallback and vision-first modes for scanned PDFs.
 - `--preset` flag (`high-confidence-heuristic`, `scanned`).
 - `make release-check` target combining hygiene, lint, and tests.
@@ -74,12 +106,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Removed
 
-- Tkinter GUI (`gui.py`) — replaced by TUI.
+- Tkinter GUI (`gui.py`), replaced by the TUI.
 - Ollama-specific code and global thread-local session management.
-- Superseded internal planning packets from the public documentation surface.
-- `requirements.txt` — use `pyproject.toml` optional dependency groups.
+- `requirements.txt`; use `pyproject.toml` optional dependency groups.
 
 ## [0.1.0] - 2026-03-01
+
+Development milestone; it was not published as a GitHub release.
 
 ### Added
 

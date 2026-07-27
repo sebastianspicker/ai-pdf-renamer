@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: ["main", "dev"]
+    tags: ["v*"]
   pull_request:
     branches: ["main", "dev"]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -15,7 +17,7 @@ permissions:
 
 jobs:
   test:
-    name: Python 3.11 (lint + tests)
+    name: Linux / Python 3.14.6 (release gate)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -30,17 +32,67 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.11"
+          python-version: "3.14.6"
 
       - name: Install uv
         uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4cf5cd0fca # v6.0.1
 
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Install
         run: |
           set -euo pipefail
-          uv sync --frozen --extra dev --extra pdf --extra tui
+          uv sync --frozen --all-extras
+          cd frontend
+          npm ci
 
       - name: Release check
         run: |
           set -euo pipefail
           make release-check
+
+  smoke:
+    name: ${{ matrix.os }} / Python 3.14.6 (targeted smoke)
+    needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14.6"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4cf5cd0fca # v6.0.1
+
+      - name: Install targeted smoke environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev --extra pdf --extra tui
+
+      - name: Run targeted smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run pytest -q \
+            tests/e2e/test_cli_e2e.py \
+            tests/unit/test_rename_ops.py \
+            tests/unit/test_rename_ops_fallbacks.py \
+            tests/unit/test_undo_cli.py

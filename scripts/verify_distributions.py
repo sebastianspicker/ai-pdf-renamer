@@ -21,14 +21,15 @@ DATA_FILES = {
     "meta_stopwords.json",
 }
 ENTRY_POINTS = {
-    "ai-pdf-renamer": "ai_pdf_renamer.cli:main",
-    "ai-pdf-renamer-gui": "ai_pdf_renamer.tui:main",
-    "ai-pdf-renamer-tui": "ai_pdf_renamer.tui:main",
-    "ai-pdf-renamer-undo": "ai_pdf_renamer.undo_cli:main",
+    "folionym": "folionym.cli:main",
+    "folionym-tui": "folionym.tui:main",
+    "folionym-undo": "folionym.undo_cli:main",
+    "folionym-web": "folionym.web_cli:main",
 }
 
 
 def _archive_names(path: Path) -> list[str]:
+    """Return every member name from a wheel or source-distribution archive."""
     if path.suffix == ".whl":
         with zipfile.ZipFile(path) as archive:
             return archive.namelist()
@@ -37,31 +38,40 @@ def _archive_names(path: Path) -> list[str]:
 
 
 def _verify_safe_member(archive: Path, member: PurePosixPath) -> None:
+    """Reject an archive member prohibited by repository-hygiene policy."""
     reason = forbidden_reason(str(member))
     if reason is not None:
         raise AssertionError(f"{archive.name} contains forbidden path ({reason}): {member}")
 
 
 def _package_members(members: list[PurePosixPath], name: str) -> list[PurePosixPath]:
-    return [member for member in members if member.name == name and "ai_pdf_renamer" in member.parts]
+    """Select packaged data members while excluding unrelated archive paths."""
+    return [member for member in members if member.name == name and "folionym" in member.parts]
 
 
 def _verify_unique_member(archive: Path, members: list[PurePosixPath], name: str) -> None:
+    """Require exactly one packaged occurrence of the named data file."""
     count = len(_package_members(members, name))
     if count != 1:
         raise AssertionError(f"{archive.name}: expected {name} exactly once, found {count}")
 
 
 def _verify_members(path: Path, names: list[str]) -> None:
+    """Reject forbidden paths and require every package data file and py.typed exactly once."""
     members = [PurePosixPath(name) for name in names if not name.endswith("/")]
     for member in members:
         _verify_safe_member(path, member)
     for data_file in DATA_FILES:
         _verify_unique_member(path, members, data_file)
     _verify_unique_member(path, members, "py.typed")
+    if path.suffix == ".whl" and not any(
+        "folionym/web_dist" in str(member) and member.name == "index.html" for member in members
+    ):
+        raise AssertionError(f"{path.name}: packaged browser frontend is missing")
 
 
 def _installed_entry_points() -> dict[str, importlib.metadata.EntryPoint]:
+    """Read only this package’s installed console entry points for smoke testing."""
     return {
         point.name: point
         for point in importlib.metadata.entry_points(group="console_scripts")
@@ -70,6 +80,7 @@ def _installed_entry_points() -> dict[str, importlib.metadata.EntryPoint]:
 
 
 def _assert_help(entry_point: Any, command: str) -> None:
+    """Invoke a console entry point with help and restore process arguments afterward."""
     original_argv = sys.argv
     sys.argv = [command, "--help"]
     try:
@@ -83,6 +94,7 @@ def _assert_help(entry_point: Any, command: str) -> None:
 
 
 def _verify_installed_entry_points() -> None:
+    """Verify installed script mappings and callability, then smoke-test CLI and undo help."""
     points = _installed_entry_points()
     values = {name: point.value for name, point in points.items()}
     if values != ENTRY_POINTS:
@@ -90,13 +102,12 @@ def _verify_installed_entry_points() -> None:
     loaded = {name: point.load() for name, point in points.items()}
     if not all(callable(entry_point) for entry_point in loaded.values()):
         raise AssertionError("all console entry points must resolve to callables")
-    if points["ai-pdf-renamer-gui"].value != points["ai-pdf-renamer-tui"].value:
-        raise AssertionError("GUI and TUI commands must remain aliases")
-    _assert_help(loaded["ai-pdf-renamer"], "ai-pdf-renamer")
-    _assert_help(loaded["ai-pdf-renamer-undo"], "ai-pdf-renamer-undo")
+    _assert_help(loaded["folionym"], "folionym")
+    _assert_help(loaded["folionym-undo"], "folionym-undo")
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Verify exactly one wheel and sdist, optionally checking installed entry points."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dist", type=Path, nargs="?", default=Path("dist"))
     parser.add_argument("--installed-wheel", action="store_true", help="verify entry points in this environment")

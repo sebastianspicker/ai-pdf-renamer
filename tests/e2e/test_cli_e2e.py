@@ -1,26 +1,25 @@
+"""Exercise the real CLI and undo workflow across dry-run and apply boundaries."""
+
 from __future__ import annotations
 
-import contextlib
-import io
 import json
 import os
+import shutil
+import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-import ai_pdf_renamer.cli as cli_mod
-import ai_pdf_renamer.undo_cli as undo_cli
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _clean_env(tmp_path: Path) -> dict[str, str]:
-    env = {key: value for key, value in os.environ.items() if not key.startswith("AI_PDF_RENAMER_")}
+    env = {key: value for key, value in os.environ.items() if not key.startswith("FOLIONYM_")}
     env["PYTHONPATH"] = str(REPO_ROOT / "src")
-    env["AI_PDF_RENAMER_LOG_FILE"] = str(tmp_path / "runtime.log")
-    env["AI_PDF_RENAMER_CACHE_DIR"] = str(tmp_path / "cache")
+    env["FOLIONYM_LOG_FILE"] = str(tmp_path / "runtime.log")
+    env["FOLIONYM_CACHE_DIR"] = str(tmp_path / "cache")
     env["NO_COLOR"] = "1"
     return env
 
@@ -39,15 +38,6 @@ class ApplyOutputPaths:
     rename_log: Path
 
 
-def _main_for_entrypoint(name: str):
-    if name == "ai-pdf-renamer":
-        return cli_mod.main
-    if name == "ai-pdf-renamer-undo":
-        return undo_cli.main
-    pytest.fail(f"Missing CLI entry point: {name}")
-    raise AssertionError(f"Unreachable: missing CLI entry point: {name}")
-
-
 def _run_cli(
     name: str,
     args: Sequence[str],
@@ -55,34 +45,17 @@ def _run_cli(
     cwd: Path,
     env: Mapping[str, str],
 ) -> CliResult:
-    main = _main_for_entrypoint(name)
-    old_cwd = Path.cwd()
-    old_env = os.environ.copy()
-    stdout = io.StringIO()
-    stderr = io.StringIO()
-    returncode = 0
-
-    try:
-        os.chdir(cwd)
-        os.environ.clear()
-        os.environ.update(env)
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            try:
-                main(list(args))
-            except SystemExit as exc:
-                if exc.code is None:
-                    returncode = 0
-                elif isinstance(exc.code, int):
-                    returncode = exc.code
-                else:
-                    stderr.write(f"{exc.code}\n")
-                    returncode = 1
-    finally:
-        os.environ.clear()
-        os.environ.update(old_env)
-        os.chdir(old_cwd)
-
-    return CliResult(returncode=returncode, stdout=stdout.getvalue(), stderr=stderr.getvalue())
+    executable = shutil.which(name)
+    assert executable is not None, f"Installed CLI entry point is missing: {name}"
+    result = subprocess.run(
+        [executable, *args],
+        cwd=cwd,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return CliResult(returncode=result.returncode, stdout=result.stdout, stderr=result.stderr)
 
 
 def _write_pdf(path: Path, text: str) -> None:
@@ -120,7 +93,7 @@ def _run_dry_run_phase(tmp_path: Path, pdf_dir: Path, original: Path, env: dict[
     plan_path = tmp_path / "plan.json"
     dry_summary_path = tmp_path / "dry-summary.json"
     dry_run = _run_cli(
-        "ai-pdf-renamer",
+        "folionym",
         [
             "--dir",
             str(pdf_dir),
@@ -170,7 +143,7 @@ def _run_apply_phase(
     rename_log_path = tmp_path / "rename.log"
     output_paths = ApplyOutputPaths(apply_summary_path, metadata_path, rename_log_path)
     apply = _run_cli(
-        "ai-pdf-renamer",
+        "folionym",
         [
             "--dir",
             str(pdf_dir),
@@ -213,7 +186,7 @@ def _assert_apply_outputs(
 
 def _run_undo_phase(tmp_path: Path, original: Path, renamed: Path, rename_log_path: Path, env: dict[str, str]) -> None:
     undo = _run_cli(
-        "ai-pdf-renamer-undo",
+        "folionym-undo",
         ["--rename-log", str(rename_log_path)],
         cwd=tmp_path,
         env=env,
@@ -249,7 +222,7 @@ def test_cli_validate_config_accepts_local_heuristic_run_defaults(tmp_path: Path
     )
 
     result = _run_cli(
-        "ai-pdf-renamer",
+        "folionym",
         [
             "--validate-config",
             "--config",

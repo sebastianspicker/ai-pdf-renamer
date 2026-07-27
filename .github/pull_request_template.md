@@ -4,7 +4,7 @@
 
 ## Scope
 
-<!-- User-facing behavior, docs/config only, tests only, or internal refactor. -->
+<!-- User-facing behavior, docs/config only, tests only, or implementation-only. -->
 
 ## Related issue
 
@@ -23,4 +23,5 @@
 - [ ] `make release-check` passes
 - [ ] `make clean` run locally (recommended before final push)
 - [ ] Docs updated if behavior or setup changed (see `README.md` and `docs/README.md`)
-- [ ] No PDFs, document-derived text, secrets, logs, local caches, or agent ledgers included
+- [ ] Public screenshots regenerated for visible TUI changes
+- [ ] No PDFs, document-derived text, secrets, logs, local caches, or private planning files included

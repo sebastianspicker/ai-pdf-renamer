@@ -1,0 +1,283 @@
+"""Cover CLI runtime routing, configuration loading, and entry-point behavior."""
+
+from __future__ import annotations
+
+import json
+import runpy
+import sys
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+
+import folionym.cli as cli_mod
+from folionym.cli import _files_override_for, _resolve_dirs
+from folionym.config import RenamerConfig
+from tests.conftest import make_cli_main_args, make_pdf_symlink
+from tests.conftest import make_cli_namespace as _ns
+
+
+class TestResolveDirs:
+    """Tests for _resolve_dirs: --dirs-from-file, --single-file, and error paths."""
+
+    def test_resolve_dirs_from_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Directories listed in --dirs-from-file are returned."""
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+
+        dir_a = tmp_path / "dir_a"
+        dir_b = tmp_path / "dir_b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+
+        dirs_file = tmp_path / "dirs.txt"
+        dirs_file.write_text(f"{dir_a}\n{dir_b}\n", encoding="utf-8")
+
+        args = _ns(dirs_from_file=str(dirs_file))
+        dirs, single = _resolve_dirs(args)
+
+        assert str(dir_a.resolve()) in dirs
+        assert str(dir_b.resolve()) in dirs
+        assert single is None
+
+    def test_resolve_dirs_from_file_too_many(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """When --dirs-from-file has >10000 lines, only the first 10000 are used and a warning is logged."""
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+
+        dirs_file = tmp_path / "many_dirs.txt"
+        # Write 15000 lines; each is a unique directory path (they don't need to exist for this test)
+        lines = [f"/fake/dir_{i}" for i in range(15_000)]
+        dirs_file.write_text("\n".join(lines), encoding="utf-8")
+
+        args = _ns(dirs_from_file=str(dirs_file))
+
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="folionym.cli"):
+            dirs, _ = _resolve_dirs(args)
+
+        # Should be capped at 10000
+        assert len(dirs) == 10_000
+        # Warning should mention the cap
+        assert any("10000" in rec.message or "10,000" in rec.message for rec in caplog.records) or any(
+            "10000" in msg or "first" in msg.lower() for msg in [r.getMessage() for r in caplog.records]
+        )
+
+    def test_resolve_dirs_from_file_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When --dirs-from-file points to a nonexistent file, SystemExit is raised."""
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+
+        args = _ns(dirs_from_file=str(tmp_path / "nonexistent.txt"))
+
+        with pytest.raises(SystemExit) as exc_info:
+            _resolve_dirs(args)
+
+        assert exc_info.value.code == 1
+
+    def test_resolve_dirs_single_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """--single-file with an existing file returns a single-element list of its parent dir."""
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+
+        pdf = tmp_path / "test.pdf"
+        pdf.write_bytes(b"%PDF-1.4 dummy")
+
+        args = _ns(single_file=str(pdf))
+        dirs, single = _resolve_dirs(args)
+
+        assert len(dirs) == 1
+        assert dirs[0] == str(tmp_path.resolve())
+        assert single == str(pdf)
+
+    def test_resolve_dirs_single_file_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """--single-file with a nonexistent file raises SystemExit."""
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+
+        args = _ns(single_file=str(tmp_path / "missing.pdf"))
+
+        with pytest.raises(SystemExit) as exc_info:
+            _resolve_dirs(args)
+
+        assert exc_info.value.code == 1
+
+    def test_resolve_dirs_single_file_rejects_symlink(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Explicit file modes must not dereference a source symlink."""
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+        _target, link = make_pdf_symlink(tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            _resolve_dirs(_ns(single_file=str(link)))
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "symbolic links are not accepted" in captured.out + captured.err
+
+    def test_files_override_preserves_final_symlink_entry(self, tmp_path: Path) -> None:
+        """The post-validation override must not resolve a swapped final entry."""
+        _target, link = make_pdf_symlink(tmp_path)
+
+        result = _files_override_for(str(tmp_path), str(link))
+
+        assert result == [link]
+        assert result[0].is_symlink()
+
+
+class TestMainErrorHandling:
+    """Tests for main() covering --doctor, --watch, and exception-wrapping paths."""
+
+    def test_main_doctor_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """main(["--doctor"]) calls run_doctor_checks and exits with its return code."""
+        monkeypatch.setattr(cli_mod, "setup_logging", lambda **k: None)
+        monkeypatch.setattr(cli_mod, "run_doctor_checks", lambda args: 0)
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli_mod.main(["--doctor"])
+
+        assert exc_info.value.code == 0
+
+    def test_main_doctor_flag_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """main(["--doctor"]) propagates non-zero return from run_doctor_checks."""
+        monkeypatch.setattr(cli_mod, "setup_logging", lambda **k: None)
+        monkeypatch.setattr(cli_mod, "run_doctor_checks", lambda args: 1)
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli_mod.main(["--doctor"])
+
+        assert exc_info.value.code == 1
+
+    def test_main_watch_multiple_dirs(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """main() with --watch and multiple --dir exits with 'only one directory' message."""
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+        monkeypatch.setattr(cli_mod, "setup_logging", lambda **k: None)
+
+        dir_a = tmp_path / "a"
+        dir_b = tmp_path / "b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli_mod.main(make_cli_main_args(dir_a, dir_b, watch=True))
+
+        # --watch with multiple dirs should exit with error
+        assert "one directory" in str(exc_info.value).lower() or "only one" in str(exc_info.value).lower()
+
+    def test_main_file_not_found(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When rename_pdfs_in_directory raises FileNotFoundError, main() exits with SystemExit."""
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+        monkeypatch.setattr(cli_mod, "setup_logging", lambda **k: None)
+
+        def _raise_fnf(*args: Any, **kwargs: Any) -> None:
+            raise FileNotFoundError("Directory does not exist: /fake/path")
+
+        monkeypatch.setattr(cli_mod, "rename_pdfs_in_directory", _raise_fnf)
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli_mod.main(make_cli_main_args(tmp_path))
+
+        assert exc_info.value.code == 1
+
+    def test_main_value_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When rename_pdfs_in_directory raises ValueError, main() exits with SystemExit."""
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+        monkeypatch.setattr(cli_mod, "setup_logging", lambda **k: None)
+
+        def _raise_ve(*args: Any, **kwargs: Any) -> None:
+            raise ValueError("Invalid configuration value")
+
+        monkeypatch.setattr(cli_mod, "rename_pdfs_in_directory", _raise_ve)
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli_mod.main(make_cli_main_args(tmp_path))
+
+        assert exc_info.value.code == 1
+
+    def test_main_uses_config_defaults_for_unset_cli_values(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Config-file values win over parser defaults when the CLI omits those options."""
+        monkeypatch.setattr(cli_mod, "setup_logging", lambda **k: None)
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+
+        config_path = tmp_path / "config.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "language": "en",
+                    "desired_case": "snakeCase",
+                    "dry_run": True,
+                    "workers": 7,
+                    "use_llm": False,
+                    "use_structured_fields": False,
+                    "include_patterns": ["*.pdf"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        captured: dict[str, RenamerConfig] = {}
+
+        def _capture(directory: str, *, config: RenamerConfig, files_override: list[Path] | None = None) -> None:
+            captured["config"] = config
+
+        monkeypatch.setattr(cli_mod, "rename_pdfs_in_directory", _capture)
+
+        cli_mod.main(["--dir", str(tmp_path), "--config", str(config_path)])
+
+        config = captured["config"]
+        assert config.output.naming.language == "en"
+        assert config.output.naming.desired_case == "snakeCase"
+        assert config.output.mode.dry_run is True
+        assert config.output.traversal.workers == 7
+        assert config.llm.runtime.use_llm is False
+        assert config.extraction.use_structured_fields is False
+        assert config.output.traversal.include_patterns == ["*.pdf"]
+
+    def test_main_exits_on_invalid_config_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A malformed --config file is fatal and does not continue with defaults."""
+        monkeypatch.setattr(cli_mod, "setup_logging", lambda **k: None)
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+
+        bad_config = tmp_path / "bad.json"
+        bad_config.write_text("{bad", encoding="utf-8")
+
+        rename_mock = MagicMock()
+        monkeypatch.setattr(cli_mod, "rename_pdfs_in_directory", rename_mock)
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli_mod.main(["--dir", str(tmp_path), "--config", str(bad_config)])
+
+        assert exc_info.value.code == 1
+        rename_mock.assert_not_called()
+
+    def test_main_exits_on_invalid_rules_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A malformed --rules-file is fatal and does not continue with no rules."""
+        monkeypatch.setattr(cli_mod, "setup_logging", lambda **k: None)
+        monkeypatch.setattr(cli_mod, "_is_interactive", lambda: False)
+
+        bad_rules = tmp_path / "bad-rules.json"
+        bad_rules.write_text("{bad", encoding="utf-8")
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli_mod.main(["--dir", str(tmp_path), "--dry-run", "--rules-file", str(bad_rules)])
+
+        assert exc_info.value.code == 1
+
+
+def test_cli_module_entrypoint_runs_help(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Executing the module directly should invoke main() and print argparse help."""
+    monkeypatch.setattr(sys, "argv", ["folionym.cli", "--help"])
+    existing_module = sys.modules.pop("folionym.cli", None)
+
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            runpy.run_module("folionym.cli", run_name="__main__")
+    finally:
+        if existing_module is not None:
+            sys.modules["folionym.cli"] = existing_module
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage: folionym" in captured.out

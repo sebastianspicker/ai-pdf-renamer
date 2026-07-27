@@ -1,0 +1,83 @@
+/* Folionym — Folio Instrument design tokens
+   Signature: mono rename continuum + verdigris privacy brand + stage spine
+   Color strategy: restrained neutrals, verdigris primary (local trust), amber/red semantics */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --canvas: #e9eef2;
+  --surface: #ffffff;
+  --rail: #e2e8ee;
+  --rail-deep: #d7dee6;
+  --surface-muted: #eef1f4;
+
+  /* Ink */
+  --ink: #121820;
+  --ink-2: #2a3440;
+  --muted: #5c6774;
+  --faint: #7a8694;
+
+  /* Rules */
+  --rule: #c5ced8;
+  --rule-strong: #a8b3c0;
+
+  /* Brand — verdigris (local trust / Apply / Ready) */
+  --verdigris: #0b6a5a;
+  --verdigris-hover: #095447;
+  --verdigris-soft: #daf0ea;
+  --verdigris-ink: #064539;
+
+  /* Active stage / selected row */
+  --indigo: #2c4a7c;
+  --select: #e8f0f7;
+  --select-edge: #b7c9db;
+
+  /* Semantic */
+  --amber: #9a5a00;
+  --amber-soft: #fbf0db;
+  --ready: #0b6a5a;
+  --ready-soft: #daf0ea;
+  --review: #9a5a00;
+  --review-soft: #fbf0db;
+  --skipped: #5c6774;
+  --skipped-soft: #eef1f4;
+  --failed: #a51f2d;
+  --failed-soft: #fcecee;
+  --danger: #a51f2d;
+  --danger-hover: #8a1925;
+
+  /* Focus & elevation */
+  --focus: 0 0 0 3px rgb(11 106 90 / 28%);
+  --shadow-soft: 0 1px 0 rgb(18 24 32 / 4%);
+  --shadow: 0 18px 60px rgb(18 24 32 / 14%);
+
+  /* Radius */
+  --radius: 8px;
+  --radius-sm: 5px;
+  --radius-lg: 12px;
+
+  /* Type stacks */
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  /* Motion */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Legacy aliases (pre-Instrument class names still used by React) */
+  --line: var(--rule);
+  --line-strong: var(--rule-strong);
+  --blue: var(--verdigris);
+  --blue-hover: var(--verdigris-hover);
+  --blue-soft: var(--verdigris-soft);
+  --green: var(--verdigris);
+  --green-soft: var(--verdigris-soft);
+  --red: var(--danger);
+  --red-soft: var(--failed-soft);
+
+  font-family: var(--sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  color: var(--ink);
+  background: var(--canvas);
+}

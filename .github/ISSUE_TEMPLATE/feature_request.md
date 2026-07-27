@@ -19,8 +19,8 @@ Idea or suggested change.
 
 ## Privacy and safety
 
-Does this change touch PDF content, extracted text, prompts/responses, logs,
-rename metadata, cache entries, hooks, or network endpoints?
+Does this change touch PDF content, extracted text, model request or response
+content, logs, rename metadata, cache entries, hooks, or network endpoints?
 
 ## Alternatives
 
