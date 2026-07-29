@@ -201,7 +201,7 @@ def test_apply_single_rename_link_source_swap_before_link_cleans_owned_target(
     original_open = os.open
     source_fd: int | None = None
 
-    def _open_source(path: str | bytes | os.PathLike[str], flags: int, mode: int = 0o777, **kwargs: object) -> int:
+    def _open_source(path: str | bytes | os.PathLike[str], flags: int, mode: int = 0o600, **kwargs: object) -> int:
         nonlocal source_fd
         fd = original_open(path, flags, mode, **kwargs)
         if Path(path) == src and flags == os.O_RDONLY:
@@ -237,7 +237,7 @@ def test_apply_single_rename_copy_source_swap_preserves_replacement(
     original_open = os.open
     source_fd: int | None = None
 
-    def _open_source(path: str | bytes | os.PathLike[str], flags: int, mode: int = 0o777, **kwargs: object) -> int:
+    def _open_source(path: str | bytes | os.PathLike[str], flags: int, mode: int = 0o600, **kwargs: object) -> int:
         nonlocal source_fd
         fd = original_open(path, flags, mode, **kwargs)
         if Path(path) == src and flags == os.O_RDONLY:
@@ -278,7 +278,7 @@ def test_apply_single_rename_link_fallback_propagates_reservation_permission_err
     def _link_eperm(s: object, d: object) -> None:
         raise OSError(errno.EPERM, "Operation not permitted")
 
-    def _open_eacces(path: str | bytes | os.PathLike[str], flags: int, mode: int = 0o777, **kwargs: object) -> int:
+    def _open_eacces(path: str | bytes | os.PathLike[str], flags: int, mode: int = 0o600, **kwargs: object) -> int:
         if os.fspath(path) == os.fspath(src):
             return original_open(path, flags, mode, **kwargs)
         raise PermissionError(errno.EACCES, "Permission denied", str(path))
