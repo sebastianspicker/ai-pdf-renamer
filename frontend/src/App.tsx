@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, errorMessage } from "./api";
+import { errorMessage } from "./api-errors";
+import { api } from "@api";
 import { Button, PageLoader } from "./components";
 import { WarningIcon } from "./icons";
 import { useRoute } from "./lib/routing";

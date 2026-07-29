@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errorMessage } from "../api";
+import { errorMessage } from "../api-errors";
+import { api } from "@api";
 import { ChevronIcon, FolderIcon } from "../icons";
+import { isStaticDemo } from "../lib/demo";
 import type { Bootstrap, DirectoryListing } from "../types";
 import { Button } from "./Button";
 import { ErrorBanner } from "./ErrorBanner";
@@ -56,13 +58,13 @@ export function FolderBrowser({
           <Button disabled={!listing} onClick={() => {
             if (listing) onChoose(listing.path);
           }} variant="primary">
-            Choose folder
+            {isStaticDemo ? "Choose demo folder" : "Choose folder"}
           </Button>
         </>
       }
       onClose={onClose}
       open={open}
-      title="Choose a PDF folder"
+      title={isStaticDemo ? "Choose a demo PDF folder" : "Choose a PDF folder"}
       wide
     >
       <div className="path-entry">
@@ -80,7 +82,7 @@ export function FolderBrowser({
         />
         <Button onClick={() => {
           void browse(pathInputRef.current?.value ?? path);
-        }}>Go</Button>
+        }}>{isStaticDemo ? "Browse fixtures" : "Go"}</Button>
       </div>
       {error && <ErrorBanner message={error} onDismiss={() => {
         setError("");

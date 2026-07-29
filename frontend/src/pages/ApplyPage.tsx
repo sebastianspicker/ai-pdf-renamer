@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { api, errorMessage } from "../api";
+import { errorMessage } from "../api-errors";
+import { api } from "@api";
 import { AppChrome, Button, PageLoader, StatusPill } from "../components";
 import { ArrowRightIcon, DocumentIcon, InfoIcon, WarningIcon } from "../icons";
 import { isLocalEndpoint } from "../lib/privacy";
+import { isStaticDemo } from "../lib/demo";
 import { navigate } from "../lib/routing";
 import type { ApplyStatus, Bootstrap, Report } from "../types";
 
@@ -80,12 +82,16 @@ export function ApplyPage({ bootstrap }: { bootstrap: Bootstrap }) {
           <div>
             <span className="eyebrow">Apply</span>
             <h1>
-              {hasFailures
+              {isStaticDemo
+                ? `${changed} filename${changed === 1 ? "" : "s"} simulated`
+                : hasFailures
                 ? "Run finished with issues"
                 : `${changed} file${changed === 1 ? "" : "s"} renamed`}
             </h1>
             <p>
-              {hasFailures
+              {isStaticDemo
+                ? "The interface completed its fixture workflow. No local file was accessed or changed."
+                : hasFailures
                 ? "Validated renames were written. Items that failed checks were left unchanged."
                 : "Each selected file passed fingerprint and collision checks, then received its exact reviewed name."}
             </p>
@@ -143,8 +149,9 @@ export function ApplyPage({ bootstrap }: { bootstrap: Bootstrap }) {
         <div className="source-notice">
           <InfoIcon />
           <p>
-            This report covers the current local session only. Use the CLI for watch mode, diagnostics, or undo
-            from a rename log.
+            {isStaticDemo
+              ? "Simulated report only. Install and run Folionym locally to process PDFs or create a real rename log."
+              : "This report covers the current local session only. Use the CLI for watch mode, diagnostics, or undo from a rename log."}
           </p>
         </div>
       </main>

@@ -8,6 +8,10 @@ filenames. It combines category heuristics with optional OCR, vision, and an
 HTTP LLM endpoint. The package provides a command-line interface, a Textual
 terminal interface, a local browser interface, and an undo command.
 
+[Open the static interface demo](https://sebastianspicker.github.io/folionym/).
+It uses sanitized fixtures and simulates the Source, Preview, and Apply workflow;
+it cannot read, upload, or rename files. Folionym itself remains a local application.
+
 The current source identifies itself as `0.4.0a1`. This is an alpha candidate,
 not evidence of a published release. Treat rename operations as supervised file
 operations: preview proposed names, keep backups of important documents, and
