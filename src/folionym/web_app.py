@@ -10,6 +10,7 @@ import string
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -61,8 +62,8 @@ def _directory_pdf_count(path: Path) -> int:
         return 0
 
 
-def _directory_listing(path_value: str) -> DirectoryListing:
-    """Build one permission-aware filesystem navigator response."""
+def _resolve_directory(path_value: str) -> Path:
+    """Resolve one absolute directory path to a readable filesystem location."""
     path = Path(path_value).expanduser()
     if not path.is_absolute():
         raise HTTPException(400, "Directory paths must be absolute.")
@@ -72,17 +73,28 @@ def _directory_listing(path_value: str) -> DirectoryListing:
         raise HTTPException(404, "Directory does not exist.") from exc
     if not resolved.is_dir():
         raise HTTPException(400, "Path is not a directory.")
+    return resolved
+
+
+def _visible_directories(directory: Path) -> list[Path]:
+    """List non-hidden, non-symlink child directories in a stable order."""
     try:
-        directories = sorted(
+        return sorted(
             (
                 child
-                for child in resolved.iterdir()
+                for child in directory.iterdir()
                 if child.is_dir() and not child.is_symlink() and not child.name.startswith(".")
             ),
             key=lambda child: child.name.casefold(),
         )
     except PermissionError as exc:
         raise HTTPException(403, "Directory is not readable.") from exc
+
+
+def _directory_listing(path_value: str) -> DirectoryListing:
+    """Build one permission-aware filesystem navigator response."""
+    resolved = _resolve_directory(path_value)
+    directories = _visible_directories(resolved)
     entries = [
         DirectoryEntry(name=child.name, path=str(child), pdf_count=_directory_pdf_count(child)) for child in directories
     ]
@@ -90,6 +102,50 @@ def _directory_listing(path_value: str) -> DirectoryListing:
     return DirectoryListing(
         path=str(resolved), parent=parent, entries=entries, pdf_count=_directory_pdf_count(resolved)
     )
+
+
+def _is_same_local_origin(origin_header: str, host_header: str) -> bool:
+    """Accept only a parsed HTTP origin exactly matching the validated request host."""
+    try:
+        origin = urlsplit(origin_header)
+    except ValueError:
+        return False
+    return (
+        origin.scheme == "http"
+        and origin.netloc.casefold() == host_header.casefold()
+        and origin.username is None
+        and origin.password is None
+        and origin.path == ""
+        and origin.query == ""
+        and origin.fragment == ""
+    )
+
+
+def _requires_api_session(request: Request) -> bool:
+    """Return whether the request is an API call other than session bootstrap."""
+    is_session_bootstrap = request.url.path == "/api/v1/session" and request.method == "GET"
+    return request.url.path.startswith("/api/") and not is_session_bootstrap
+
+
+def _requires_json_body(request: Request) -> bool:
+    """Return whether this API method requires a JSON content type."""
+    is_mutating = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+    return is_mutating and not request.headers.get("content-type", "").startswith("application/json")
+
+
+def _api_request_security_error(request: Request, session_token: str) -> JSONResponse | None:
+    """Return the first failed API-boundary response, or ``None`` when validation passes."""
+    if not _requires_api_session(request):
+        return None
+    if request.cookies.get(_SESSION_COOKIE) != session_token:
+        return JSONResponse({"detail": "Local session required."}, status_code=403)
+    origin = request.headers.get("origin")
+    host = request.headers.get("host", "")
+    if origin is not None and not _is_same_local_origin(origin, host):
+        return JSONResponse({"detail": "Invalid request origin."}, status_code=403)
+    if _requires_json_body(request):
+        return JSONResponse({"detail": "JSON request required."}, status_code=415)
+    return None
 
 
 def _roots() -> list[DirectoryEntry]:
@@ -282,17 +338,9 @@ def _install_security_middleware(app: FastAPI, session_token: str) -> None:
         host = request.headers.get("host", "")
         if _host_name(host) not in _ALLOWED_HOSTS:
             return JSONResponse({"detail": "Invalid local host."}, status_code=400)
-        is_session_bootstrap = request.url.path == "/api/v1/session" and request.method == "GET"
-        if request.url.path.startswith("/api/") and not is_session_bootstrap:
-            if request.cookies.get(_SESSION_COOKIE) != session_token:
-                return JSONResponse({"detail": "Local session required."}, status_code=403)
-            origin = request.headers.get("origin")
-            if origin is not None and origin != f"http://{host}":
-                return JSONResponse({"detail": "Invalid request origin."}, status_code=403)
-            if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-                content_type = request.headers.get("content-type", "")
-                if not content_type.startswith("application/json"):
-                    return JSONResponse({"detail": "JSON request required."}, status_code=415)
+        security_error = _api_request_security_error(request, session_token)
+        if security_error is not None:
+            return security_error
         response = await call_next(request)
         for name, value in _SECURITY_HEADERS.items():
             response.headers[name] = value

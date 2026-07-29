@@ -46,7 +46,7 @@ export function RunOverlay({
           >
             <span style={{ width: `${percentage}%` }} />
           </div>
-          <p>{run?.current_file || "Preparing…"}</p>
+          <p>{run?.current_file ?? "Preparing…"}</p>
           {run?.error && <ErrorBanner message={run.error} />}
           {!isTerminal && (
             <Button onClick={onCancel} variant="secondary">

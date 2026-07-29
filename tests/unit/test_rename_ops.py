@@ -414,6 +414,7 @@ def test_apply_single_rename_exdev_copy_unlink(tmp_path: Path, monkeypatch: pyte
     assert not src.exists(), "Source should be removed after cross-fs fallback"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX hard-link fallback behavior")
 def test_apply_single_rename_exdev_target_swap_preserves_source_and_victim(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -445,14 +446,18 @@ def test_apply_single_rename_exdev_target_swap_preserves_source_and_victim(
     assert target.is_symlink()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX hard-link fallback behavior")
 def test_apply_single_rename_reservation_open_error_propagates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     src = tmp_path / "doc.pdf"
     src.write_text("content", encoding="utf-8")
+    original_open = os.open
 
     def _link_exdev(source: object, destination: object) -> None:
         raise OSError(errno.EXDEV, "Invalid cross-device link")
 
-    def _open_eacces(path: object, flags: int, mode: int = 0o777, **kwargs: object) -> int:
+    def _open_eacces(path: str | bytes | os.PathLike[str], flags: int, mode: int = 0o600, **kwargs: object) -> int:
+        if os.fspath(path) == os.fspath(src):
+            return original_open(path, flags, mode, **kwargs)
         raise PermissionError(errno.EACCES, "Permission denied", str(path))
 
     monkeypatch.setattr(os, "link", _link_exdev)
@@ -488,6 +493,7 @@ def test_apply_single_rename_hard_link_unlink_failure_cleans_target(
     assert not target.exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX hard-link fallback behavior")
 def test_apply_single_rename_exdev_copy_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """When fd-backed EXDEV copying fails, the error propagates and target is cleaned up."""
     src = tmp_path / "doc.pdf"
@@ -519,6 +525,7 @@ def test_apply_single_rename_exdev_copy_fails(tmp_path: Path, monkeypatch: pytes
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX hard-link fallback behavior")
 def test_apply_single_rename_enametoolong(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """When os.link raises ENAMETOOLONG, a helpful error message about shortening names is raised."""
     src = tmp_path / "doc.pdf"

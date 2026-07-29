@@ -10,7 +10,12 @@ import "@fontsource/ibm-plex-mono/latin-600.css";
 import { App } from "./App";
 import "./styles.css";
 
-createRoot(document.getElementById("root")!).render(
+const rootElement = document.getElementById("root");
+if (!rootElement) {
+  throw new Error("Folionym could not find its root element.");
+}
+
+createRoot(rootElement).render(
   <StrictMode>
     <App />
   </StrictMode>,

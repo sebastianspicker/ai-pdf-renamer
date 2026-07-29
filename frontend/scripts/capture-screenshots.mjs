@@ -1,13 +1,24 @@
 import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const baseUrl = process.env.FOLIONYM_SCREENSHOT_URL || "http://127.0.0.1:8765";
 const sourcePath = process.env.FOLIONYM_SCREENSHOT_SOURCE;
 const sourceCount = process.env.FOLIONYM_SCREENSHOT_COUNT || "8";
-const outputDir = path.resolve(
-  process.env.FOLIONYM_SCREENSHOT_OUTPUT || "../docs/screenshots",
-);
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const screenshotRoot = path.resolve(scriptDir, "../../docs/screenshots");
+
+function screenshotOutputDirectory(output = process.env.FOLIONYM_SCREENSHOT_OUTPUT) {
+  const candidate = path.resolve(output || screenshotRoot);
+  const relativePath = path.relative(screenshotRoot, candidate);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw new Error("FOLIONYM_SCREENSHOT_OUTPUT must stay inside docs/screenshots.");
+  }
+  return candidate;
+}
+
+const outputDir = screenshotOutputDirectory();
 
 if (!sourcePath) {
   throw new Error("FOLIONYM_SCREENSHOT_SOURCE must name the synthetic PDF folder.");
@@ -43,6 +54,7 @@ await page.getByRole("button", { name: "Go", exact: true }).click();
 await page.getByText(`${sourceCount} PDFs in this folder`, { exact: true }).waitFor();
 await page.getByRole("button", { name: "Choose folder" }).click();
 // Scope may appear as full path or compact ellipsis form in the instrument bar.
+// The path is passed to Playwright as text, never interpolated into page HTML or a selector.
 await page
   .locator(".source-picker__copy strong, .scope-path")
   .filter({ hasText: sourcePath.split("/").filter(Boolean).at(-1) || sourcePath })

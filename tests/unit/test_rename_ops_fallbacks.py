@@ -198,12 +198,24 @@ def test_apply_single_rename_link_source_swap_before_link_cleans_owned_target(
     src.write_text("original", encoding="utf-8")
     target = tmp_path / "result.pdf"
     original_link = os.link
+    original_open = os.open
+    source_fd: int | None = None
+
+    def _open_source(path: str | bytes | os.PathLike[str], flags: int, mode: int = 0o600, **kwargs: object) -> int:
+        nonlocal source_fd
+        fd = original_open(path, flags, mode, **kwargs)
+        if Path(path) == src and flags == os.O_RDONLY:
+            source_fd = fd
+        return fd
 
     def _swap_then_link(source: str | bytes | os.PathLike[str], destination: str | bytes | os.PathLike[str]) -> None:
+        assert source_fd is not None
+        os.fstat(source_fd)
         src.unlink()
         src.write_text("replacement", encoding="utf-8")
         original_link(source, destination)
 
+    monkeypatch.setattr(os, "open", _open_source)
     monkeypatch.setattr(os, "link", _swap_then_link)
 
     with pytest.raises(OSError, match="Target path changed while linking"):
@@ -222,16 +234,28 @@ def test_apply_single_rename_copy_source_swap_preserves_replacement(
     src.write_text("original", encoding="utf-8")
     target = tmp_path / "result.pdf"
     original_copy = _copy_file_to_fd
+    original_open = os.open
+    source_fd: int | None = None
+
+    def _open_source(path: str | bytes | os.PathLike[str], flags: int, mode: int = 0o600, **kwargs: object) -> int:
+        nonlocal source_fd
+        fd = original_open(path, flags, mode, **kwargs)
+        if Path(path) == src and flags == os.O_RDONLY:
+            source_fd = fd
+        return fd
 
     def _link_eperm(source: object, destination: object) -> None:
         raise OSError(errno.EPERM, "Operation not permitted")
 
     def _copy_then_swap(source: Path, target_fd: int) -> os.stat_result:
         source_status = original_copy(source, target_fd)
+        assert source_fd is not None
+        os.fstat(source_fd)
         src.unlink()
         src.write_text("replacement", encoding="utf-8")
         return source_status
 
+    monkeypatch.setattr(os, "open", _open_source)
     monkeypatch.setattr(os, "link", _link_eperm)
     monkeypatch.setattr(rename_ops, "_copy_file_to_fd", _copy_then_swap)
 
@@ -249,11 +273,14 @@ def test_apply_single_rename_link_fallback_propagates_reservation_permission_err
     """Permission failures while reserving the target must not be treated as collisions."""
     src = tmp_path / "doc.pdf"
     src.write_text("content", encoding="utf-8")
+    original_open = os.open
 
     def _link_eperm(s: object, d: object) -> None:
         raise OSError(errno.EPERM, "Operation not permitted")
 
-    def _open_eacces(path: object, flags: int, mode: int = 0o777) -> int:
+    def _open_eacces(path: str | bytes | os.PathLike[str], flags: int, mode: int = 0o600, **kwargs: object) -> int:
+        if os.fspath(path) == os.fspath(src):
+            return original_open(path, flags, mode, **kwargs)
         raise PermissionError(errno.EACCES, "Permission denied", str(path))
 
     def _rename_should_not_run(s: object, d: object) -> None:

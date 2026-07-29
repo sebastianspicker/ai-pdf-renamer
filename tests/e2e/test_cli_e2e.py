@@ -52,6 +52,7 @@ def _run_cli(
         cwd=cwd,
         env=env,
         check=False,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
     )
@@ -99,6 +100,14 @@ def _run_dry_run_phase(tmp_path: Path, pdf_dir: Path, original: Path, env: dict[
             str(pdf_dir),
             "--no-llm",
             "--no-cache",
+            "--language",
+            "en",
+            "--case",
+            "kebabCase",
+            "--project",
+            "",
+            "--version",
+            "",
             "--dry-run",
             "--plan-file",
             str(plan_path),
@@ -128,7 +137,7 @@ def _assert_dry_run_outputs(pdf_dir: Path, original: Path, plan_path: Path, dry_
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     assert len(plan) == 1
     assert plan[0]["old"] == str(original)
-    assert plan[0]["new"].endswith("/20240314-invoice.pdf")
+    assert Path(plan[0]["new"]).name == "20240314-invoice.pdf"
 
 
 def _run_apply_phase(
@@ -149,6 +158,14 @@ def _run_apply_phase(
             str(pdf_dir),
             "--no-llm",
             "--no-cache",
+            "--language",
+            "en",
+            "--case",
+            "kebabCase",
+            "--project",
+            "",
+            "--version",
+            "",
             "--rename-log",
             str(rename_log_path),
             "--export-metadata",
@@ -214,6 +231,8 @@ def test_cli_validate_config_accepts_local_heuristic_run_defaults(tmp_path: Path
             {
                 "language": "en",
                 "desired_case": "kebabCase",
+                "project": "",
+                "version": "",
                 "use_llm": False,
                 "dry_run": True,
             }

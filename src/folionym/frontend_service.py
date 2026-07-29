@@ -159,6 +159,60 @@ def _source_scope(source: Path) -> tuple[Path, str, list[Path] | None]:
     return (_resolve_rename_directory(expanded, files_override=None), "directory", None)
 
 
+def _capture_fingerprints(files: Iterable[Path]) -> dict[Path, FileFingerprint | None]:
+    """Capture source identities before expensive preview processing begins."""
+    fingerprints: dict[Path, FileFingerprint | None] = {}
+    for path in files:
+        try:
+            fingerprints[path] = FileFingerprint.capture(path)
+        except OSError:
+            fingerprints[path] = None
+    return fingerprints
+
+
+def _preview_items(
+    results: Iterable[tuple[Path, str | None, dict[str, object] | None, BaseException | None]],
+    fingerprints: dict[Path, FileFingerprint | None],
+) -> tuple[PreviewItem, ...]:
+    """Translate core rename results into reviewed items with stale-source protection."""
+    items: list[PreviewItem] = []
+    for index, (path, proposed_base, metadata, error) in enumerate(results, start=1):
+        current_meta: dict[str, object] = metadata or {}
+        fingerprint = fingerprints.get(path)
+        status: PreviewStatus
+        reason: str | None
+        if fingerprint is None or not fingerprint.matches(path):
+            status, reason, fingerprint = (
+                PreviewStatus.FAILED,
+                "The source changed while Preview was running.",
+                None,
+            )
+        else:
+            status, reason = _result_status(proposed_base, current_meta, error)
+        items.append(
+            PreviewItem(
+                id=f"item-{index}",
+                source=path,
+                proposed_base=proposed_base,
+                metadata=current_meta,
+                status=status,
+                included=status is PreviewStatus.READY,
+                fingerprint=fingerprint,
+                reason=reason,
+            )
+        )
+    return tuple(items)
+
+
+def _plan_source(directory: Path, source_kind: str, files_override: list[Path] | None) -> Path:
+    """Return the plan's canonical source while validating the file-source contract."""
+    if source_kind != "file":
+        return directory
+    if not files_override:
+        raise ValueError("Single-file preview source is unavailable.")
+    return files_override[0]
+
+
 def create_preview_plan(
     source: str | Path,
     config: RenamerConfig,
@@ -175,47 +229,14 @@ def create_preview_plan(
         rules=rules,
         collect_pdf_files_fn=collect_pdf_files,
     )
-    before: dict[Path, FileFingerprint | None] = {}
-    for path in files:
-        try:
-            before[path] = FileFingerprint.capture(path)
-        except OSError:
-            before[path] = None
-
+    fingerprints = _capture_fingerprints(files)
     results = produce_rename_results(files, config, rules=rules, progress_callback=progress_callback)
-    items: list[PreviewItem] = []
-    for index, (path, proposed_base, metadata, error) in enumerate(results):
-        current_meta = metadata or {}
-        fingerprint = before.get(path)
-        if fingerprint is None or not fingerprint.matches(path):
-            status = PreviewStatus.FAILED
-            reason: str | None = "The source changed while Preview was running."
-            fingerprint = None
-        else:
-            status, reason = _result_status(proposed_base, current_meta, error)
-        items.append(
-            PreviewItem(
-                id=f"item-{index + 1}",
-                source=path,
-                proposed_base=proposed_base,
-                metadata=current_meta,
-                status=status,
-                included=status is PreviewStatus.READY,
-                fingerprint=fingerprint,
-                reason=reason,
-            )
-        )
-    if source_kind == "file":
-        assert files_override is not None
-        plan_source = files_override[0]
-    else:
-        plan_source = directory
     return PreviewPlan(
         id=uuid4().hex,
-        source=plan_source,
+        source=_plan_source(directory, source_kind, files_override),
         source_kind=source_kind,
         config=config,
-        items=tuple(items),
+        items=_preview_items(results, fingerprints),
         created_at=datetime.now(UTC),
     )
 
@@ -277,7 +298,8 @@ def _preflight_selected_item(item: PreviewItem, *, duplicate_target: bool) -> Ap
 
 def _perform_exact_rename(item: PreviewItem, config: RenamerConfig, output: RenameOutputData) -> ApplyItemResult:
     """Apply one preflighted item without silently changing its reviewed name."""
-    assert item.proposed_base is not None
+    if item.proposed_base is None:
+        return _failed_apply_item(item, "No reviewed filename is available.")
     try:
         reject_source_symlink(item.source)
         base = sanitize_filename_base(item.proposed_base)
@@ -335,6 +357,46 @@ def _record_apply_output(output: RenameOutputData, item: PreviewItem, result: Ap
         output.failure_details.append({"file": str(item.source), "error": result.reason or "Rename failed."})
 
 
+def _selected_items(plan: PreviewPlan, selected: frozenset[str]) -> list[PreviewItem]:
+    """Validate the requested item IDs and return their reviewed items."""
+    selectable = {item.id: item for item in plan.items if item.status in {PreviewStatus.READY, PreviewStatus.REVIEW}}
+    unknown = selected - selectable.keys()
+    if unknown:
+        raise ValueError(f"Selected items are not applicable: {', '.join(sorted(unknown))}")
+    return [selectable[item_id] for item_id in selected]
+
+
+def _apply_plan_items(
+    items: tuple[PreviewItem, ...],
+    selected: frozenset[str],
+    config: RenamerConfig,
+    state: tuple[RenameOutputData, set[str], Event],
+    progress_callback: ProgressCallback | None,
+) -> list[ApplyItemResult]:
+    """Apply selected items in preview order while preserving every unselected outcome."""
+    output, duplicate_ids, stop_event = state
+    results: list[ApplyItemResult] = []
+    completed = 0
+    for item in items:
+        if item.id not in selected:
+            results.append(
+                ApplyItemResult(item.id, item.source.name, item.proposed_name, ApplyStatus.UNCHANGED, "Not selected.")
+            )
+            continue
+        if stop_event.is_set():
+            results.append(
+                ApplyItemResult(item.id, item.source.name, item.proposed_name, ApplyStatus.CANCELLED, "Run cancelled.")
+            )
+            continue
+        result = _apply_selected_item(item, config, output, duplicate_target=item.id in duplicate_ids)
+        _record_apply_output(output, item, result)
+        results.append(result)
+        completed += 1
+        if progress_callback is not None:
+            progress_callback(completed, len(selected), item.source)
+    return results
+
+
 def apply_reviewed_plan(
     plan: PreviewPlan,
     selected_ids: Iterable[str],
@@ -345,39 +407,19 @@ def apply_reviewed_plan(
     """Apply only selected reviewed names after per-file identity and collision validation."""
     started_at = datetime.now(UTC)
     selected = frozenset(selected_ids)
-    selectable = {item.id: item for item in plan.items if item.status in {PreviewStatus.READY, PreviewStatus.REVIEW}}
-    unknown = selected - selectable.keys()
-    if unknown:
-        raise ValueError(f"Selected items are not applicable: {', '.join(sorted(unknown))}")
-
-    selected_items = [selectable[item_id] for item_id in selected]
+    selected_items = _selected_items(plan, selected)
     duplicate_ids = _duplicate_target_ids(selected_items)
     active_stop_event = stop_event or Event()
     active_stop_event.clear()
     config = _apply_config(plan, active_stop_event)
     output = RenameOutputData()
-    results: list[ApplyItemResult] = []
-    completed = 0
-
-    for item in plan.items:
-        if item.id not in selected:
-            results.append(
-                ApplyItemResult(item.id, item.source.name, item.proposed_name, ApplyStatus.UNCHANGED, "Not selected.")
-            )
-            continue
-        if active_stop_event.is_set():
-            results.append(
-                ApplyItemResult(item.id, item.source.name, item.proposed_name, ApplyStatus.CANCELLED, "Run cancelled.")
-            )
-            continue
-
-        result = _apply_selected_item(item, config, output, duplicate_target=item.id in duplicate_ids)
-        _record_apply_output(output, item, result)
-        results.append(result)
-        completed += 1
-        if progress_callback is not None:
-            progress_callback(completed, len(selected), item.source)
-
+    results = _apply_plan_items(
+        plan.items,
+        selected,
+        config,
+        (output, duplicate_ids, active_stop_event),
+        progress_callback,
+    )
     _write_web_outputs(config, plan.source, output)
     return ApplyReport(
         id=uuid4().hex,

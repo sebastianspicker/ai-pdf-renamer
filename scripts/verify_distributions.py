@@ -56,6 +56,11 @@ def _verify_unique_member(archive: Path, members: list[PurePosixPath], name: str
         raise AssertionError(f"{archive.name}: expected {name} exactly once, found {count}")
 
 
+def _has_web_frontend(members: list[PurePosixPath]) -> bool:
+    """Return whether a wheel contains the browser frontend entry document."""
+    return any("folionym/web_dist" in str(member) and member.name == "index.html" for member in members)
+
+
 def _verify_members(path: Path, names: list[str]) -> None:
     """Reject forbidden paths and require every package data file and py.typed exactly once."""
     members = [PurePosixPath(name) for name in names if not name.endswith("/")]
@@ -64,9 +69,7 @@ def _verify_members(path: Path, names: list[str]) -> None:
     for data_file in DATA_FILES:
         _verify_unique_member(path, members, data_file)
     _verify_unique_member(path, members, "py.typed")
-    if path.suffix == ".whl" and not any(
-        "folionym/web_dist" in str(member) and member.name == "index.html" for member in members
-    ):
+    if path.suffix == ".whl" and not _has_web_frontend(members):
         raise AssertionError(f"{path.name}: packaged browser frontend is missing")
 
 

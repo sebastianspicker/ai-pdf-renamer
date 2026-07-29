@@ -74,7 +74,7 @@ export function SourcePage({
       setAck(null);
       setRunId(result.run_id);
       onBootstrapChange({ ...bootstrap, settings });
-    } catch (requestError) {
+    } catch (requestError: unknown) {
       if (
         requestError instanceof ApiError &&
         requestError.status === 409 &&
@@ -107,25 +107,35 @@ export function SourcePage({
               setSettings((current) => ({ ...current, directory: chosen }));
               setFolderOpen(false);
             }}
-            onClose={() => setFolderOpen(false)}
+            onClose={() => {
+              setFolderOpen(false);
+            }}
             open={folderOpen}
           />
           <FineTuneDrawer
             onChange={updateSetting}
-            onClose={() => setDrawerOpen(false)}
+            onClose={() => {
+              setDrawerOpen(false);
+            }}
             open={drawerOpen}
             settings={settings}
           />
           <Modal
             footer={
               <>
-                <Button onClick={() => setAck(null)}>Cancel</Button>
-                <Button onClick={() => void startPreview(true)} variant="primary">
+                <Button onClick={() => {
+                  setAck(null);
+                }}>Cancel</Button>
+                <Button onClick={() => {
+                  void startPreview(true);
+                }} variant="primary">
                   Continue once
                 </Button>
               </>
             }
-            onClose={() => setAck(null)}
+            onClose={() => {
+              setAck(null);
+            }}
             open={Boolean(ack)}
             title="Confirm external endpoint"
           >
@@ -139,7 +149,9 @@ export function SourcePage({
           </Modal>
           <RunOverlay
             error={runError}
-            onCancel={() => runId && void api.cancel(runId)}
+            onCancel={() => {
+              if (runId) void api.cancel(runId);
+            }}
             onClose={() => {
               setRunId(null);
               setRunError("");
@@ -161,11 +173,15 @@ export function SourcePage({
                 targets.
               </p>
             </div>
-            <Button onClick={() => setDrawerOpen(true)}>
+            <Button onClick={() => {
+              setDrawerOpen(true);
+            }}>
               <SlidersIcon /> Fine-tune
             </Button>
           </div>
-          {startError && <ErrorBanner message={startError} onDismiss={() => setStartError("")} />}
+          {startError && <ErrorBanner message={startError} onDismiss={() => {
+            setStartError("");
+          }} />}
           <div className="source-card">
             <div aria-label="Source type" className="segmented" role="group">
               <button
@@ -202,15 +218,21 @@ export function SourcePage({
                 </span>
               </div>
               {kind === "directory" ? (
-                <Button onClick={() => setFolderOpen(true)}>Browse</Button>
+                <Button onClick={() => {
+                  setFolderOpen(true);
+                }}>Browse</Button>
               ) : (
-                <Button onClick={() => setPath("")}>Clear</Button>
+                <Button onClick={() => {
+                  setPath("");
+                }}>Clear</Button>
               )}
             </div>
             {kind === "file" && (
               <Field className="source-file-field" label="Absolute PDF path">
                 <TextInput
-                  onChange={(event) => setPath(event.target.value)}
+                  onChange={(event) => {
+                    setPath(event.target.value);
+                  }}
                   placeholder="/Users/you/Documents/scan.pdf"
                   value={path}
                 />
@@ -223,7 +245,9 @@ export function SourcePage({
                 <span className="eyebrow">Configuration</span>
                 <h2>Effective settings</h2>
               </div>
-              <button className="text-button" onClick={() => setDrawerOpen(true)}>
+              <button className="text-button" onClick={() => {
+                setDrawerOpen(true);
+              }}>
                 Edit
               </button>
             </div>
@@ -276,7 +300,9 @@ export function SourcePage({
               Apply uses only checked exact targets
             </span>
           </div>
-          <Button className="button--full" onClick={() => void startPreview()} variant="primary">
+          <Button className="button--full" onClick={() => {
+            void startPreview();
+          }} variant="primary">
             Build preview <ArrowRightIcon />
           </Button>
         </aside>

@@ -11,6 +11,7 @@ from folionym.web_app import (
     _directory_listing,
     _external_endpoint_requirement,
     _host_name,
+    _is_same_local_origin,
     _prepare_preview_settings,
 )
 from folionym.web_schema import PreviewRequest, UISettingsPayload
@@ -20,6 +21,14 @@ def test_host_name_accepts_loopback_header_shapes() -> None:
     assert _host_name("127.0.0.1:8765") == "127.0.0.1"
     assert _host_name("localhost") == "localhost"
     assert _host_name("[::1]:8765") == "::1"
+
+
+def test_same_local_origin_requires_exact_parsed_http_origin() -> None:
+    assert _is_same_local_origin("http://127.0.0.1:8765", "127.0.0.1:8765")
+    assert not _is_same_local_origin("https://127.0.0.1:8765", "127.0.0.1:8765")
+    assert not _is_same_local_origin("http://127.0.0.1:8765/path", "127.0.0.1:8765")
+    assert not _is_same_local_origin("http://127.0.0.1.evil.test:8765", "127.0.0.1:8765")
+    assert not _is_same_local_origin("http://[", "127.0.0.1:8765")
 
 
 def test_directory_listing_exposes_only_visible_directories(tmp_path: Path) -> None:

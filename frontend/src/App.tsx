@@ -14,7 +14,14 @@ export function App() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api.bootstrap().then(setBootstrap).catch((requestError) => setError(errorMessage(requestError)));
+    const loadBootstrap = async () => {
+      try {
+        setBootstrap(await api.bootstrap());
+      } catch (requestError: unknown) {
+        setError(errorMessage(requestError));
+      }
+    };
+    void loadBootstrap();
   }, []);
 
   if (error) {
@@ -23,7 +30,9 @@ export function App() {
         <WarningIcon size={28} />
         <h1>Folionym could not start</h1>
         <p>{error}</p>
-        <Button onClick={() => window.location.reload()}>Try again</Button>
+        <Button onClick={() => {
+          window.location.reload();
+        }}>Try again</Button>
       </div>
     );
   }

@@ -19,11 +19,33 @@ export class ApiError extends Error {
   }
 }
 
+const LOCAL_API_PREFIX = "/api/v1/";
+
+function localApiPath(path: string): string {
+  // Every frontend request remains beneath the API prefix on this page's origin.
+  // Return only the relative path so the browser fetch cannot target another host.
+  const url = new URL(path, window.location.origin);
+  if (url.origin !== window.location.origin || !url.pathname.startsWith(LOCAL_API_PREFIX)) {
+    throw new Error("Folionym only permits same-origin /api/v1 requests.");
+  }
+  return `${url.pathname}${url.search}`;
+}
+
+function detailFromPayload(payload: unknown): unknown {
+  if (typeof payload === "object" && payload !== null && "detail" in payload) {
+    return payload.detail;
+  }
+  return payload;
+}
+
+function errorPayload(response: Response): Promise<unknown> {
+  return response.json().then(detailFromPayload).catch(() => response.statusText);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
+  const response = await window.fetch(localApiPath(path), init);
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({ detail: response.statusText }));
-    throw new ApiError(response.status, payload.detail ?? payload);
+    throw new ApiError(response.status, await errorPayload(response));
   }
   return response.json() as Promise<T>;
 }

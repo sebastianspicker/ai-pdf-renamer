@@ -35,7 +35,7 @@ export function FolderBrowser({
       if (requestId !== browseRequestRef.current) return;
       setListing(next);
       setPath(next.path);
-    } catch (requestError) {
+    } catch (requestError: unknown) {
       if (requestId !== browseRequestRef.current) return;
       setError(errorMessage(requestError));
     }
@@ -45,13 +45,17 @@ export function FolderBrowser({
     if (open) void browse(initialPath || bootstrap.roots[0]?.path || "/");
   }, [open, initialPath, bootstrap.roots, browse]);
 
+  const parentPath = listing?.parent ?? null;
+
   return (
     <Modal
       footer={
         <>
           <span className="modal__summary">{listing ? `${listing.pdf_count} PDFs in this folder` : ""}</span>
           <Button onClick={onClose}>Cancel</Button>
-          <Button disabled={!listing} onClick={() => listing && onChoose(listing.path)} variant="primary">
+          <Button disabled={!listing} onClick={() => {
+            if (listing) onChoose(listing.path);
+          }} variant="primary">
             Choose folder
           </Button>
         </>
@@ -74,22 +78,30 @@ export function FolderBrowser({
           ref={pathInputRef}
           value={path}
         />
-        <Button onClick={() => void browse(pathInputRef.current?.value ?? path)}>Go</Button>
+        <Button onClick={() => {
+          void browse(pathInputRef.current?.value ?? path);
+        }}>Go</Button>
       </div>
-      {error && <ErrorBanner message={error} onDismiss={() => setError("")} />}
+      {error && <ErrorBanner message={error} onDismiss={() => {
+        setError("");
+      }} />}
       <div className="folder-list">
-        {listing?.parent && (
-          <button className="folder-row" onClick={() => void browse(listing.parent!)}>
+        {parentPath ? (
+          <button className="folder-row" onClick={() => {
+            void browse(parentPath);
+          }}>
             <FolderIcon />
             <span>
               <strong>Parent folder</strong>
-              <small>{compactPath(listing.parent)}</small>
+              <small>{compactPath(parentPath)}</small>
             </span>
             <ChevronIcon />
           </button>
-        )}
+        ) : null}
         {listing?.entries.map((entry) => (
-          <button className="folder-row" key={entry.path} onClick={() => void browse(entry.path)}>
+          <button className="folder-row" key={entry.path} onClick={() => {
+            void browse(entry.path);
+          }}>
             <FolderIcon />
             <span>
               <strong>{entry.name}</strong>

@@ -58,7 +58,9 @@ def _read_settings(path: Path) -> dict[str, object]:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except OSError, json.JSONDecodeError:
+    except OSError:
+        return {}
+    except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
 

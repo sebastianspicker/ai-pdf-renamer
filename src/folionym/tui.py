@@ -49,7 +49,6 @@ from .renamer import (
     suggest_rename_for_file,
 )
 from .tui_assets import (
-    _CSS,
     _DRYRUN_LOG_RE,
     _PRESETS,
     _RENAME_LOG_RE,
@@ -132,7 +131,7 @@ class FolionymTUI(App[None]):
     """Terminal UI for Folionym."""
 
     TITLE = "Folionym"
-    CSS = _CSS
+    CSS_PATH = "tui.tcss"
     ENABLE_COMMAND_PALETTE = False
     BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
         Binding("ctrl+q", "quit", "Quit"),
@@ -716,11 +715,8 @@ class FolionymTUI(App[None]):
         if confirmed:
             self.process_one()
 
-    def start_run(self, *, dry_run: bool) -> None:
-        """Start a preview or apply run from the current TUI form state."""
-        if self._operation_running:
-            self.notify("A run is already in progress.", severity="warning")
-            return
+    def _run_configuration(self, *, dry_run: bool) -> tuple[str, RenamerConfig] | None:
+        """Validate the selected directory and build the configuration for one batch run."""
         directory = self.get_str("directory")
         if not directory:
             msg = "Set a folder path on the Setup tab first."
@@ -729,14 +725,14 @@ class FolionymTUI(App[None]):
                 f"[bold {ERROR_COLOR}]No directory set.[/bold {ERROR_COLOR}] {msg}"
             )
             self.notify(msg, title="No directory set", severity="error")
-            return
+            return None
         if not Path(directory).is_dir():
             self._show_setup_error("directory", f"Folder not found: {directory}")
             self.query_one("#run-log", RichLog).write(
                 f"[bold {ERROR_COLOR}]Directory not found:[/bold {ERROR_COLOR}] {_escape_markup(directory)}"
             )
             self.notify(directory, title="Directory not found", severity="error")
-            return
+            return None
         try:
             config = self.build_config(dry_run=dry_run)
         except ValueError as exc:
@@ -745,7 +741,11 @@ class FolionymTUI(App[None]):
                 f"[bold {ERROR_COLOR}]Invalid config:[/bold {ERROR_COLOR}] {err_msg}"
             )
             self.notify(str(exc), title="Invalid config", severity="error")
-            return
+            return None
+        return (directory, config)
+
+    def _begin_run(self, directory: str, config: RenamerConfig, *, dry_run: bool) -> None:
+        """Reset run state, present its mode, and start the managed directory worker."""
         setup_error = self.query_one("#setup-error", Static)
         setup_error.remove_class("visible")
         setup_error.update("")
@@ -775,6 +775,16 @@ class FolionymTUI(App[None]):
         progress.display = True
         progress.update(total=100, progress=0)
         self.run_directory_worker(directory, config)
+
+    def start_run(self, *, dry_run: bool) -> None:
+        """Start a preview or apply run from the current TUI form state."""
+        if self._operation_running:
+            self.notify("A run is already in progress.", severity="warning")
+            return
+        run = self._run_configuration(dry_run=dry_run)
+        if run is not None:
+            directory, config = run
+            self._begin_run(directory, config, dry_run=dry_run)
 
     def _show_setup_error(self, widget_id: str, message: str) -> None:
         """Keep a source-path error visible beside its field and move focus to the fix."""
