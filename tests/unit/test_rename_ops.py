@@ -448,11 +448,14 @@ def test_apply_single_rename_exdev_target_swap_preserves_source_and_victim(
 def test_apply_single_rename_reservation_open_error_propagates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     src = tmp_path / "doc.pdf"
     src.write_text("content", encoding="utf-8")
+    original_open = os.open
 
     def _link_exdev(source: object, destination: object) -> None:
         raise OSError(errno.EXDEV, "Invalid cross-device link")
 
-    def _open_eacces(path: object, flags: int, mode: int = 0o777, **kwargs: object) -> int:
+    def _open_eacces(path: str | bytes | os.PathLike[str], flags: int, mode: int = 0o777, **kwargs: object) -> int:
+        if os.fspath(path) == os.fspath(src):
+            return original_open(path, flags, mode, **kwargs)
         raise PermissionError(errno.EACCES, "Permission denied", str(path))
 
     monkeypatch.setattr(os, "link", _link_exdev)

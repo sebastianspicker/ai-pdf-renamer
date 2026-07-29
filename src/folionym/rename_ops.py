@@ -313,16 +313,26 @@ def _rename_without_overwrite(file_path: Path, target: Path) -> None:
     if os.name == "nt":
         os.rename(file_path, target)
         return
-    source_identity = _try_hard_link_without_overwrite(file_path, target)
-    if source_identity is None:
-        _copy_to_reserved_target_then_unlink(file_path, target)
-        return
-    _validate_link_and_unlink_source(file_path, target, source_identity)
+
+    # Keep the original inode alive until the source pathname has been checked
+    # and removed. Without this descriptor, a just-unlinked source can have its
+    # inode reused immediately, making a replacement look identical by dev/ino.
+    source_fd = os.open(file_path, os.O_RDONLY)
+    try:
+        source_identity = os.fstat(source_fd)
+        linked_identity = _try_hard_link_without_overwrite(file_path, target, source_identity)
+        if linked_identity is None:
+            _copy_to_reserved_target_then_unlink(file_path, target, source_fd)
+            return
+        _validate_link_and_unlink_source(file_path, target, linked_identity)
+    finally:
+        os.close(source_fd)
 
 
-def _try_hard_link_without_overwrite(file_path: Path, target: Path) -> os.stat_result | None:
+def _try_hard_link_without_overwrite(
+    file_path: Path, target: Path, source_identity: os.stat_result
+) -> os.stat_result | None:
     """Try a no-overwrite hard link; return the source identity on success or None for non-collision failures."""
-    source_identity = file_path.stat()
     try:
         os.link(file_path, target)
     except (AttributeError, OSError) as exc:
@@ -357,36 +367,64 @@ def _cleanup_link_created_from_replaced_source(file_path: Path, target: Path) ->
         _cleanup_reserved_target(target, target_identity)
 
 
-def _copy_to_reserved_target_then_unlink(file_path: Path, target: Path) -> None:
+def _copy_to_reserved_target_then_unlink(file_path: Path, target: Path, source_fd: int | None = None) -> None:
     """Copy into an exclusive target, validate both identities, then unlink the source."""
+    owns_source_fd = source_fd is None
+    if source_fd is None:
+        source_fd = os.open(file_path, os.O_RDONLY)
     try:
-        fd = _open_exclusive_target(target)
+        _copy_with_pinned_source(file_path, target, source_fd)
+    finally:
+        if owns_source_fd:
+            os.close(source_fd)
+
+
+def _copy_with_pinned_source(file_path: Path, target: Path, source_fd: int) -> None:
+    """Reserve the target and copy while the original source inode remains pinned."""
+    held_identity = os.fstat(source_fd)
+    fd = _reserve_copy_target(target)
+    try:
+        target_identity = os.fstat(fd)
+        _copy_validate_and_unlink(file_path, target, fd, held_identity, target_identity)
+    finally:
+        os.close(fd)
+
+
+def _reserve_copy_target(target: Path) -> int:
+    """Reserve a no-overwrite target and preserve collision semantics."""
+    try:
+        return _open_exclusive_target(target)
     except OSError as open_exc:
         if open_exc.errno == errno.EEXIST:
             raise FileExistsError(f"Target already exists: {target}") from open_exc
         raise
-    identity: os.stat_result | None = None
+
+
+def _copy_validate_and_unlink(
+    file_path: Path,
+    target: Path,
+    target_fd: int,
+    source_identity: os.stat_result,
+    target_identity: os.stat_result,
+) -> None:
+    """Copy, validate both path identities, and remove only the pinned source."""
     try:
-        identity = os.fstat(fd)
-        try:
-            source_identity = _copy_file_to_fd(file_path, fd)
-        except OSError:
-            _cleanup_reserved_target(target, identity)
-            raise
-        if not _path_matches_identity(target, identity):
-            raise OSError(errno.EBUSY, f"Target path changed while copying: {target}")
-        if not _path_matches_identity(file_path, source_identity):
-            _cleanup_reserved_target(target, identity)
-            raise OSError(errno.EBUSY, f"Source path changed while copying: {file_path}")
-        try:
-            file_path.unlink()
-        except OSError as unlink_err:
-            _cleanup_reserved_target(target, identity)
-            raise OSError(
-                f"Cross-filesystem rename: copied to {target}, could not remove source {file_path}: {unlink_err}"
-            ) from unlink_err
-    finally:
-        os.close(fd)
+        _copy_file_to_fd(file_path, target_fd)
+    except OSError:
+        _cleanup_reserved_target(target, target_identity)
+        raise
+    if not _path_matches_identity(target, target_identity):
+        raise OSError(errno.EBUSY, f"Target path changed while copying: {target}")
+    if not _path_matches_identity(file_path, source_identity):
+        _cleanup_reserved_target(target, target_identity)
+        raise OSError(errno.EBUSY, f"Source path changed while copying: {file_path}")
+    try:
+        file_path.unlink()
+    except OSError as unlink_err:
+        _cleanup_reserved_target(target, target_identity)
+        raise OSError(
+            f"Cross-filesystem rename: copied to {target}, could not remove source {file_path}: {unlink_err}"
+        ) from unlink_err
 
 
 def _is_target_exists_error(exc: BaseException) -> bool:
