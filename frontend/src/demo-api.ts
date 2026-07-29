@@ -170,21 +170,22 @@ function completedRun(kind: "preview" | "apply"): Run {
 }
 
 export const api: typeof import("./api").api = {
-  bootstrap: async () => bootstrap,
-  filesystem: async (path: string): Promise<DirectoryListing> => ({
-    path: path.startsWith("/demo") ? path : source,
-    parent: null,
-    entries: [],
-    pdf_count: 6,
-  }),
-  startPreview: async () => ({ run_id: "demo-preview-run" }),
-  run: async (id: string) => completedRun(id.includes("apply") ? "apply" : "preview"),
-  cancel: async (id: string) => completedRun(id.includes("apply") ? "apply" : "preview"),
-  plan: async () => plan,
-  apply: async (_id: string, _revision: number, ids: string[]) => {
+  bootstrap: () => Promise.resolve(bootstrap),
+  filesystem: (path: string): Promise<DirectoryListing> =>
+    Promise.resolve({
+      path: path.startsWith("/demo") ? path : source,
+      parent: null,
+      entries: [],
+      pdf_count: 6,
+    }),
+  startPreview: () => Promise.resolve({ run_id: "demo-preview-run" }),
+  run: (id: string) => Promise.resolve(completedRun(id.includes("apply") ? "apply" : "preview")),
+  cancel: (id: string) => Promise.resolve(completedRun(id.includes("apply") ? "apply" : "preview")),
+  plan: () => Promise.resolve(plan),
+  apply: (_id: string, _revision: number, ids: string[]) => {
     selectedIds.clear();
     ids.forEach((id) => selectedIds.add(id));
-    return { run_id: "demo-apply-run" };
+    return Promise.resolve({ run_id: "demo-apply-run" });
   },
-  report: async () => report(),
+  report: () => Promise.resolve(report()),
 };
