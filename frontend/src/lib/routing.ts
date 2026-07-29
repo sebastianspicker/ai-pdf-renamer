@@ -1,16 +1,29 @@
 import { useEffect, useState } from "react";
+import { isStaticDemo } from "./demo";
 
 export type Route = "source" | "preview" | "apply";
 
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+export function routePath(route: Route): string {
+  const suffix = route === "source" ? "/" : `/${route}`;
+  if (isStaticDemo) {
+    return route === "source" ? `${basePath}/` : `${basePath}/#${suffix}`;
+  }
+  return `${basePath}${suffix}` || "/";
+}
+
 export function currentRoute(): Route {
-  if (window.location.pathname.startsWith("/preview")) return "preview";
-  if (window.location.pathname.startsWith("/apply")) return "apply";
+  const pathname = isStaticDemo
+    ? window.location.hash.replace(/^#/, "") || "/"
+    : window.location.pathname.slice(basePath.length) || "/";
+  if (pathname.startsWith("/preview")) return "preview";
+  if (pathname.startsWith("/apply")) return "apply";
   return "source";
 }
 
 export function navigate(route: Route) {
-  const path = route === "source" ? "/" : `/${route}`;
-  window.history.pushState({}, "", path);
+  window.history.pushState({}, "", routePath(route));
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 

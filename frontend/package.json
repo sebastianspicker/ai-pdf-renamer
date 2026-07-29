@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "npm run typecheck && vite build",
+    "build:demo": "npm run typecheck && VITE_FOLIONYM_DEMO=true vite build --mode=demo --base=/folionym/ --outDir=dist-demo --emptyOutDir",
     "capture:screenshots": "node scripts/capture-screenshots.mjs",
     "dev": "vite",
     "typecheck": "tsc --noEmit -p tsconfig.app.json --pretty false && tsc --noEmit -p tsconfig.node.json --pretty false",

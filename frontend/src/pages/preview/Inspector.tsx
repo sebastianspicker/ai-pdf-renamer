@@ -1,5 +1,6 @@
 import { StatusPill, formatBytes } from "../../components";
 import { DocumentIcon } from "../../icons";
+import { demoAsset, isStaticDemo } from "../../lib/demo";
 import type { Plan, PreviewItem } from "../../types";
 
 export function Inspector({ item, plan }: { item: PreviewItem | null; plan: Plan }) {
@@ -27,7 +28,7 @@ export function Inspector({ item, plan }: { item: PreviewItem | null; plan: Plan
         <div className="thumb-frame">
           <img
             alt={`First page of ${item.current_name}`}
-            src={`/api/v1/plans/${plan.id}/items/${item.id}/thumbnail`}
+            src={isStaticDemo ? demoAsset("demo-document.svg") : `/api/v1/plans/${plan.id}/items/${item.id}/thumbnail`}
           />
         </div>
         <figcaption>First page</figcaption>

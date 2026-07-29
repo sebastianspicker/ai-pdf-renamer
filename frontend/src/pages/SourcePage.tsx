@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
-import { ApiError, api, errorMessage } from "../api";
+import { ApiError, errorMessage } from "../api-errors";
+import { api } from "@api";
 import {
   AppChrome,
   Button,
@@ -21,6 +22,7 @@ import {
   WarningIcon,
 } from "../icons";
 import { isLocalEndpoint } from "../lib/privacy";
+import { isStaticDemo } from "../lib/demo";
 import { navigate } from "../lib/routing";
 import type { Bootstrap, Run, Settings } from "../types";
 
@@ -220,7 +222,7 @@ export function SourcePage({
               {kind === "directory" ? (
                 <Button onClick={() => {
                   setFolderOpen(true);
-                }}>Browse</Button>
+                }}>{isStaticDemo ? "Browse demo files" : "Browse"}</Button>
               ) : (
                 <Button onClick={() => {
                   setPath("");
@@ -271,8 +273,10 @@ export function SourcePage({
           <div className="source-notice">
             <InfoIcon />
             <p>
-              <strong>Preview does not rename files.</strong> Apply re-checks each source fingerprint and target
-              before writing.
+              <strong>Preview does not rename files.</strong>{" "}
+              {isStaticDemo
+                ? "This demo never reads files; it only advances through sanitized fixtures."
+                : "Apply re-checks each source fingerprint and target before writing."}
             </p>
           </div>
         </section>
@@ -303,7 +307,7 @@ export function SourcePage({
           <Button className="button--full" onClick={() => {
             void startPreview();
           }} variant="primary">
-            Build preview <ArrowRightIcon />
+            {isStaticDemo ? "Simulate preview" : "Build preview"} <ArrowRightIcon />
           </Button>
         </aside>
       </main>

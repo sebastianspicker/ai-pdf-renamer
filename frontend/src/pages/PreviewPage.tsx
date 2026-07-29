@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, errorMessage } from "../api";
+import { errorMessage } from "../api-errors";
+import { api } from "@api";
 import { AppChrome, Button, Modal, PageLoader, RunOverlay, compactPath } from "../components";
 import { useRun } from "../hooks/useRun";
 import { WarningIcon } from "../icons";
 import { isLocalEndpoint } from "../lib/privacy";
+import { isStaticDemo } from "../lib/demo";
 import { navigate } from "../lib/routing";
 import type { Bootstrap, Plan, PreviewStatus, Run, Settings } from "../types";
 import { FilterRail } from "./preview/FilterRail";
@@ -158,10 +160,12 @@ export function PreviewPage({ bootstrap }: { bootstrap: Bootstrap }) {
         <>
           <div className="consequence-copy">
             <strong>
-              {selected.size} exact name{selected.size === 1 ? "" : "s"} ready to write
+              {isStaticDemo ? "Simulated apply" : `${selected.size} exact name${selected.size === 1 ? "" : "s"} ready to write`}
             </strong>
             <p>
-              Apply re-checks each source fingerprint and target collision. Files outside the selection stay untouched.
+              {isStaticDemo
+                ? `${selected.size} selected fixture${selected.size === 1 ? "" : "s"}. No files will be written.`
+                : "Apply re-checks each source fingerprint and target collision. Files outside the selection stay untouched."}
             </p>
           </div>
           <div className="consequence-actions">
@@ -171,7 +175,7 @@ export function PreviewPage({ bootstrap }: { bootstrap: Bootstrap }) {
             <Button disabled={selected.size === 0} onClick={() => {
               setConfirmOpen(true);
             }} variant="primary">
-              Apply {selected.size} name{selected.size === 1 ? "" : "s"}
+              {isStaticDemo ? `Simulate apply (${selected.size})` : `Apply ${selected.size} name${selected.size === 1 ? "" : "s"}`}
             </Button>
           </div>
         </>
@@ -187,7 +191,7 @@ export function PreviewPage({ bootstrap }: { bootstrap: Bootstrap }) {
                 <Button onClick={() => {
                   void apply();
                 }} variant="danger">
-                  Rename files
+                  {isStaticDemo ? "Simulate rename" : "Rename files"}
                 </Button>
               </>
             }
@@ -199,8 +203,9 @@ export function PreviewPage({ bootstrap }: { bootstrap: Bootstrap }) {
           >
             <div className="confirm-list">
               <p>
-                Folionym will rename only the checked files to their exact reviewed targets. Changed sources and new
-                collisions fail safely.
+                {isStaticDemo
+                  ? "This click-through records a simulated outcome using sanitized fixture names. It cannot read or rename files."
+                  : "Folionym will rename only the checked files to their exact reviewed targets. Changed sources and new collisions fail safely."}
               </p>
               <div>
                 <strong>{selected.size}</strong>

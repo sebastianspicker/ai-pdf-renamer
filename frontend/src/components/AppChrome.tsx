@@ -1,5 +1,7 @@
 import { type MouseEvent, type ReactNode } from "react";
 import { FolderIcon } from "../icons";
+import { isStaticDemo } from "../lib/demo";
+import { routePath } from "../lib/routing";
 import { compactPath } from "./format";
 import { PrivacyChip } from "./PrivacyChip";
 import { StageSpine } from "./StageSpine";
@@ -16,7 +18,7 @@ type AppChromeProps = {
 
 function navigateHome(event: MouseEvent<HTMLAnchorElement>) {
   event.preventDefault();
-  window.history.pushState({}, "", "/");
+  window.history.pushState({}, "", routePath("source"));
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
@@ -24,7 +26,7 @@ function AppHeader({ source, sourceMeta, external }: Pick<AppChromeProps, "sourc
   return (
     <header className="instrument-bar">
       <div className="brand-block">
-        <a aria-label="Folionym" className="brand" href="/" onClick={navigateHome}>
+        <a aria-label="Folionym" className="brand" href={routePath("source")} onClick={navigateHome}>
           <span aria-hidden="true" className="brand-mark">
             <svg fill="none" viewBox="0 0 24 24">
               <rect height="18" rx="1.5" stroke="currentColor" strokeWidth="1.6" width="16" x="4" y="3" />
@@ -33,7 +35,7 @@ function AppHeader({ source, sourceMeta, external }: Pick<AppChromeProps, "sourc
           </span>
           <span className="brand-word">Folionym</span>
         </a>
-        <span className="brand-meta">Local rename instrument</span>
+        <span className="brand-meta">{isStaticDemo ? "Static interface demo" : "Local rename instrument"}</span>
       </div>
 
       {source ? (
@@ -69,6 +71,12 @@ export function AppChrome({
 
   return (
     <div className="app" data-theme="folio">
+      {isStaticDemo ? (
+        <div className="demo-banner" role="status">
+          <strong>SIMULATED DEMO</strong>
+          <span>Sanitized fixtures only. No PDFs are read, uploaded, or renamed.</span>
+        </div>
+      ) : null}
       <AppHeader external={external} source={source} sourceMeta={sourceMeta} />
 
       <div className={bodyClass}>
