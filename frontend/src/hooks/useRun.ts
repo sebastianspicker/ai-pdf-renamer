@@ -24,7 +24,7 @@ export function useRun(runId: string | null, onComplete: (run: Run) => void) {
           return;
         }
         timeout = window.setTimeout(poll, 350);
-      } catch (requestError) {
+      } catch (requestError: unknown) {
         if (active) setError(errorMessage(requestError));
       }
     };

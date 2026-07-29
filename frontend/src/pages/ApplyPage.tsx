@@ -36,7 +36,14 @@ export function ApplyPage({ bootstrap }: { bootstrap: Bootstrap }) {
       navigate("source");
       return;
     }
-    api.report(reportId).then(setReport).catch((requestError) => setError(errorMessage(requestError)));
+    const loadReport = async () => {
+      try {
+        setReport(await api.report(reportId));
+      } catch (requestError: unknown) {
+        setError(errorMessage(requestError));
+      }
+    };
+    void loadReport();
   }, [reportId]);
 
   if (!report && !error) return <PageLoader label="Loading report" />;
@@ -46,7 +53,9 @@ export function ApplyPage({ bootstrap }: { bootstrap: Bootstrap }) {
         <WarningIcon />
         <h1>Report unavailable</h1>
         <p>{error}</p>
-        <Button onClick={() => navigate("source")}>Back to Source</Button>
+        <Button onClick={() => {
+          navigate("source");
+        }}>Back to Source</Button>
       </div>
     );
   }
@@ -81,7 +90,9 @@ export function ApplyPage({ bootstrap }: { bootstrap: Bootstrap }) {
                 : "Each selected file passed fingerprint and collision checks, then received its exact reviewed name."}
             </p>
           </div>
-          <Button onClick={() => navigate("source")} variant="primary">
+          <Button onClick={() => {
+            navigate("source");
+          }} variant="primary">
             New source <ArrowRightIcon />
           </Button>
         </header>
@@ -106,7 +117,9 @@ export function ApplyPage({ bootstrap }: { bootstrap: Bootstrap }) {
                 <button
                   className={filter === status ? "is-active" : ""}
                   key={status}
-                  onClick={() => setFilter(status)}
+                  onClick={() => {
+                    setFilter(status);
+                  }}
                   type="button"
                 >
                   {status}
@@ -120,7 +133,7 @@ export function ApplyPage({ bootstrap }: { bootstrap: Bootstrap }) {
                 <DocumentIcon />
                 <span>{item.source_name}</span>
                 <ArrowRightIcon />
-                <strong>{item.target_name || "No target"}</strong>
+                <strong>{item.target_name ?? "No target"}</strong>
                 <StatusPill status={item.status === "skipped" ? "unchanged" : item.status} />
                 {item.reason && <small>{item.reason}</small>}
               </div>

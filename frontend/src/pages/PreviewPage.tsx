@@ -55,16 +55,20 @@ export function PreviewPage({ bootstrap }: { bootstrap: Bootstrap }) {
       return;
     }
     let active = true;
-    api
-      .plan(planId)
-      .then((next) => {
+    const loadPlan = async () => {
+      try {
+        const next = await api.plan(planId);
         if (!active) return;
         setPlan(next);
         setSelected(new Set(next.items.filter((item) => item.included).map((item) => item.id)));
         setActiveId(next.items[0]?.id ?? null);
-      })
-      .catch((requestError) => active && setError(errorMessage(requestError)))
-      .finally(() => active && setLoading(false));
+      } catch (requestError: unknown) {
+        if (active) setError(errorMessage(requestError));
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    void loadPlan();
     return () => {
       active = false;
     };
@@ -112,7 +116,9 @@ export function PreviewPage({ bootstrap }: { bootstrap: Bootstrap }) {
     });
   };
 
-  const clearSelection = () => setSelected(new Set());
+  const clearSelection = () => {
+    setSelected(new Set());
+  };
 
   const apply = async () => {
     if (!plan) return;
@@ -120,7 +126,7 @@ export function PreviewPage({ bootstrap }: { bootstrap: Bootstrap }) {
       const result = await api.apply(plan.id, plan.revision, [...selected]);
       setConfirmOpen(false);
       setRunId(result.run_id);
-    } catch (requestError) {
+    } catch (requestError: unknown) {
       setError(errorMessage(requestError));
       setConfirmOpen(false);
     }
@@ -133,7 +139,9 @@ export function PreviewPage({ bootstrap }: { bootstrap: Bootstrap }) {
         <WarningIcon size={28} />
         <h1>Preview unavailable</h1>
         <p>{error || "This preview is no longer available."}</p>
-        <Button onClick={() => navigate("source")}>Start again</Button>
+        <Button onClick={() => {
+          navigate("source");
+        }}>Start again</Button>
       </div>
     );
   }
@@ -157,8 +165,12 @@ export function PreviewPage({ bootstrap }: { bootstrap: Bootstrap }) {
             </p>
           </div>
           <div className="consequence-actions">
-            <Button onClick={() => navigate("source")}>Back to Source</Button>
-            <Button disabled={selected.size === 0} onClick={() => setConfirmOpen(true)} variant="primary">
+            <Button onClick={() => {
+              navigate("source");
+            }}>Back to Source</Button>
+            <Button disabled={selected.size === 0} onClick={() => {
+              setConfirmOpen(true);
+            }} variant="primary">
               Apply {selected.size} name{selected.size === 1 ? "" : "s"}
             </Button>
           </div>
@@ -169,13 +181,19 @@ export function PreviewPage({ bootstrap }: { bootstrap: Bootstrap }) {
           <Modal
             footer={
               <>
-                <Button onClick={() => setConfirmOpen(false)}>Keep reviewing</Button>
-                <Button onClick={() => void apply()} variant="danger">
+                <Button onClick={() => {
+                  setConfirmOpen(false);
+                }}>Keep reviewing</Button>
+                <Button onClick={() => {
+                  void apply();
+                }} variant="danger">
                   Rename files
                 </Button>
               </>
             }
-            onClose={() => setConfirmOpen(false)}
+            onClose={() => {
+              setConfirmOpen(false);
+            }}
             open={confirmOpen}
             title={`Write ${selected.size} selected name${selected.size === 1 ? "" : "s"}?`}
           >
@@ -214,7 +232,9 @@ export function PreviewPage({ bootstrap }: { bootstrap: Bootstrap }) {
           </Modal>
           <RunOverlay
             error={runError}
-            onCancel={() => runId && void api.cancel(runId)}
+            onCancel={() => {
+              if (runId) void api.cancel(runId);
+            }}
             onClose={() => {
               setRunId(null);
               setRunError("");
@@ -230,7 +250,9 @@ export function PreviewPage({ bootstrap }: { bootstrap: Bootstrap }) {
         <FilterRail
           facts={facts}
           filter={filter}
-          onChangeSource={() => navigate("source")}
+          onChangeSource={() => {
+            navigate("source");
+          }}
           onFilterChange={setFilter}
           plan={plan}
           selectedCount={selected.size}
@@ -241,7 +263,9 @@ export function PreviewPage({ bootstrap }: { bootstrap: Bootstrap }) {
           error={error}
           onActivate={setActiveId}
           onClear={clearSelection}
-          onDismissError={() => setError("")}
+          onDismissError={() => {
+            setError("");
+          }}
           onQueryChange={setQuery}
           onSelectVisible={selectVisible}
           onToggle={toggle}

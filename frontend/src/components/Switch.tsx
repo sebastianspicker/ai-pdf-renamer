@@ -18,7 +18,9 @@ export function Switch({
       <input
         checked={checked}
         className="switch-input"
-        onChange={(event) => onChange(event.target.checked)}
+        onChange={(event) => {
+          onChange(event.target.checked);
+        }}
         type="checkbox"
       />
       <span aria-hidden="true" className="switch-control" />

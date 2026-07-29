@@ -42,7 +42,7 @@ export function Inspector({ item, plan }: { item: PreviewItem | null; plan: Plan
         <div>
           <dt>Proposed</dt>
           <dd>
-            <code>{item.proposed_name || "No proposal"}</code>
+            <code>{item.proposed_name ?? "No proposal"}</code>
           </dd>
         </div>
         <div>

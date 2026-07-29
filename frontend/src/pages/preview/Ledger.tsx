@@ -2,13 +2,18 @@ import { Button, Checkbox, ErrorBanner, StatusPill } from "../../components";
 import { SearchIcon } from "../../icons";
 import type { Plan, PreviewItem, PreviewStatus } from "../../types";
 
-const filterLabels: Record<PreviewStatus | "all", string> = {
-  all: "All",
-  ready: "Ready",
-  review: "Review",
-  skipped: "Skipped",
-  failed: "Failed",
-};
+function filterLabel(status: PreviewStatus): string {
+  switch (status) {
+    case "ready":
+      return "Ready";
+    case "review":
+      return "Review";
+    case "skipped":
+      return "Skipped";
+    default:
+      return "Failed";
+  }
+}
 
 type LedgerProps = {
   plan: Plan;
@@ -59,7 +64,9 @@ export function Ledger({
             <input
               aria-label="Search filenames"
               autoComplete="off"
-              onChange={(event) => onQueryChange(event.target.value)}
+              onChange={(event) => {
+                onQueryChange(event.target.value);
+              }}
               placeholder="Filter by name…"
               type="search"
               value={query}
@@ -109,7 +116,9 @@ export function Ledger({
               data-id={item.id}
               data-status={item.status}
               key={item.id}
-              onClick={() => onActivate(item.id)}
+              onClick={() => {
+                onActivate(item.id);
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
@@ -119,12 +128,16 @@ export function Ledger({
               role="option"
               tabIndex={isActive ? 0 : -1}
             >
-              <label className="row-check" onClick={(event) => event.stopPropagation()}>
+              <label className="row-check" onClick={(event) => {
+                event.stopPropagation();
+              }}>
                 <Checkbox
                   aria-label={`Include ${item.proposed_name ?? item.current_name}`}
                   checked={isSelected}
                   disabled={!isSelectable}
-                  onChange={() => onToggle(item.id)}
+                  onChange={() => {
+                    onToggle(item.id);
+                  }}
                 />
                 <span className="visually-hidden">Include</span>
               </label>
@@ -139,7 +152,7 @@ export function Ledger({
                   className={`name name--to ${mutedTarget ? "name--muted" : ""}`}
                   title={item.proposed_name ?? ""}
                 >
-                  {item.proposed_name ||
+                  {item.proposed_name ??
                     (item.status === "skipped"
                       ? "Unchanged · already named"
                       : item.status === "failed"
@@ -147,7 +160,7 @@ export function Ledger({
                         : "No proposal")}
                 </code>
               </div>
-              <StatusPill label={filterLabels[item.status]} status={item.status} />
+              <StatusPill label={filterLabel(item.status)} status={item.status} />
             </article>
           );
         })}

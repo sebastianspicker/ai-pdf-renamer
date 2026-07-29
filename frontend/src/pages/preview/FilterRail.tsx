@@ -1,13 +1,22 @@
 import { compactPath } from "../../components";
 import type { Plan, PreviewStatus } from "../../types";
 
-const filterLabels: Record<PreviewStatus | "all", string> = {
-  all: "All",
-  ready: "Ready",
-  review: "Review",
-  skipped: "Skipped",
-  failed: "Failed",
-};
+function filterLabel(status: PreviewStatus | "all"): string {
+  switch (status) {
+    case "ready":
+      return "Ready";
+    case "review":
+      return "Review";
+    case "skipped":
+      return "Skipped";
+    case "failed":
+      return "Failed";
+    default:
+      return "All";
+  }
+}
+
+const filterStatuses: Array<PreviewStatus | "all"> = ["all", "ready", "review", "skipped", "failed"];
 
 export type ProcessingFact = { label: string; value: string };
 
@@ -59,16 +68,18 @@ export function FilterRail({
           Show
         </h2>
         <div className="filter-list" role="tablist" aria-labelledby="filter-heading">
-          {(Object.keys(filterLabels) as Array<PreviewStatus | "all">).map((status) => (
+          {filterStatuses.map((status) => (
             <button
               aria-selected={filter === status}
               className={`filter ${filter === status ? "is-active" : ""}`}
               key={status}
-              onClick={() => onFilterChange(status)}
+              onClick={() => {
+                onFilterChange(status);
+              }}
               role="tab"
               type="button"
             >
-              {filterLabels[status]} <span>{plan.counts[status]}</span>
+              {filterLabel(status)} <span>{status === "all" ? plan.counts.all : plan.counts[status]}</span>
             </button>
           ))}
         </div>
