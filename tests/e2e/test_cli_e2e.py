@@ -52,6 +52,7 @@ def _run_cli(
         cwd=cwd,
         env=env,
         check=False,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
     )
@@ -128,7 +129,7 @@ def _assert_dry_run_outputs(pdf_dir: Path, original: Path, plan_path: Path, dry_
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     assert len(plan) == 1
     assert plan[0]["old"] == str(original)
-    assert plan[0]["new"].endswith("/20240314-invoice.pdf")
+    assert Path(plan[0]["new"]).name == "20240314-invoice.pdf"
 
 
 def _run_apply_phase(

@@ -372,20 +372,47 @@ def _copy_to_reserved_target_then_unlink(file_path: Path, target: Path, source_f
     owns_source_fd = source_fd is None
     if source_fd is None:
         source_fd = os.open(file_path, os.O_RDONLY)
+
+    def _release_windows_source() -> None:
+        """Release the Windows source handle immediately before deleting its path."""
+        nonlocal source_fd
+        if source_fd is None:
+            return
+        os.close(source_fd)
+        source_fd = None
+
     try:
-        _copy_with_pinned_source(file_path, target, source_fd)
+        _copy_with_pinned_source(
+            file_path,
+            target,
+            source_fd,
+            before_unlink=_release_windows_source if owns_source_fd and os.name == "nt" else None,
+        )
     finally:
-        if owns_source_fd:
+        if owns_source_fd and source_fd is not None:
             os.close(source_fd)
 
 
-def _copy_with_pinned_source(file_path: Path, target: Path, source_fd: int) -> None:
+def _copy_with_pinned_source(
+    file_path: Path,
+    target: Path,
+    source_fd: int,
+    *,
+    before_unlink: Callable[[], None] | None,
+) -> None:
     """Reserve the target and copy while the original source inode remains pinned."""
     held_identity = os.fstat(source_fd)
     fd = _reserve_copy_target(target)
     try:
         target_identity = os.fstat(fd)
-        _copy_validate_and_unlink(file_path, target, fd, held_identity, target_identity)
+        _copy_and_validate_reserved_target(file_path, target, fd, held_identity, target_identity)
+        if before_unlink is not None:
+            try:
+                before_unlink()
+            except OSError:
+                _cleanup_reserved_target(target, target_identity)
+                raise
+        _unlink_copied_source(file_path, target, target_identity)
     finally:
         os.close(fd)
 
@@ -400,14 +427,14 @@ def _reserve_copy_target(target: Path) -> int:
         raise
 
 
-def _copy_validate_and_unlink(
+def _copy_and_validate_reserved_target(
     file_path: Path,
     target: Path,
     target_fd: int,
     source_identity: os.stat_result,
     target_identity: os.stat_result,
 ) -> None:
-    """Copy, validate both path identities, and remove only the pinned source."""
+    """Copy and validate both path identities while the source remains pinned."""
     try:
         _copy_file_to_fd(file_path, target_fd)
     except OSError:
@@ -418,6 +445,10 @@ def _copy_validate_and_unlink(
     if not _path_matches_identity(file_path, source_identity):
         _cleanup_reserved_target(target, target_identity)
         raise OSError(errno.EBUSY, f"Source path changed while copying: {file_path}")
+
+
+def _unlink_copied_source(file_path: Path, target: Path, target_identity: os.stat_result) -> None:
+    """Remove the validated source and clean up the reserved target on failure."""
     try:
         file_path.unlink()
     except OSError as unlink_err:
