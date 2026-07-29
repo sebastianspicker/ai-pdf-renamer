@@ -16,6 +16,21 @@ function filterLabel(status: PreviewStatus | "all"): string {
   }
 }
 
+function filterCount(plan: Plan, status: PreviewStatus | "all"): number {
+  switch (status) {
+    case "ready":
+      return plan.counts.ready;
+    case "review":
+      return plan.counts.review;
+    case "skipped":
+      return plan.counts.skipped;
+    case "failed":
+      return plan.counts.failed;
+    default:
+      return plan.counts.all;
+  }
+}
+
 const filterStatuses: Array<PreviewStatus | "all"> = ["all", "ready", "review", "skipped", "failed"];
 
 export type ProcessingFact = { label: string; value: string };
@@ -79,7 +94,7 @@ export function FilterRail({
               role="tab"
               type="button"
             >
-              {filterLabel(status)} <span>{status === "all" ? plan.counts.all : plan.counts[status]}</span>
+              {filterLabel(status)} <span>{filterCount(plan, status)}</span>
             </button>
           ))}
         </div>

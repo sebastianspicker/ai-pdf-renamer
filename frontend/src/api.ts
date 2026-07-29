@@ -21,14 +21,14 @@ export class ApiError extends Error {
 
 const LOCAL_API_PREFIX = "/api/v1/";
 
-function localApiUrl(path: string): URL {
-  // Every frontend request remains on this page's origin and beneath the API prefix.
-  // This is deliberately stricter than accepting a caller-provided absolute URL.
+function localApiPath(path: string): string {
+  // Every frontend request remains beneath the API prefix on this page's origin.
+  // Return only the relative path so the browser fetch cannot target another host.
   const url = new URL(path, window.location.origin);
   if (url.origin !== window.location.origin || !url.pathname.startsWith(LOCAL_API_PREFIX)) {
     throw new Error("Folionym only permits same-origin /api/v1 requests.");
   }
-  return url;
+  return `${url.pathname}${url.search}`;
 }
 
 function detailFromPayload(payload: unknown): unknown {
@@ -38,16 +38,12 @@ function detailFromPayload(payload: unknown): unknown {
   return payload;
 }
 
-async function errorPayload(response: Response): Promise<unknown> {
-  try {
-    return detailFromPayload(await response.json());
-  } catch {
-    return response.statusText;
-  }
+function errorPayload(response: Response): Promise<unknown> {
+  return response.json().then(detailFromPayload).catch(() => response.statusText);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(localApiUrl(path), init);
+  const response = await window.fetch(localApiPath(path), init);
   if (!response.ok) {
     throw new ApiError(response.status, await errorPayload(response));
   }
