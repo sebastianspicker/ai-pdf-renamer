@@ -1,6 +1,6 @@
 # ADR 0001: Preserve the rename filesystem boundary
 
-Status: Accepted  
+Status: Accepted
 Date: 2026-08-09
 
 ## Context
