@@ -184,3 +184,8 @@ Desktop.ini
 /archive/
 /status.md
 /scripts/topology_inventory.sh
+/.repowise/
+/.mcp.json
+/AUDIT_LEDGER.md
+/work-in-progress/
+/wip/
