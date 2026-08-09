@@ -48,23 +48,34 @@ _tiktoken_encoding: Any = None
 _tiktoken_lock = threading.Lock()
 
 
-def _token_count(text: str) -> int:
-    """Count tokens with cached tiktoken support, falling back to a four-character heuristic."""
+def _initialize_tiktoken_encoding() -> Any:
+    """Load the tokenizer once, using a sentinel when it is unavailable."""
+    # fmt: off
+    try:
+        import tiktoken
+
+        return tiktoken.get_encoding("cl100k_base")
+    except (ImportError, LookupError):
+        return _TIKTOKEN_MISSING
+    # fmt: on
+
+
+def _get_tiktoken_encoding() -> Any:
+    """Return the cached tokenizer, initializing it under the module lock."""
     module = sys.modules[__name__]
     encoding = module.__dict__["_tiktoken_encoding"]
     if encoding is None:
         with _tiktoken_lock:
             encoding = module.__dict__["_tiktoken_encoding"]
             if encoding is None:  # double-checked locking
-                # fmt: off
-                try:
-                    import tiktoken
-
-                    encoding = tiktoken.get_encoding("cl100k_base")
-                except (ImportError, LookupError):
-                    encoding = _TIKTOKEN_MISSING
-                # fmt: on
+                encoding = _initialize_tiktoken_encoding()
                 module.__dict__["_tiktoken_encoding"] = encoding
+    return encoding
+
+
+def _token_count(text: str) -> int:
+    """Count tokens with cached tiktoken support, falling back to a four-character heuristic."""
+    encoding = _get_tiktoken_encoding()
     if encoding is not None and encoding is not _TIKTOKEN_MISSING:
         # fmt: off
         try:

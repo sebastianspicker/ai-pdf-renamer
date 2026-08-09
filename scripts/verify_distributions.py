@@ -87,11 +87,10 @@ def _assert_help(entry_point: Any, command: str) -> None:
     original_argv = sys.argv
     sys.argv = [command, "--help"]
     try:
-        try:
-            entry_point()
-        except SystemExit as exc:
-            if exc.code != 0:
-                raise AssertionError(f"{command} --help exited with {exc.code}") from exc
+        entry_point()
+    except SystemExit as exc:
+        if exc.code != 0:
+            raise AssertionError(f"{command} --help exited with {exc.code}") from exc
     finally:
         sys.argv = original_argv
 

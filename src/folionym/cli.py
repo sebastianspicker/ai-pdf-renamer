@@ -222,6 +222,20 @@ def _probe_llm_endpoint(
         return False
 
 
+def _report_heuristic_rule_check(con: Console, filename: str, path: Path) -> bool:
+    """Report heuristic-rule validation and its category statistics."""
+    try:
+        rules = load_heuristic_rules(path)
+    except (TypeError, ValueError) as exc:
+        logger.warning("Doctor check failed for %s: %s", filename, exc)
+        con.print(f"  [red]FAIL[/red] {filename}: {exc}")
+        return False
+    pattern_count = len(rules)
+    category_count = len({rule.category for rule in rules})
+    con.print(f"  [green]OK[/green]   {filename} [dim](patterns={pattern_count}, categories={category_count})[/dim]")
+    return True
+
+
 def _run_doctor_data_checks(con: Console) -> bool:
     """Validate packaged JSON data and report useful rule/category counts."""
     ok = True
@@ -231,25 +245,14 @@ def _run_doctor_data_checks(con: Console) -> bool:
             path = data_path(filename)
             raw = path.read_text(encoding="utf-8")
             json.loads(raw)
-            if filename == "heuristic_scores.json":
-                try:
-                    rules = load_heuristic_rules(path)
-                except (TypeError, ValueError) as exc:
-                    ok = False
-                    logger.warning("Doctor check failed for %s: %s", filename, exc)
-                    con.print(f"  [red]FAIL[/red] {filename}: {exc}")
-                    continue
-                pattern_count = len(rules)
-                category_count = len({rule.category for rule in rules})
-                con.print(
-                    f"  [green]OK[/green]   {filename} "
-                    f"[dim](patterns={pattern_count}, categories={category_count})[/dim]"
-                )
-            else:
-                con.print(f"  [green]OK[/green]   {filename}")
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             ok = False
             con.print(f"  [red]FAIL[/red] {filename}: {exc}")
+            continue
+        if filename == "heuristic_scores.json":
+            ok = _report_heuristic_rule_check(con, filename, path) and ok
+        else:
+            con.print(f"  [green]OK[/green]   {filename}")
     return ok
 
 

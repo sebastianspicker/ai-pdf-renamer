@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from folionym.config import build_config_from_flat_dict
 from folionym.config_resolver import build_config
+from folionym.http_url import validate_http_endpoint
 from folionym.llm_backend import (
     HttpLLMBackend,
     LLMClient,
@@ -20,6 +23,10 @@ from folionym.llm_backend import (
     _config_or_env,
     _warn_if_plaintext_remote,
     create_llm_client_from_config,
+)
+
+LOOPBACK_ENDPOINTS = json.loads(
+    (Path(__file__).resolve().parents[2] / "frontend/src/test/loopback-endpoints.json").read_text(encoding="utf-8")
 )
 
 
@@ -443,6 +450,51 @@ def test_serialized_client_prevents_overlapping_backend_calls() -> None:
 # ---------------------------------------------------------------------------
 # _warn_if_plaintext_remote
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("url", "hostname", "is_loopback"),
+    [
+        ("http://127.0.0.2:8080/v1/completions", "127.0.0.2", True),
+        ("http://[::1]:8080/v1/completions", "::1", True),
+    ],
+)
+def test_validate_http_endpoint_preserves_ip_literals(url: str, hostname: str, is_loopback: bool) -> None:
+    endpoint = validate_http_endpoint(url)
+
+    assert endpoint.hostname == hostname
+    assert endpoint.ip_host is not None
+    assert endpoint.is_literal_loopback is is_loopback
+
+
+@pytest.mark.parametrize(("url", "loopback"), [(case["url"], case["loopback"]) for case in LOOPBACK_ENDPOINTS])
+def test_validate_http_endpoint_matches_frontend_loopback_classification(url: str, loopback: bool) -> None:
+    assert validate_http_endpoint(url).is_loopback is loopback
+
+
+def test_validate_http_endpoint_accepts_idna_and_trailing_dot() -> None:
+    url = "https://bücher.example./v1/completions"
+
+    endpoint = validate_http_endpoint(url)
+
+    assert endpoint.url == url
+    assert endpoint.hostname == "bücher.example."
+    assert endpoint.ip_host is None
+
+
+def test_validate_http_endpoint_invalid_label_keeps_ip_error_as_cause() -> None:
+    with pytest.raises(ValueError, match="has an invalid host") as exc_info:
+        validate_http_endpoint("https://bad-.example/v1/completions")
+
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert "does not appear to be an IPv4 or IPv6 address" in str(exc_info.value.__cause__)
+
+
+def test_validate_http_endpoint_invalid_unicode_keeps_unicode_error_as_cause() -> None:
+    with pytest.raises(ValueError, match="has an invalid host") as exc_info:
+        validate_http_endpoint("https://bad\ud800.example/v1/completions")
+
+    assert isinstance(exc_info.value.__cause__, UnicodeError)
 
 
 def test_warn_plaintext_remote_http_external_enforce() -> None:

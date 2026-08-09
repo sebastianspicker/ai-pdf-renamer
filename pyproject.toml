@@ -28,12 +28,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sebastianspicker/AI-PDF-Renamer#readme"
-Source = "https://github.com/sebastianspicker/AI-PDF-Renamer"
-Issues = "https://github.com/sebastianspicker/AI-PDF-Renamer/issues"
-Changelog = "https://github.com/sebastianspicker/AI-PDF-Renamer/blob/main/CHANGELOG.md"
-Security = "https://github.com/sebastianspicker/AI-PDF-Renamer/security/policy"
-Documentation = "https://github.com/sebastianspicker/AI-PDF-Renamer/tree/main/docs"
+Homepage = "https://github.com/sebastianspicker/folionym#readme"
+Source = "https://github.com/sebastianspicker/folionym"
+Issues = "https://github.com/sebastianspicker/folionym/issues"
+Changelog = "https://github.com/sebastianspicker/folionym/blob/main/CHANGELOG.md"
+Security = "https://github.com/sebastianspicker/folionym/security/policy"
+Documentation = "https://github.com/sebastianspicker/folionym/tree/main/docs"
 
 [project.optional-dependencies]
 dev = [

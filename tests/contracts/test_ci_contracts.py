@@ -30,7 +30,8 @@ def test_ci_has_targeted_macos_and_windows_smoke_jobs() -> None:
     assert "os: [macos-latest, windows-latest]" in workflow
     assert "uv sync --frozen --extra dev --extra pdf --extra tui" in workflow
     assert "tests/e2e/test_cli_e2e.py" in workflow
-    assert "tests/unit/test_rename_ops.py" in workflow
+    assert "tests/unit/test_rename_workflow.py" in workflow
+    assert "tests/unit/test_rename_atomic_fallbacks.py" in workflow
     assert "tests/unit/test_undo_cli.py" in workflow
 
 

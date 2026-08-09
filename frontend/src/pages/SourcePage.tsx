@@ -33,6 +33,29 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+type ExternalEndpointAcknowledgementDetail = {
+  code: "external_endpoint_ack_required";
+  endpoint: unknown;
+};
+
+function isConflictApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 409;
+}
+
+function isExternalEndpointAcknowledgementDetail(
+  detail: unknown,
+): detail is ExternalEndpointAcknowledgementDetail {
+  if (detail === null || typeof detail !== "object") return false;
+  if (!("code" in detail) || !("endpoint" in detail)) return false;
+  return detail.code === "external_endpoint_ack_required";
+}
+
+function requiresExternalEndpointAcknowledgement(
+  error: unknown,
+): error is ApiError & { detail: ExternalEndpointAcknowledgementDetail } {
+  return isConflictApiError(error) && isExternalEndpointAcknowledgementDetail(error.detail);
+}
+
 export function SourcePage({
   bootstrap,
   onBootstrapChange,
@@ -75,15 +98,7 @@ export function SourcePage({
       setRunId(result.run_id);
       onBootstrapChange({ ...bootstrap, settings });
     } catch (requestError: unknown) {
-      if (
-        requestError instanceof ApiError &&
-        requestError.status === 409 &&
-        typeof requestError.detail === "object" &&
-        requestError.detail !== null &&
-        "code" in requestError.detail &&
-        "endpoint" in requestError.detail &&
-        requestError.detail.code === "external_endpoint_ack_required"
-      ) {
+      if (requiresExternalEndpointAcknowledgement(requestError)) {
         setAck({ endpoint: String(requestError.detail.endpoint ?? settings.llm_url) });
         return;
       }

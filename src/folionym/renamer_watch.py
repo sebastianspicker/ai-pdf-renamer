@@ -37,6 +37,16 @@ class WatchLoopDependencies:
     logger: logging.Logger
 
 
+@dataclass(frozen=True)
+class WatchLoopContext:
+    """Inputs shared by every scan-loop iteration."""
+
+    path: Path
+    config: RenamerConfig
+    interval_seconds: float
+    deps: WatchLoopDependencies
+
+
 @dataclass
 class WatchLoopState:
     """Mutable watch state containing observed mtimes and prior rename targets."""
@@ -150,6 +160,31 @@ def _run_watch_iteration(
     )
 
 
+def _run_watch_cycle(
+    context: WatchLoopContext,
+    state: WatchLoopState,
+    stop_requested: Callable[[], bool],
+) -> WatchLoopState:
+    """Run one watch iteration, retaining state after recoverable failures."""
+    try:
+        next_state = _run_watch_iteration(
+            context.path,
+            context.config,
+            state,
+            stop_requested,
+            deps=context.deps,
+        )
+    except _RECOVERABLE_WATCH_EXCEPTIONS as exc:
+        if stop_requested():
+            return state
+        context.deps.logger.exception("Watch iteration failed: %s", exc)
+        time.sleep(context.interval_seconds)
+        return state
+    if not stop_requested():
+        time.sleep(context.interval_seconds)
+    return next_state
+
+
 def _install_watch_signal_handlers(
     handle_stop: Callable[[int, FrameType | None], None],
 ) -> tuple[bool, _SignalHandler, _SignalHandler]:
@@ -204,24 +239,12 @@ def run_watch_loop_impl(
     is_main_thread, original_sigterm, original_sigint = _install_watch_signal_handlers(handle_stop)
 
     # Track successful rename targets so watch mode does not process its own outputs.
+    context = WatchLoopContext(path, config, interval_seconds, deps)
     loop_state = WatchLoopState(seen={}, renamed_targets=set())
     deps.logger.info("Watch mode: scanning %s every %.1fs (Ctrl+C or SIGTERM to stop)", path, interval_seconds)
     try:
         while not stop_requested:
-            try:
-                loop_state = _run_watch_iteration(
-                    path,
-                    config,
-                    loop_state,
-                    lambda: stop_requested,
-                    deps=deps,
-                )
-                if not stop_requested:
-                    time.sleep(interval_seconds)
-            except _RECOVERABLE_WATCH_EXCEPTIONS as exc:
-                if not stop_requested:
-                    deps.logger.exception("Watch iteration failed: %s", exc)
-                    time.sleep(interval_seconds)
+            loop_state = _run_watch_cycle(context, loop_state, lambda: stop_requested)
     finally:
         _restore_watch_signal_handlers(is_main_thread, original_sigterm, original_sigint)
         deps.logger.info("Watch stopped")

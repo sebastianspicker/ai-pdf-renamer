@@ -7,7 +7,9 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -86,26 +88,113 @@ def test_shrink_to_token_limit_reduces_text(monkeypatch) -> None:
 
 
 def test_token_count_without_tiktoken(monkeypatch) -> None:
-    """When tiktoken is unavailable, _token_count falls back to len//4."""
-    # Force the cached encoding to None so the import path is re-entered.
+    """An unavailable tiktoken module falls back and caches the failure sentinel."""
     monkeypatch.setattr(pdf_extract, "_tiktoken_encoding", None)
+    monkeypatch.setitem(sys.modules, "tiktoken", None)
 
-    # Make 'import tiktoken' raise ImportError inside _token_count.
-    original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__  # type: ignore[union-attr]
+    assert pdf_extract.estimate_token_count("a" * 400) == 100
+    assert pdf_extract._tiktoken_encoding is pdf_extract._TIKTOKEN_MISSING
 
-    def _fake_import(name, *args, **kwargs):  # type: ignore[no-untyped-def]
-        if name == "tiktoken":
-            raise ImportError("no tiktoken")
-        return original_import(name, *args, **kwargs)
 
-    monkeypatch.setattr("builtins.__import__", _fake_import)
+def test_token_count_caches_tokenizer_initialization_failure(monkeypatch) -> None:
+    """A tokenizer lookup failure is not retried after the failure sentinel is cached."""
+    calls = 0
 
-    text = "a" * 400  # len=400, expected fallback = 400//4 = 100
-    result = pdf_extract.estimate_token_count(text)
-    assert result == 100
+    class FailingTiktoken:
+        @staticmethod
+        def get_encoding(name: str) -> object:
+            nonlocal calls
+            assert name == "cl100k_base"
+            calls += 1
+            raise LookupError("missing encoding")
 
-    # Restore to avoid polluting other tests.
     monkeypatch.setattr(pdf_extract, "_tiktoken_encoding", None)
+    monkeypatch.setitem(sys.modules, "tiktoken", FailingTiktoken())
+
+    assert pdf_extract._token_count("a" * 8) == 2
+    assert pdf_extract._token_count("a" * 8) == 2
+    assert calls == 1
+    assert pdf_extract._tiktoken_encoding is pdf_extract._TIKTOKEN_MISSING
+
+
+def test_token_count_uses_cached_tokenizer(monkeypatch) -> None:
+    """A successfully initialized tokenizer supplies the exact encoded length."""
+    calls = 0
+
+    class Encoding:
+        def encode(self, text: str) -> list[str]:
+            return list(text)
+
+    encoding = Encoding()
+
+    class FakeTiktoken:
+        @staticmethod
+        def get_encoding(name: str) -> Encoding:
+            nonlocal calls
+            assert name == "cl100k_base"
+            calls += 1
+            return encoding
+
+    monkeypatch.setattr(pdf_extract, "_tiktoken_encoding", None)
+    monkeypatch.setitem(sys.modules, "tiktoken", FakeTiktoken())
+
+    assert pdf_extract._token_count("hello") == 5
+    assert pdf_extract._token_count("bye") == 3
+    assert calls == 1
+    assert pdf_extract._tiktoken_encoding is encoding
+
+
+@pytest.mark.parametrize("error", [AttributeError, RuntimeError, ValueError])
+def test_token_count_falls_back_when_encoding_fails(monkeypatch, error: type[Exception]) -> None:
+    """Encoding errors retain the four-character heuristic."""
+
+    class FailingEncoding:
+        def encode(self, text: str) -> list[str]:
+            del text
+            raise error("cannot encode")
+
+    monkeypatch.setattr(pdf_extract, "_tiktoken_encoding", FailingEncoding())
+
+    assert pdf_extract._token_count("a" * 8) == 2
+
+
+def test_token_count_fallback_has_a_minimum_of_one(monkeypatch) -> None:
+    monkeypatch.setattr(pdf_extract, "_tiktoken_encoding", pdf_extract._TIKTOKEN_MISSING)
+
+    assert pdf_extract._token_count("") == 1
+    assert pdf_extract._token_count("abc") == 1
+    assert pdf_extract._token_count("abcdefgh") == 2
+
+
+def test_token_count_initializes_once_across_threads(monkeypatch) -> None:
+    """Concurrent first callers share the double-checked initialization result."""
+    calls = 0
+    calls_lock = threading.Lock()
+    start = threading.Barrier(4)
+
+    class Encoding:
+        def encode(self, text: str) -> list[str]:
+            return list(text)
+
+    class FakeTiktoken:
+        @staticmethod
+        def get_encoding(name: str) -> Encoding:
+            nonlocal calls
+            assert name == "cl100k_base"
+            with calls_lock:
+                calls += 1
+            return Encoding()
+
+    def count_after_barrier(_: int) -> int:
+        start.wait()
+        return pdf_extract._token_count("test")
+
+    monkeypatch.setattr(pdf_extract, "_tiktoken_encoding", None)
+    monkeypatch.setitem(sys.modules, "tiktoken", FakeTiktoken())
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        assert list(executor.map(count_after_barrier, range(4))) == [4] * 4
+    assert calls == 1
 
 
 def test_shrink_to_token_limit_already_under(monkeypatch) -> None:

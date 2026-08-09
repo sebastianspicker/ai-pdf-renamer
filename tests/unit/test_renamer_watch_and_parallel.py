@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import contextlib
 import json
+import signal
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
 import folionym.renamer as renamer
+import folionym.renamer_watch as renamer_watch
 from tests.conftest import make_config as _cfg
 from tests.conftest import write_dummy_pdf as _write_dummy_pdf
 from tests.helpers import patch_renamer_process_result
@@ -151,6 +154,50 @@ class TestProcessContentToResult:
 
 
 class TestWatchLoop:
+    def test_watch_loop_recovers_once_then_stops_without_extra_sleep(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A recoverable scan failure keeps state, pauses once, and respects a later stop signal."""
+        logger = Mock()
+        stop_handlers: list[Any] = []
+        restored_handlers: list[tuple[bool, Any, Any]] = []
+        states: list[Any] = []
+        sleep_calls: list[float] = []
+        recoverable_error = OSError("temporary scan failure")
+
+        def install_handler(handler: Any) -> tuple[bool, Any, Any]:
+            stop_handlers.append(handler)
+            return (True, signal.SIG_DFL, signal.SIG_IGN)
+
+        def restore_handlers(is_main_thread: bool, sigterm: Any, sigint: Any) -> None:
+            restored_handlers.append((is_main_thread, sigterm, sigint))
+
+        def fail_then_stop(*args: Any, **kwargs: Any) -> renamer_watch.WatchLoopState:
+            state = args[2]
+            states.append(state)
+            if len(states) == 1:
+                raise recoverable_error
+            stop_handlers[0](signal.SIGTERM, None)
+            return state
+
+        deps = renamer_watch.WatchLoopDependencies(
+            collect_pdf_files_fn=lambda *args, **kwargs: [],
+            load_processing_rules_fn=lambda *args, **kwargs: None,
+            rename_pdfs_in_directory_fn=lambda *args, **kwargs: set(),
+            logger=logger,
+        )
+        monkeypatch.setattr(renamer_watch, "_install_watch_signal_handlers", install_handler)
+        monkeypatch.setattr(renamer_watch, "_restore_watch_signal_handlers", restore_handlers)
+        monkeypatch.setattr(renamer_watch, "_run_watch_iteration", fail_then_stop)
+        monkeypatch.setattr(renamer_watch.time, "sleep", sleep_calls.append)
+
+        renamer_watch.run_watch_loop_impl(tmp_path, config=_cfg(dry_run=True), interval_seconds=0.5, deps=deps)
+
+        assert states[0] is states[1]
+        assert sleep_calls == [0.5]
+        logger.exception.assert_called_once_with("Watch iteration failed: %s", recoverable_error)
+        assert restored_handlers == [(True, signal.SIG_DFL, signal.SIG_IGN)]
+
     def test_watch_loop_processes_new_files(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Watch loop detects a new PDF and calls rename_pdfs_in_directory for it."""
         pdf = tmp_path / "new-doc.pdf"

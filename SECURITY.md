@@ -108,7 +108,7 @@ URL, request payload, document paths, metadata, and response body.
 
 If you discover a security vulnerability, please avoid creating a public issue.
 Instead, use the repository's
-[private security-advisory form](https://github.com/sebastianspicker/AI-PDF-Renamer/security/advisories/new)
+[private security-advisory form](https://github.com/sebastianspicker/folionym/security/advisories/new)
 when it is available to your GitHub account.
 
 If private advisories are unavailable, do not put vulnerability details,

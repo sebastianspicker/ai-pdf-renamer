@@ -1,0 +1,16 @@
+[
+  { "url": "http://localhost:11434/v1/completions", "loopback": true },
+  { "url": "HTTP://LOCALHOST:11434/v1/completions", "loopback": true },
+  { "url": "http://127.0.0.1:8080/v1/completions", "loopback": true },
+  { "url": "http://127.255.255.254:8080/v1/completions", "loopback": true },
+  { "url": "http://[::1]:8080/v1/completions", "loopback": true },
+  { "url": "http://[0:0:0:0:0:0:0:1]:8080/v1/completions", "loopback": true },
+  { "url": "http://[::ffff:127.0.0.1]:8080/v1/completions", "loopback": true },
+  { "url": "https://localhost.example/v1/completions", "loopback": false },
+  { "url": "https://example.com/localhost", "loopback": false },
+  { "url": "https://example.com/v1?next=127.0.0.1", "loopback": false },
+  { "url": "https://127.0.0.1.example/v1/completions", "loopback": false },
+  { "url": "http://127.1/v1/completions", "loopback": false },
+  { "url": "http://localhost./v1/completions", "loopback": false },
+  { "url": "https://[2001:db8::1]/v1/completions", "loopback": false }
+]

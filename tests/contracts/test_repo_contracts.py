@@ -7,7 +7,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from folionym import renamer
+from folionym import rename_ops, renamer
 from folionym.config import RenamerConfig
 from folionym.filename import generate_filename
 from folionym.heuristics import CategoryCombineParams
@@ -51,7 +51,20 @@ LEGACY_IDENTITIES = (
     "AI" + "_PDF_RENAMER",
     "AI" + "RenamerTUI",
 )
-CURRENT_REPOSITORY_URL = "https://github.com/sebastianspicker/" + "AI" + "-PDF-Renamer"
+CURRENT_REPOSITORY_URL = "https://github.com/sebastianspicker/folionym"
+RENAME_OPS_PUBLIC_EXPORTS = {
+    "FILENAME_RESERVED_WIN",
+    "FILENAME_UNSAFE_RE",
+    "MAX_LLM_FILENAME_LEN",
+    "MAX_RENAME_RETRIES",
+    "RenameApplyOptions",
+    "RenameAttemptState",
+    "RenameRetryContext",
+    "apply_single_rename",
+    "is_path_within",
+    "sanitize_filename_base",
+    "sanitize_filename_from_llm",
+}
 
 
 def _read_repo_file(path: str) -> str:
@@ -216,6 +229,11 @@ def test_documented_public_api_uses_owning_modules_without_compatibility_reexpor
     assert not hasattr(renamer, "generate_filename")
     assert not hasattr(renamer, "collect_pdf_files")
     assert not hasattr(renamer, "CategoryCombineParams")
+
+
+def test_rename_ops_facade_preserves_its_documented_exports() -> None:
+    assert set(rename_ops.__all__) == RENAME_OPS_PUBLIC_EXPORTS
+    assert all(hasattr(rename_ops, name) for name in RENAME_OPS_PUBLIC_EXPORTS)
 
 
 def test_public_tui_screenshots_are_accessible_and_self_contained() -> None:
