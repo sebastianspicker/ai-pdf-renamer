@@ -21,7 +21,9 @@ Start with these files:
 3. `src/folionym/renamer.py` orchestrates discovery, proposal calculation, and
    sequential rename handling.
 4. `src/folionym/filename.py` constructs names.
-5. `src/folionym/rename_ops.py` contains the filesystem mutation boundary.
+5. `src/folionym/rename_ops/` contains the filesystem mutation boundary; its
+   `__init__.py` is the stable import facade described by
+   [ADR 0001](docs/decisions/0001-rename-filesystem-boundary.md).
 6. `src/folionym/web_app.py`, `src/folionym/web_runtime.py`, and
    `src/folionym/frontend_service.py` implement the browser service.
 7. `src/folionym/tui.py` and the other `tui_*` modules implement the terminal
@@ -31,7 +33,7 @@ Start with these files:
 
 The package uses a `src` layout. Import public objects from their owning
 modules. Do not introduce compatibility re-exports without a documented API
-requirement.
+requirement. The `folionym.rename_ops` facade is the documented exception.
 
 Tests are grouped by execution boundary:
 

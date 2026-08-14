@@ -30,7 +30,8 @@ def test_ci_has_targeted_macos_and_windows_smoke_jobs() -> None:
     assert "os: [macos-latest, windows-latest]" in workflow
     assert "uv sync --frozen --extra dev --extra pdf --extra tui" in workflow
     assert "tests/e2e/test_cli_e2e.py" in workflow
-    assert "tests/unit/test_rename_ops.py" in workflow
+    assert "tests/unit/test_rename_workflow.py" in workflow
+    assert "tests/unit/test_rename_atomic_fallbacks.py" in workflow
     assert "tests/unit/test_undo_cli.py" in workflow
 
 
@@ -46,7 +47,8 @@ def test_typecheck_gate_covers_runtime_scripts() -> None:
     pyproject = _read("pyproject.toml")
 
     assert "mypy src/folionym/ scripts/" in makefile
-    assert 'mypy_path = ["src", "scripts"]' in pyproject
+    assert 'mypy_path = ["src"]' in pyproject
+    assert 'exclude = ["^tests/"]' in pyproject
     assert "explicit_package_bases = true" in pyproject
     assert 'python_version = "3.14"' in pyproject
 

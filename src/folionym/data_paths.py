@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 DataFileName = Literal[
     "heuristic_scores.json",
@@ -24,6 +25,20 @@ DATA_FILES: frozenset[str] = frozenset(
         "category_aliases.json",
     }
 )
+
+
+def load_json_data(path: str | Path) -> Any:
+    """Read one JSON data file with consistent path-aware errors."""
+    path_obj = Path(path)
+    try:
+        text = path_obj.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"Could not read data file at {path_obj.absolute()}: {exc!s}") from exc
+    try:
+        data: Any = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in data file at {path_obj.absolute()}. {exc!s}") from exc
+    return data
 
 
 def _discover_repo_root(start: Path | None = None) -> Path | None:

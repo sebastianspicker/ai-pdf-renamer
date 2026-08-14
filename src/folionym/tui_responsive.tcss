@@ -1,0 +1,120 @@
+Screen.compact #review-inspector,
+Screen.compact #review-description,
+Screen.compact #activity-label {
+    display: none;
+}
+
+Screen.compact #brand-bar {
+    height: 2;
+    min-height: 2;
+}
+
+Screen.compact #current-scope {
+    display: none;
+}
+
+Screen.compact #brand-name,
+Screen.compact #trust-state {
+    width: 1fr;
+}
+
+Screen.compact #workflow-header {
+    height: 3;
+    padding: 0 1;
+}
+
+Screen.compact .workflow-nav {
+    height: 3;
+    padding: 0 1;
+}
+
+Screen.compact #review-workspace {
+    padding: 0 1;
+}
+
+Screen.compact #preview-pane {
+    width: 1fr;
+    padding: 0;
+}
+
+Screen.compact #run-status-bar {
+    height: 2;
+}
+
+Screen.compact #run-metrics {
+    height: 2;
+}
+
+Screen.compact .run-metric {
+    height: 2;
+    padding: 0 1;
+}
+
+Screen.compact #run-log {
+    height: 2;
+}
+
+Screen.compact #preview-table {
+    min-height: 3;
+}
+
+Screen.compact #run-guidance {
+    height: 2;
+    padding: 0 1;
+}
+
+Screen.compact #run-buttons {
+    height: 6;
+    grid-size: 2 2;
+    grid-columns: 1fr 1fr;
+    padding: 0 1;
+}
+
+ConfirmActionScreen {
+    align: center middle;
+    background: #17202D 35%;
+}
+
+#confirm-dialog {
+    grid-size: 2;
+    grid-gutter: 1 2;
+    grid-rows: 3 1fr 3;
+    width: 68;
+    height: 16;
+    padding: 1 2;
+    background: $background;
+    border: solid $strong-border;
+}
+
+#confirm-title,
+#confirm-detail {
+    column-span: 2;
+    width: 1fr;
+}
+
+#confirm-title {
+    color: $foreground;
+    text-style: bold;
+    content-align: left middle;
+}
+
+#confirm-detail {
+    color: $muted-copy;
+}
+
+#confirm-dialog Button {
+    width: 1fr;
+}
+
+#confirm-action {
+    color: #FFFFFF;
+    background: $error;
+    border: tall $error;
+}
+
+#confirm-action:hover,
+#confirm-action:focus {
+    color: #FFFFFF;
+    background: #8F1C13;
+    border: tall #8F1C13;
+}

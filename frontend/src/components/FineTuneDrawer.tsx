@@ -1,9 +1,105 @@
-import type { ReactNode } from "react";
-import type { Settings } from "../types";
+import type { ChangeEvent, ReactNode } from "react";
+import type { Settings, SettingsBooleanKey, SettingsTextKey } from "../types";
 import { Button } from "./Button";
 import { Field } from "./Field";
 import { Switch } from "./Switch";
 import { TextInput } from "./TextInput";
+
+type SettingsChangeHandler = (key: keyof Settings, value: Settings[keyof Settings]) => void;
+
+function createTextSettingChangeHandler(setting: SettingsTextKey, onChange: SettingsChangeHandler) {
+  return (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    onChange(setting, event.target.value);
+  };
+}
+
+type TextSettingProps = {
+  hint?: string;
+  inputMode?: "numeric";
+  label: string;
+  onChange: SettingsChangeHandler;
+  placeholder?: string;
+  setting: SettingsTextKey;
+  settings: Settings;
+};
+
+const OUTPUT_TEXT_SETTINGS = [
+  { label: "Backup folder", setting: "backup_dir" },
+  { label: "Rename log", setting: "rename_log" },
+  { label: "Metadata export", setting: "export_metadata" },
+  { label: "Summary JSON", setting: "summary_json" },
+  { label: "Rules file", setting: "rules_file" },
+] as const satisfies ReadonlyArray<Pick<TextSettingProps, "label" | "setting">>;
+
+function TextSetting({ hint, inputMode, label, onChange, placeholder, setting, settings }: TextSettingProps) {
+  return (
+    <Field hint={hint} label={label}>
+      <TextInput
+        inputMode={inputMode}
+        onChange={createTextSettingChangeHandler(setting, onChange)}
+        placeholder={placeholder}
+        value={settings[setting]}
+      />
+    </Field>
+  );
+}
+
+function SelectSetting({
+  children,
+  label,
+  onChange,
+  setting,
+  settings,
+}: TextSettingProps & { children: ReactNode }) {
+  return (
+    <Field label={label}>
+      <select
+        className="select"
+        onChange={createTextSettingChangeHandler(setting, onChange)}
+        value={settings[setting]}
+      >
+        {children}
+      </select>
+    </Field>
+  );
+}
+
+type ToggleSettingProps = {
+  description?: string;
+  label: string;
+  onChange: SettingsChangeHandler;
+  setting: SettingsBooleanKey;
+  settings: Settings;
+};
+
+const PROCESSING_TOGGLES = [
+  { label: "OCR scanned PDFs", setting: "use_ocr" },
+  { label: "Vision fallback", setting: "use_vision_fallback" },
+  { label: "Vision first", setting: "vision_first" },
+  { label: "Use structured fields", setting: "use_structured_fields" },
+  { label: "Use PDF metadata date", setting: "use_pdf_metadata_date" },
+  { label: "Skip already named PDFs", setting: "skip_already_named" },
+  { label: "Include subfolders", setting: "recursive" },
+] as const satisfies ReadonlyArray<Pick<ToggleSettingProps, "label" | "setting">>;
+
+function ToggleSetting({
+  description,
+  label,
+  onChange,
+  setting,
+  settings,
+}: ToggleSettingProps) {
+  return (
+    <Switch
+      checked={settings[setting]}
+      description={description}
+      label={label}
+      onChange={(value) => {
+        onChange(setting, value);
+      }}
+    />
+  );
+}
 
 export function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -22,7 +118,7 @@ export function FineTuneDrawer({
 }: {
   open: boolean;
   settings: Settings;
-  onChange: (key: keyof Settings, value: Settings[keyof Settings]) => void;
+  onChange: SettingsChangeHandler;
   onClose: () => void;
 }) {
   if (!open) return null;
@@ -42,194 +138,85 @@ export function FineTuneDrawer({
         <div className="drawer__body">
           <SettingsSection title="Naming">
             <div className="field-grid">
-              <Field label="Language">
-                <select
-                  className="select"
-                  onChange={(event) => {
-                    onChange("language", event.target.value);
-                  }}
-                  value={settings.language}
-                >
-                  <option value="de">German</option>
-                  <option value="en">English</option>
-                  <option value="fr">French</option>
-                  <option value="es">Spanish</option>
-                </select>
-              </Field>
-              <Field label="Case">
-                <select className="select" onChange={(event) => {
-                  onChange("case", event.target.value);
-                }} value={settings.case}>
-                  <option value="kebabCase">kebab-case</option>
-                  <option value="snake_case">snake_case</option>
-                  <option value="camelCase">camelCase</option>
-                  <option value="Title Case">Title Case</option>
-                </select>
-              </Field>
-              <Field label="Date order">
-                <select
-                  className="select"
-                  onChange={(event) => {
-                    onChange("date_format", event.target.value);
-                  }}
-                  value={settings.date_format}
-                >
-                  <option value="dmy">Day / month / year</option>
-                  <option value="ymd">Year / month / day</option>
-                  <option value="mdy">Month / day / year</option>
-                </select>
-              </Field>
-              <Field label="Preset">
-                <select
-                  className="select"
-                  onChange={(event) => {
-                    onChange("preset", event.target.value);
-                  }}
-                  value={settings.preset}
-                >
-                  <option value="">Default</option>
-                  <option value="fast">Fast</option>
-                  <option value="scanned">Scanned documents</option>
-                  <option value="high-confidence-heuristic">High-confidence heuristic</option>
-                </select>
-              </Field>
+              <SelectSetting label="Language" onChange={onChange} setting="language" settings={settings}>
+                <option value="de">German</option>
+                <option value="en">English</option>
+                <option value="fr">French</option>
+                <option value="es">Spanish</option>
+              </SelectSetting>
+              <SelectSetting label="Case" onChange={onChange} setting="case" settings={settings}>
+                <option value="kebabCase">kebab-case</option>
+                <option value="snake_case">snake_case</option>
+                <option value="camelCase">camelCase</option>
+                <option value="Title Case">Title Case</option>
+              </SelectSetting>
+              <SelectSetting label="Date order" onChange={onChange} setting="date_format" settings={settings}>
+                <option value="dmy">Day / month / year</option>
+                <option value="ymd">Year / month / day</option>
+                <option value="mdy">Month / day / year</option>
+              </SelectSetting>
+              <SelectSetting label="Preset" onChange={onChange} setting="preset" settings={settings}>
+                <option value="">Default</option>
+                <option value="fast">Fast</option>
+                <option value="scanned">Scanned documents</option>
+                <option value="high-confidence-heuristic">High-confidence heuristic</option>
+              </SelectSetting>
             </div>
-            <Field hint="Optional. Overrides the standard naming structure." label="Filename template">
-              <TextInput
-                onChange={(event) => {
-                  onChange("template", event.target.value);
-                }}
-                placeholder="{date}-{category}-{subject}"
-                value={settings.template}
-              />
-            </Field>
+            <TextSetting
+              hint="Optional. Overrides the standard naming structure."
+              label="Filename template"
+              onChange={onChange}
+              placeholder="{date}-{category}-{subject}"
+              setting="template"
+              settings={settings}
+            />
             <div className="field-grid">
-              <Field label="Project">
-                <TextInput onChange={(event) => {
-                  onChange("project", event.target.value);
-                }} value={settings.project} />
-              </Field>
-              <Field label="Version">
-                <TextInput onChange={(event) => {
-                  onChange("version", event.target.value);
-                }} value={settings.version} />
-              </Field>
+              <TextSetting label="Project" onChange={onChange} setting="project" settings={settings} />
+              <TextSetting label="Version" onChange={onChange} setting="version" settings={settings} />
             </div>
           </SettingsSection>
           <SettingsSection title="Processing">
-            <Switch
-              checked={settings.use_llm}
+            <ToggleSetting
               description="Use the configured compatible endpoint for enrichment."
               label="Model assistance"
-              onChange={(value) => {
-                onChange("use_llm", value);
-              }}
+              onChange={onChange}
+              setting="use_llm"
+              settings={settings}
             />
             {settings.use_llm && (
               <>
-                <Field label="Model endpoint">
-                  <TextInput
-                    onChange={(event) => {
-                      onChange("llm_url", event.target.value);
-                    }}
-                    placeholder="http://127.0.0.1:11434/v1/completions"
-                    value={settings.llm_url}
-                  />
-                </Field>
+                <TextSetting
+                  label="Model endpoint"
+                  onChange={onChange}
+                  placeholder="http://127.0.0.1:11434/v1/completions"
+                  setting="llm_url"
+                  settings={settings}
+                />
                 <div className="field-grid">
-                  <Field label="Model">
-                    <TextInput
-                      onChange={(event) => {
-                        onChange("llm_model", event.target.value);
-                      }}
-                      value={settings.llm_model}
-                    />
-                  </Field>
-                  <Field label="Workers">
-                    <TextInput
-                      inputMode="numeric"
-                      onChange={(event) => {
-                        onChange("workers", event.target.value);
-                      }}
-                      value={settings.workers}
-                    />
-                  </Field>
+                  <TextSetting label="Model" onChange={onChange} setting="llm_model" settings={settings} />
+                  <TextSetting
+                    inputMode="numeric"
+                    label="Workers"
+                    onChange={onChange}
+                    setting="workers"
+                    settings={settings}
+                  />
                 </div>
               </>
             )}
-            <Switch checked={settings.use_ocr} label="OCR scanned PDFs" onChange={(value) => {
-              onChange("use_ocr", value);
-            }} />
-            <Switch
-              checked={settings.use_vision_fallback}
-              label="Vision fallback"
-              onChange={(value) => {
-                onChange("use_vision_fallback", value);
-              }}
-            />
-            <Switch checked={settings.vision_first} label="Vision first" onChange={(value) => {
-              onChange("vision_first", value);
-            }} />
-            <Switch
-              checked={settings.use_structured_fields}
-              label="Use structured fields"
-              onChange={(value) => {
-                onChange("use_structured_fields", value);
-              }}
-            />
-            <Switch
-              checked={settings.use_pdf_metadata_date}
-              label="Use PDF metadata date"
-              onChange={(value) => {
-                onChange("use_pdf_metadata_date", value);
-              }}
-            />
-            <Switch
-              checked={settings.skip_already_named}
-              label="Skip already named PDFs"
-              onChange={(value) => {
-                onChange("skip_already_named", value);
-              }}
-            />
-            <Switch checked={settings.recursive} label="Include subfolders" onChange={(value) => {
-              onChange("recursive", value);
-            }} />
+            {PROCESSING_TOGGLES.map((toggle) => (
+              <ToggleSetting key={toggle.setting} {...toggle} onChange={onChange} settings={settings} />
+            ))}
           </SettingsSection>
           <SettingsSection title="Output">
-            <Field label="Backup folder">
-              <TextInput onChange={(event) => {
-                onChange("backup_dir", event.target.value);
-              }} value={settings.backup_dir} />
-            </Field>
-            <Field label="Rename log">
-              <TextInput onChange={(event) => {
-                onChange("rename_log", event.target.value);
-              }} value={settings.rename_log} />
-            </Field>
-            <Field label="Metadata export">
-              <TextInput
-                onChange={(event) => {
-                  onChange("export_metadata", event.target.value);
-                }}
-                value={settings.export_metadata}
-              />
-            </Field>
-            <Field label="Summary JSON">
-              <TextInput onChange={(event) => {
-                onChange("summary_json", event.target.value);
-              }} value={settings.summary_json} />
-            </Field>
-            <Field label="Rules file">
-              <TextInput onChange={(event) => {
-                onChange("rules_file", event.target.value);
-              }} value={settings.rules_file} />
-            </Field>
-            <Switch
-              checked={settings.write_pdf_metadata}
+            {OUTPUT_TEXT_SETTINGS.map((field) => (
+              <TextSetting key={field.setting} {...field} onChange={onChange} settings={settings} />
+            ))}
+            <ToggleSetting
               label="Write PDF metadata"
-              onChange={(value) => {
-                onChange("write_pdf_metadata", value);
-              }}
+              onChange={onChange}
+              setting="write_pdf_metadata"
+              settings={settings}
             />
           </SettingsSection>
         </div>

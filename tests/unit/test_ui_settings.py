@@ -9,7 +9,8 @@ from pathlib import Path
 import pytest
 
 from folionym.tui_state import SETTINGS_PATH, _load_settings, _save_settings
-from folionym.ui_settings import load_ui_settings, merged_ui_settings, save_ui_settings
+from folionym.ui_settings import DEFAULT_UI_SETTINGS, load_ui_settings, merged_ui_settings, save_ui_settings
+from folionym.web_schema import UISettingsPayload
 
 
 def test_load_ui_settings_migrates_legacy_file(tmp_path: Path) -> None:
@@ -38,6 +39,11 @@ def test_merged_ui_settings_fills_defaults_without_overwriting_saved_values() ->
     assert merged["language"] == "en"
     assert merged["workers"] == "4"
     assert merged["use_structured_fields"] is True
+
+
+def test_persisted_and_http_settings_defaults_stay_identical() -> None:
+    """Prevent the persistence and HTTP schema copies from drifting silently."""
+    assert UISettingsPayload().model_dump() == DEFAULT_UI_SETTINGS
 
 
 def test_tui_settings_path_uses_shared_filename() -> None:

@@ -105,12 +105,10 @@ class PromptKeyOptions:
         return self.cache_options.cache_key_base
 
 
-class _LlmPromptContentOptions:
-    """Shared prompt, content-limit, and cache accessors for LLM requests."""
+class _LlmPromptAccess:
+    """Provide stateless accessors backed by nested prompt options."""
 
     prompt: LlmPromptOptions
-    limits: LlmContentLimits
-    cache_options: LlmCacheOptions
 
     @property
     def language(self) -> str:
@@ -127,6 +125,12 @@ class _LlmPromptContentOptions:
         """Return whether tolerant JSON parsing is allowed."""
         return self.prompt.lenient_json
 
+
+class _LlmContentLimitsAccess:
+    """Provide stateless accessors backed by nested content limits."""
+
+    limits: LlmContentLimits
+
     @property
     def max_content_chars(self) -> int | None:
         """Return the maximum document characters sent to the model."""
@@ -136,6 +140,12 @@ class _LlmPromptContentOptions:
     def max_content_tokens(self) -> int | None:
         """Return the maximum document tokens sent to the model."""
         return self.limits.max_content_tokens
+
+
+class _LlmCacheAccess:
+    """Provide stateless accessors backed by nested cache options."""
+
+    cache_options: LlmCacheOptions
 
     @property
     def cache(self) -> ResponseCache | None:
@@ -149,7 +159,7 @@ class _LlmPromptContentOptions:
 
 
 @dataclass(frozen=True)
-class AnalysisOptions(_LlmPromptContentOptions):
+class AnalysisOptions(_LlmPromptAccess, _LlmContentLimitsAccess, _LlmCacheAccess):
     """Options for single-call document analysis."""
 
     prompt: LlmPromptOptions = field(default_factory=LlmPromptOptions)
@@ -175,7 +185,7 @@ class AnalysisOptions(_LlmPromptContentOptions):
 
 
 @dataclass(frozen=True)
-class SummaryOptions(_LlmPromptContentOptions):
+class SummaryOptions(_LlmPromptAccess, _LlmContentLimitsAccess, _LlmCacheAccess):
     """Options for document summarization."""
 
     prompt: LlmPromptOptions = field(default_factory=LlmPromptOptions)

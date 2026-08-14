@@ -11,23 +11,9 @@ from pathlib import Path
 import pytest
 
 import folionym.tui_state as tui_state
-from scripts.capture_tui_screenshots import capture
+from scripts.capture_tui_screenshots import SCREENSHOT_METADATA, capture
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_SCREENSHOT_METADATA = {
-    "settings": (
-        "Folionym setup",
-        "Setup tab with the PDF naming pipeline and illustrative source paths.",
-    ),
-    "advanced": (
-        "Folionym fine-tune settings",
-        "Fine-tune tab with illustrative local model and processing configuration.",
-    ),
-    "preview": (
-        "Folionym review and rename",
-        "Review and rename tab showing an illustrative completed preview.",
-    ),
-}
 
 
 def _run_capture_subprocess(output_dir: Path) -> None:
@@ -46,7 +32,7 @@ def test_capture_is_reproducible_across_seeded_subprocesses(tmp_path: Path) -> N
     _run_capture_subprocess(first)
     _run_capture_subprocess(second)
 
-    for screen_name, (title, description) in _SCREENSHOT_METADATA.items():
+    for screen_name, (title, description) in SCREENSHOT_METADATA.items():
         name = f"tui-{screen_name}.svg"
         first_svg = first.joinpath(name).read_text(encoding="utf-8")
         assert first_svg.encode() == second.joinpath(name).read_bytes()

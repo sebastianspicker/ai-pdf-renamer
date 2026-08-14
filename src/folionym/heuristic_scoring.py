@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from .data_paths import load_json_data
 
 logger = logging.getLogger("folionym.heuristics")
 
@@ -46,14 +47,7 @@ def load_heuristic_rules(path: str | Path) -> list[HeuristicRule]:
 
 def _load_heuristic_rule_data(path_obj: Path) -> dict[str, Any]:
     """Load heuristic rule data from configured data."""
-    try:
-        raw = path_obj.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ValueError(f"Could not read data file at {path_obj.absolute()}: {exc!s}") from exc
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid JSON in data file at {path_obj.absolute()}. {exc!s}") from exc
+    data = load_json_data(path_obj)
     if isinstance(data, dict):
         return data
     return {}

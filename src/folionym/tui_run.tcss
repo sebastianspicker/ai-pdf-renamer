@@ -1,0 +1,303 @@
+#run-tab {
+    layout: vertical;
+}
+
+#review-workspace {
+    height: 1fr;
+    padding: 1 2 0 2;
+}
+
+#preview-pane {
+    width: 2fr;
+    height: 1fr;
+    padding: 0 2 0 0;
+}
+
+#review-inspector {
+    width: 36;
+    height: 1fr;
+    padding: 1 2;
+    background: $surface;
+    border-left: solid $quiet-border;
+}
+
+#run-status-bar {
+    height: 3;
+    layout: horizontal;
+    border-bottom: solid $quiet-border;
+}
+
+#review-title {
+    width: 1fr;
+    height: 2;
+    content-align: left middle;
+    color: $foreground;
+    text-style: bold;
+}
+
+#run-status {
+    width: auto;
+    height: 2;
+    color: $muted-copy;
+    content-align: right middle;
+}
+
+#run-status.status-running,
+#run-status.status-cancel {
+    color: $warning;
+    text-style: bold;
+}
+
+#run-status.status-done {
+    color: $success;
+    text-style: bold;
+}
+
+#run-status.status-error {
+    color: $error;
+    text-style: bold;
+}
+
+#run-file-counter {
+    width: auto;
+    height: 2;
+    padding-left: 2;
+    content-align: right middle;
+    color: $muted-copy;
+}
+
+#review-description {
+    height: 2;
+    padding-top: 1;
+    color: $muted-copy;
+}
+
+#run-metrics {
+    height: 2;
+    grid-size: 4;
+    grid-columns: 1fr 1fr 1fr 1fr;
+    border-bottom: solid $quiet-border;
+}
+
+.run-metric {
+    height: 2;
+    padding: 0 1;
+    content-align: left middle;
+    color: $muted-copy;
+    border-right: solid $quiet-border;
+}
+
+#metric-suggestions {
+    color: $success;
+}
+
+#metric-skipped {
+    color: $warning;
+}
+
+#metric-failed {
+    color: $error;
+    border-right: none;
+}
+
+#run-progress {
+    height: 1;
+    margin-bottom: 1;
+    color: $primary;
+    background: $surface;
+}
+
+#preview-empty {
+    height: 3;
+    padding: 0 2;
+    content-align: left middle;
+    color: $muted-copy;
+    background: $surface;
+    border-top: solid $quiet-border;
+    border-bottom: solid $quiet-border;
+}
+
+#preview-table {
+    height: 1fr;
+    min-height: 7;
+    background: $background;
+    color: $foreground;
+    border-top: solid $quiet-border;
+    border-bottom: solid $quiet-border;
+}
+
+#preview-table > .datatable--header {
+    background: $surface;
+    color: $muted-copy;
+    text-style: bold;
+}
+
+#preview-table > .datatable--cursor {
+    background: $selection-soft;
+    color: $foreground;
+}
+
+#activity-label {
+    height: 2;
+    padding-top: 1;
+    color: $foreground;
+    text-style: bold;
+}
+
+#run-log {
+    height: 6;
+    min-height: 3;
+    padding: 0 1;
+    background: $surface;
+    color: $foreground;
+    border-top: solid $quiet-border;
+    border-bottom: solid $quiet-border;
+}
+
+#run-summary {
+    display: none;
+}
+
+.inspector-label {
+    height: 2;
+    padding-top: 1;
+    color: $foreground;
+    text-style: bold;
+}
+
+#inspector-source {
+    height: 2;
+    color: $foreground;
+}
+
+#inspector-proposed {
+    height: auto;
+    min-height: 3;
+    color: $foreground;
+}
+
+#inspector-mode {
+    height: auto;
+    min-height: 1;
+    color: $muted-copy;
+}
+
+.inspector-rule {
+    height: 1;
+    border-top: solid $quiet-border;
+}
+
+#privacy-disclosure {
+    height: auto;
+    min-height: 3;
+    margin: 1 0;
+    padding: 0 2;
+    content-align: left middle;
+    color: $success;
+    background: $success-soft;
+    border: solid $quiet-border;
+}
+
+#effective-config {
+    height: auto;
+    color: $muted-copy;
+}
+
+#run-guidance {
+    height: 3;
+    padding: 0 3;
+    content-align: left middle;
+    color: $warning;
+    background: $warning-soft;
+    border-top: solid $quiet-border;
+}
+
+#run-buttons {
+    height: 4;
+    grid-size: 4;
+    grid-columns: 1fr 1fr 1fr 1fr;
+    grid-gutter: 0 1;
+    padding: 0 2 1 2;
+}
+
+#run-buttons Button {
+    width: 1fr;
+    min-width: 1;
+}
+
+#btn-preview,
+#btn-one,
+#confirm-cancel {
+    color: $foreground;
+    background: $background;
+    border: tall $strong-border;
+}
+
+#btn-preview:focus,
+#btn-one:focus,
+#confirm-cancel:focus {
+    color: $foreground;
+    background: $selection-soft;
+    border: tall $primary;
+}
+
+#btn-apply {
+    color: #FFFFFF;
+    background: $primary;
+    border: tall $primary;
+}
+
+#btn-apply:hover,
+#btn-apply:focus {
+    color: #FFFFFF;
+    background: #1D55BC;
+    border: tall #1D55BC;
+}
+
+#btn-cancel {
+    color: $error;
+    background: $background;
+    border: tall $error;
+}
+
+#btn-cancel:hover,
+#btn-cancel:focus {
+    color: #FFFFFF;
+    background: $error;
+    border: tall $error;
+}
+
+#btn-preview:disabled,
+#btn-apply:disabled,
+#btn-one:disabled,
+#btn-cancel:disabled {
+    color: $muted-copy;
+    background: $surface;
+    border: tall $quiet-border;
+    text-opacity: 55%;
+}
+
+Footer {
+    height: 1;
+    color: $muted-copy;
+    background: $surface;
+}
+
+Toast {
+    color: $foreground;
+    background: $background;
+    border: solid $quiet-border;
+}
+
+Toast.-information {
+    border: solid $success;
+}
+
+Toast.-warning {
+    border: solid $warning;
+}
+
+Toast.-error {
+    border: solid $error;
+}
+

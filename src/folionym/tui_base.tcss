@@ -1,0 +1,273 @@
+Screen {
+    layout: vertical;
+    background: $background;
+    color: $foreground;
+}
+
+#brand-bar {
+    height: 3;
+    min-height: 3;
+    background: $background;
+    border-bottom: solid $quiet-border;
+}
+
+#brand-name {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 2;
+    content-align: left middle;
+    color: $foreground;
+    text-style: bold;
+}
+
+#current-scope {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 2;
+    content-align: center middle;
+    color: $muted-copy;
+}
+
+#trust-state {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 2;
+    content-align: right middle;
+    color: $success;
+}
+
+#app-workspace {
+    height: 1fr;
+}
+
+#workflow-header {
+    width: 1fr;
+    height: 5;
+    padding: 0 2;
+    background: $background;
+    border-bottom: solid $quiet-border;
+}
+
+.workflow-nav {
+    width: 1fr;
+    height: 4;
+    min-width: 1;
+    margin: 0;
+    padding: 0 2;
+    content-align: center middle;
+    background: $background;
+    color: $muted-copy;
+    border: none;
+}
+
+.workflow-nav:hover {
+    background: $surface;
+    color: $foreground;
+}
+
+.workflow-nav:focus {
+    background: $background;
+    color: $foreground;
+    border-bottom: solid $primary;
+}
+
+.workflow-nav.active {
+    background: $background;
+    color: $foreground;
+    text-style: bold;
+    border-bottom: solid $primary;
+}
+
+#workflow-tabs {
+    width: 1fr;
+    height: 1fr;
+}
+
+ContentTabs {
+    display: none;
+    background: $background;
+    border-bottom: solid $quiet-border;
+}
+
+Tab.-active {
+    color: $foreground;
+    text-style: bold;
+}
+
+TabPane {
+    padding: 0;
+}
+
+Input {
+    height: 3;
+    color: $foreground;
+    background: $background;
+    border: tall $quiet-border;
+}
+
+Input:hover {
+    border: tall $strong-border;
+}
+
+Input:focus {
+    border: tall $primary;
+}
+
+Input.-invalid {
+    border: tall $error;
+    background: $error-soft;
+}
+
+Select {
+    height: 3;
+    color: $foreground;
+    background: transparent;
+    border: none;
+}
+
+Select > SelectCurrent {
+    height: 3;
+    color: $foreground;
+    background: $background;
+    border: tall $quiet-border;
+}
+
+Select > SelectCurrent.-has-value Static#label {
+    color: $foreground;
+}
+
+Select:hover > SelectCurrent {
+    border: tall $strong-border;
+}
+
+Select:focus > SelectCurrent {
+    background: $selection-soft;
+    border: tall $primary;
+}
+
+Select > SelectOverlay {
+    color: $foreground;
+    background: $background;
+    border: tall $strong-border;
+}
+
+Checkbox {
+    height: 3;
+    padding: 0 1;
+    color: $foreground;
+    background: $background;
+    border: none;
+}
+
+Checkbox:hover {
+    background: $surface;
+}
+
+Checkbox:focus {
+    background: $selection-soft;
+    color: $foreground;
+    text-style: bold;
+}
+
+Button {
+    color: $foreground;
+    background: $background;
+    border: tall $strong-border;
+}
+
+Button:hover {
+    color: $foreground;
+    background: $surface;
+    border: tall $foreground;
+}
+
+Button:focus {
+    color: $foreground;
+    background: $selection-soft;
+    border: tall $primary;
+    text-style: bold;
+}
+
+Button:disabled {
+    color: $muted-copy;
+    background: $surface;
+    border: tall $quiet-border;
+    text-opacity: 55%;
+}
+
+#rename-rail {
+    height: auto;
+    min-height: 3;
+    margin-bottom: 1;
+    padding: 1 2;
+    background: $selection-soft;
+    border: solid $quiet-border;
+    color: $foreground;
+}
+
+.section-note {
+    height: auto;
+    margin: 0 0 1 0;
+    color: $muted-copy;
+}
+
+#setup-error {
+    display: none;
+    height: auto;
+    margin-bottom: 1;
+    padding: 1 2;
+    color: $error;
+    background: $error-soft;
+    border: solid $error;
+}
+
+#setup-error.visible {
+    display: block;
+}
+
+.field-row {
+    height: auto;
+    margin-bottom: 1;
+    layout: horizontal;
+}
+
+.field-label {
+    width: 24;
+    padding: 0 1 0 0;
+    content-align: left middle;
+    color: $foreground;
+}
+
+.field-input {
+    width: 1fr;
+}
+
+.section-title {
+    height: auto;
+    padding: 1 0 0 0;
+    color: $foreground;
+    text-style: bold;
+}
+
+.section-sep {
+    height: 1;
+    border-top: solid $quiet-border;
+    margin: 1 0;
+}
+
+.flags-row {
+    height: auto;
+    grid-size: 2;
+    grid-columns: 1fr 1fr;
+    grid-gutter: 0 2;
+}
+
+.flag-check {
+    width: 1fr;
+}
+
+.form-container {
+    padding: 1 2;
+}
+
+

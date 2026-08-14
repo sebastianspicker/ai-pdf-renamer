@@ -60,18 +60,23 @@ def _validated_authority(parsed: SplitResult) -> tuple[str, int | None]:
     return hostname, port
 
 
+def _validated_dns_host(hostname: str, address_error: ValueError) -> None:
+    """Validate a DNS hostname after it was rejected as an IP literal."""
+    try:
+        ascii_host = hostname.rstrip(".").encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ValueError("has an invalid host") from exc
+    labels = ascii_host.split(".")
+    if len(ascii_host) > 253 or not labels or not all(_HOST_LABEL_RE.fullmatch(label) for label in labels):
+        raise ValueError("has an invalid host") from address_error
+
+
 def _validated_ip_host(hostname: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     """Validate a hostname and return its IP literal, or None for a DNS name."""
     try:
         return ipaddress.ip_address(hostname)
     except ValueError as address_error:
-        try:
-            ascii_host = hostname.rstrip(".").encode("idna").decode("ascii")
-        except UnicodeError as exc:
-            raise ValueError("has an invalid host") from exc
-        labels = ascii_host.split(".")
-        if len(ascii_host) > 253 or not labels or not all(_HOST_LABEL_RE.fullmatch(label) for label in labels):
-            raise ValueError("has an invalid host") from address_error
+        _validated_dns_host(hostname, address_error)
         return None
 
 

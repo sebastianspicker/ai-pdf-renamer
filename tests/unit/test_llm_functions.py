@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import FrozenInstanceError, asdict, fields, is_dataclass
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,6 +24,7 @@ from folionym.llm_options import (
     JsonCompletionOptions,
     KeywordsOptions,
     LlmCacheOptions,
+    LlmContentLimits,
     LlmPromptOptions,
     SimpleFilenameOptions,
     SummaryOptions,
@@ -104,6 +106,82 @@ def test_analysis_defaults_for_invalid_or_short_content() -> None:
     result = get_document_analysis(client, "tiny", options)
     assert result.summary == DEFAULT_LLM_SUMMARY
     assert result.category == DEFAULT_LLM_CATEGORY
+
+
+@pytest.mark.parametrize(
+    ("options_type", "field_names", "expected_default"),
+    [
+        (
+            AnalysisOptions,
+            ("prompt", "limits", "guidance", "json_mode", "cache_options"),
+            AnalysisOptions(
+                prompt=LlmPromptOptions(),
+                limits=LlmContentLimits(),
+                guidance=AnalysisGuidance(),
+                json_mode=False,
+                cache_options=LlmCacheOptions(),
+            ),
+        ),
+        (
+            SummaryOptions,
+            ("prompt", "limits", "suggested_doc_type", "cache_options"),
+            SummaryOptions(
+                prompt=LlmPromptOptions(),
+                limits=LlmContentLimits(),
+                suggested_doc_type=None,
+                cache_options=LlmCacheOptions(),
+            ),
+        ),
+    ],
+)
+def test_nested_llm_option_accessors_preserve_dataclass_contract(
+    options_type: type[AnalysisOptions] | type[SummaryOptions],
+    field_names: tuple[str, ...],
+    expected_default: AnalysisOptions | SummaryOptions,
+) -> None:
+    options = options_type(
+        prompt=LlmPromptOptions(language="en", temperature=0.4, lenient_json=True),
+        limits=LlmContentLimits(max_content_chars=1200, max_content_tokens=300),
+        cache_options=LlmCacheOptions(cache=ResponseCache(), cache_key_base="document:42"),
+    )
+
+    assert is_dataclass(options) and type(options).__dataclass_params__.frozen
+    assert tuple(field.name for field in fields(options)) == field_names
+    assert options_type() == expected_default
+    assert tuple(asdict(options_type())) == field_names
+    assert repr(options).startswith(f"{options_type.__name__}(")
+    assert tuple(base.__name__ for base in options_type.__mro__[1:4]) == (
+        "_LlmPromptAccess",
+        "_LlmContentLimitsAccess",
+        "_LlmCacheAccess",
+    )
+    assert (
+        options.language,
+        options.temperature,
+        options.lenient_json,
+        options.max_content_chars,
+        options.max_content_tokens,
+        options.cache,
+        options.cache_key_base,
+    ) == ("en", 0.4, True, 1200, 300, options.cache_options.cache, "document:42")
+
+    with pytest.raises(FrozenInstanceError):
+        options.prompt = LlmPromptOptions()
+
+    replacement_cache = ResponseCache()
+    object.__setattr__(options, "prompt", LlmPromptOptions(language="fr", temperature=0.2))
+    object.__setattr__(options, "limits", LlmContentLimits(max_content_chars=600, max_content_tokens=150))
+    object.__setattr__(options, "cache_options", LlmCacheOptions(cache=replacement_cache, cache_key_base="document:43"))
+
+    assert (
+        options.language,
+        options.temperature,
+        options.lenient_json,
+        options.max_content_chars,
+        options.max_content_tokens,
+        options.cache,
+        options.cache_key_base,
+    ) == ("fr", 0.2, False, 600, 150, replacement_cache, "document:43")
 
 
 def test_simple_filename_uses_simple_filename_options() -> None:

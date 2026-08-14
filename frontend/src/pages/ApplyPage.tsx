@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
-import { AppChrome, Button, PageLoader, StatusPill } from "../components";
-import { ArrowRightIcon, DocumentIcon, InfoIcon, WarningIcon } from "../icons";
+import { AppChrome, Button, PageLoader } from "../components";
+import { ArrowRightIcon, InfoIcon, WarningIcon } from "../icons";
 import { isLocalEndpoint } from "../lib/privacy";
 import { navigate } from "../lib/routing";
-import type { ApplyStatus, Bootstrap, Report } from "../types";
-
-const reportFilters: Array<ApplyStatus | "all"> = ["all", "renamed", "unchanged", "failed", "cancelled"];
+import type { Bootstrap, Report } from "../types";
+import { ApplyReportLedger } from "./apply/ApplyReportLedger";
 
 function ResultMetric({
   label,
@@ -29,7 +28,6 @@ export function ApplyPage({ bootstrap }: { bootstrap: Bootstrap }) {
   const reportId = sessionStorage.getItem("folionym.report");
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState("");
-  const [filter, setFilter] = useState<ApplyStatus | "all">("all");
 
   useEffect(() => {
     if (!reportId) {
@@ -60,7 +58,6 @@ export function ApplyPage({ bootstrap }: { bootstrap: Bootstrap }) {
     );
   }
 
-  const visible = report.items.filter((item) => filter === "all" || item.status === filter);
   const changed = report.counts.renamed;
   const hasFailures = report.counts.failed + report.counts.cancelled > 0;
   const localOnly = isLocalEndpoint(bootstrap.settings);
@@ -106,40 +103,7 @@ export function ApplyPage({ bootstrap }: { bootstrap: Bootstrap }) {
           />
           <ResultMetric label="Cancelled" value={report.counts.cancelled} />
         </section>
-        <section className="result-list">
-          <header>
-            <div>
-              <span className="eyebrow">Ledger</span>
-              <h2>Per-file outcome</h2>
-            </div>
-            <div className="result-filters">
-              {reportFilters.map((status) => (
-                <button
-                  className={filter === status ? "is-active" : ""}
-                  key={status}
-                  onClick={() => {
-                    setFilter(status);
-                  }}
-                  type="button"
-                >
-                  {status}
-                </button>
-              ))}
-            </div>
-          </header>
-          <div className="result-table">
-            {visible.map((item) => (
-              <div className="result-row" key={item.item_id}>
-                <DocumentIcon />
-                <span>{item.source_name}</span>
-                <ArrowRightIcon />
-                <strong>{item.target_name ?? "No target"}</strong>
-                <StatusPill status={item.status === "skipped" ? "unchanged" : item.status} />
-                {item.reason && <small>{item.reason}</small>}
-              </div>
-            ))}
-          </div>
-        </section>
+        <ApplyReportLedger items={report.items} />
         <div className="source-notice">
           <InfoIcon />
           <p>

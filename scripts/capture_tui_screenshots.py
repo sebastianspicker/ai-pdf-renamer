@@ -25,7 +25,7 @@ _TERMINAL_ID_RE = re.compile(r"terminal-\d+")
 _SVG_ROOT_RE = re.compile(r"<svg\b[^>]*>")
 _CAPTURE_SIZE = (120, 40)
 _ADVANCED_SCROLL_Y = 18
-_SCREENSHOT_METADATA = {
+SCREENSHOT_METADATA = {
     "settings": (
         "Folionym setup",
         "Setup tab with the PDF naming pipeline and illustrative source paths.",
@@ -44,7 +44,7 @@ _SCREENSHOT_METADATA = {
 def _self_contained_svg(svg: str, *, screen_name: str) -> str:
     """Remove remote dependencies and add stable metadata to a Rich SVG export."""
     try:
-        title, description = _SCREENSHOT_METADATA[screen_name]
+        title, description = SCREENSHOT_METADATA[screen_name]
     except KeyError as error:
         raise ValueError(f"Unknown screenshot name: {screen_name}") from error
     svg, font_blocks = _FONT_FACE_RE.subn("\n", svg, count=1)

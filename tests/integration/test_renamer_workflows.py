@@ -30,7 +30,7 @@ from tests.conftest import make_config
 
 class TestWritePdfTitleMetadata:
     def test_write_pdf_title_metadata_success(self, tmp_path: Path) -> None:
-        """Verify atomic save: tempfile created, doc saved, then os.replace called."""
+        """Verify atomic save closes the document before replacing the original."""
         pdf = tmp_path / "test.pdf"
         pdf.write_bytes(b"%PDF-1.4 dummy")
 
@@ -41,11 +41,16 @@ class TestWritePdfTitleMetadata:
         mock_doc = MagicMock()
         mock_fitz = MagicMock()
         mock_fitz.open.return_value = mock_doc
+        lifecycle: list[str] = []
+        mock_doc.close.side_effect = lambda: lifecycle.append("close")
         with (
             patch.dict("sys.modules", {"fitz": mock_fitz}),
             patch("tempfile.mkstemp", return_value=(99, str(tmp_pdf))),
             patch("folionym.renamer_hooks.os.close") as mock_os_close,
-            patch("folionym.renamer_hooks.os.replace") as mock_os_replace,
+            patch(
+                "folionym.renamer_hooks.os.replace",
+                side_effect=lambda *_args: lifecycle.append("replace"),
+            ) as mock_os_replace,
         ):
             _write_pdf_title_metadata(pdf, "My Title")
 
@@ -55,6 +60,34 @@ class TestWritePdfTitleMetadata:
         mock_doc.close.assert_called_once()
         mock_os_close.assert_called_once_with(99)
         mock_os_replace.assert_called_once()
+        assert lifecycle == ["close", "replace"]
+
+    def test_write_pdf_title_metadata_retries_legacy_save_signature(self, tmp_path: Path) -> None:
+        """Retry without encryption when an older PyMuPDF rejects the first save call."""
+        pdf = tmp_path / "test.pdf"
+        pdf.write_bytes(b"%PDF-1.4 dummy")
+        tmp_pdf = tmp_path / "tmp.pdf"
+        tmp_pdf.write_bytes(b"%PDF-1.4 saved content")
+
+        mock_doc = MagicMock()
+        mock_doc.save.side_effect = [TypeError("legacy signature"), None]
+        mock_fitz = MagicMock(PDF_ENCRYPT_KEEP="keep")
+        mock_fitz.open.return_value = mock_doc
+
+        with (
+            patch.dict("sys.modules", {"fitz": mock_fitz}),
+            patch("tempfile.mkstemp", return_value=(99, str(tmp_pdf))),
+            patch("folionym.renamer_hooks.os.close"),
+            patch("folionym.renamer_hooks.os.replace"),
+        ):
+            _write_pdf_title_metadata(pdf, "My Title")
+
+        assert mock_doc.save.call_args_list[0].kwargs == {
+            "incremental": False,
+            "encryption": "keep",
+        }
+        assert mock_doc.save.call_args_list[1].kwargs == {"incremental": False}
+        mock_doc.close.assert_called_once()
 
     def test_write_pdf_title_metadata_no_fitz(self, tmp_path: Path) -> None:
         """When fitz is not importable, no error should be raised."""
@@ -66,10 +99,14 @@ class TestWritePdfTitleMetadata:
             # Should not raise
             _write_pdf_title_metadata(pdf, "Some Title")
 
-    def test_write_pdf_title_metadata_save_fails(self, tmp_path: Path) -> None:
-        """When doc.save raises, the error is caught and logged as a warning."""
+    def test_write_pdf_title_metadata_save_failure_cleans_temp_and_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A failed save removes its temporary file and remains a warning-only no-op."""
         pdf = tmp_path / "test.pdf"
         pdf.write_bytes(b"%PDF-1.4 dummy")
+        tmp_pdf = tmp_path / "tmp.pdf"
+        tmp_pdf.write_bytes(b"partial")
 
         mock_doc = MagicMock()
         mock_doc.save.side_effect = RuntimeError("cannot save")
@@ -78,17 +115,45 @@ class TestWritePdfTitleMetadata:
         mock_fitz.open.return_value = mock_doc
 
         mock_tempfile = MagicMock()
-        mock_tempfile.mkstemp.return_value = (99, str(tmp_path / "tmp.pdf"))
+        mock_tempfile.mkstemp.return_value = (99, str(tmp_pdf))
 
         with (
+            caplog.at_level(logging.WARNING, logger="folionym.renamer"),
             patch.dict("sys.modules", {"fitz": mock_fitz, "tempfile": mock_tempfile}),
             patch("folionym.renamer_hooks.os.close"),
         ):
-            # Should not raise (error is logged as warning)
             _write_pdf_title_metadata(pdf, "Fallback Title")
 
         mock_doc.save.assert_called_once()
         mock_doc.close.assert_called_once()
+        assert not tmp_pdf.exists()
+        assert "Could not write PDF metadata" in caplog.text
+
+    def test_write_pdf_title_metadata_rejects_empty_temp_and_cleans_up(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An empty temporary file never replaces the source PDF and is removed."""
+        pdf = tmp_path / "test.pdf"
+        pdf.write_bytes(b"%PDF-1.4 dummy")
+        tmp_pdf = tmp_path / "tmp.pdf"
+        tmp_pdf.touch()
+
+        mock_doc = MagicMock()
+        mock_fitz = MagicMock()
+        mock_fitz.open.return_value = mock_doc
+        with (
+            caplog.at_level(logging.WARNING, logger="folionym.renamer"),
+            patch.dict("sys.modules", {"fitz": mock_fitz}),
+            patch("tempfile.mkstemp", return_value=(99, str(tmp_pdf))),
+            patch("folionym.renamer_hooks.os.close"),
+            patch("folionym.renamer_hooks.os.replace") as mock_os_replace,
+        ):
+            _write_pdf_title_metadata(pdf, "Empty Temp")
+
+        mock_doc.close.assert_called_once()
+        mock_os_replace.assert_not_called()
+        assert not tmp_pdf.exists()
+        assert "Could not write PDF metadata" in caplog.text
 
 
 # ---------------------------------------------------------------------------

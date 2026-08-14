@@ -1,0 +1,355 @@
+/* App shell, instrument bar, stage spine, body grid, and consequence bar. */
+
+/* ——— Shell ——— */
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+
+/* Instrument layout: bar | body-grid | consequence */
+.app:has(> .body-grid),
+.app:has(> .instrument-bar) {
+  display: grid;
+  grid-template-rows: 64px minmax(0, 1fr) auto;
+}
+
+/* ——— Instrument bar ——— */
+
+.instrument-bar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 1.4fr) minmax(180px, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 0 22px;
+  background: rgb(255 255 255 / 92%);
+  border-bottom: 1px solid var(--rule);
+  backdrop-filter: blur(10px);
+}
+
+.brand-block {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  color: white;
+  background: var(--ink);
+}
+
+.brand-mark svg {
+  width: 18px;
+  height: 18px;
+}
+
+.brand-word {
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.brand-meta {
+  margin-left: 40px;
+  color: var(--faint);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.scope-chip {
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 8px 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  box-shadow: var(--shadow-soft);
+}
+
+.scope-label {
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.scope-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.scope-path svg {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  color: var(--muted);
+}
+
+.scope-count {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  color: var(--verdigris-ink);
+  background: var(--verdigris-soft);
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.privacy-chip {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.privacy-chip--local {
+  border-color: rgb(11 106 90 / 22%);
+  background: linear-gradient(180deg, #f4fbf8, var(--surface));
+}
+
+.privacy-chip--external {
+  border-color: rgb(154 90 0 / 28%);
+  background: linear-gradient(180deg, #fffaf0, var(--surface));
+}
+
+.privacy-chip--external .privacy-pulse {
+  background: var(--amber);
+  box-shadow: 0 0 0 4px rgb(154 90 0 / 14%);
+}
+
+.privacy-pulse {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--verdigris);
+  box-shadow: 0 0 0 4px rgb(11 106 90 / 14%);
+}
+
+.privacy-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.2;
+}
+
+.privacy-copy strong {
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.privacy-copy span {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+/* ——— Stage spine ——— */
+
+.body-grid {
+  display: grid;
+  grid-template-columns: 72px 232px minmax(0, 1fr) 300px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.body-grid--simple {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+
+.body-grid--preview {
+  grid-template-columns: 72px 232px minmax(0, 1fr) 300px;
+}
+
+.app-content {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.stage-spine {
+  display: flex;
+  justify-content: center;
+  padding: 28px 0 24px;
+  background: linear-gradient(180deg, #e4eaef, var(--rail));
+  border-right: 1px solid var(--rule);
+}
+
+.stage-spine ol {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  height: min(420px, 70vh);
+}
+
+.stage-spine ol::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+  background: linear-gradient(
+    180deg,
+    var(--verdigris) 0 38%,
+    var(--indigo) 38% 62%,
+    var(--rule-strong) 62% 100%
+  );
+  border-radius: 2px;
+}
+
+.stage {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+}
+
+.stage-hit {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 10px;
+  align-items: start;
+  width: 100%;
+  padding: 0 10px 0 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.stage-node {
+  position: relative;
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0 7px;
+  border-radius: 50%;
+  border: 2px solid var(--rule-strong);
+  background: var(--rail);
+  box-shadow: 0 0 0 4px var(--rail);
+}
+
+.stage--done .stage-node {
+  border-color: var(--verdigris);
+  background: var(--verdigris);
+  box-shadow: 0 0 0 4px var(--rail);
+}
+
+/* CSP-safe checkmark (no data: URLs) */
+.stage--done .stage-node::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 4px;
+  height: 8px;
+  border: solid white;
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
+}
+
+.stage--current .stage-node {
+  border-color: var(--indigo);
+  background: var(--indigo);
+  box-shadow:
+    0 0 0 4px var(--rail),
+    0 0 0 7px rgb(44 74 124 / 14%);
+}
+
+.stage-label {
+  display: none;
+}
+
+.stage-label strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.stage-label em {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-style: normal;
+  font-size: 11px;
+}
+
+/* ——— Consequence and action bars ——— */
+
+.consequence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 28px;
+  padding: 14px 22px;
+  background: var(--surface);
+  border-top: 1px solid var(--rule);
+  box-shadow: 0 -8px 28px rgb(18 24 32 / 4%);
+}
+
+.consequence-copy {
+  min-width: min(420px, 100%);
+}
+
+.consequence-copy strong {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.consequence-copy p {
+  margin: 0;
+  max-width: 56ch;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.consequence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

@@ -1,0 +1,43 @@
+/* ——— Component responsive ——— */
+
+@media (max-width: 560px) {
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .drawer {
+    width: 100%;
+  }
+
+  .modal-layer {
+    align-items: end;
+    padding: 0;
+  }
+
+  .modal {
+    max-height: 92vh;
+    border-radius: 16px 16px 0 0;
+  }
+
+  .modal__header,
+  .modal__body,
+  .modal__footer {
+    padding-inline: 17px;
+  }
+
+  .modal__footer {
+    flex-wrap: wrap;
+  }
+
+  .modal__summary {
+    width: 100%;
+  }
+
+  .confirm-list {
+    grid-template-columns: 1fr;
+  }
+
+  .confirm-list > p {
+    grid-column: auto;
+  }
+}

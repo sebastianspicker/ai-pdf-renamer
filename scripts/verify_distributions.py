@@ -9,9 +9,14 @@ import sys
 import tarfile
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from repository_hygiene import forbidden_reason
+if TYPE_CHECKING:
+    from scripts.repository_hygiene import forbidden_reason
+elif __package__:
+    from .repository_hygiene import forbidden_reason
+else:
+    from repository_hygiene import forbidden_reason
 
 DATA_FILES = {
     "category_aliases.json",
@@ -87,11 +92,10 @@ def _assert_help(entry_point: Any, command: str) -> None:
     original_argv = sys.argv
     sys.argv = [command, "--help"]
     try:
-        try:
-            entry_point()
-        except SystemExit as exc:
-            if exc.code != 0:
-                raise AssertionError(f"{command} --help exited with {exc.code}") from exc
+        entry_point()
+    except SystemExit as exc:
+        if exc.code != 0:
+            raise AssertionError(f"{command} --help exited with {exc.code}") from exc
     finally:
         sys.argv = original_argv
 

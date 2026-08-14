@@ -1,7 +1,7 @@
 # Folionym
 
-[![CI](https://github.com/sebastianspicker/AI-PDF-Renamer/actions/workflows/ci.yml/badge.svg)](https://github.com/sebastianspicker/AI-PDF-Renamer/actions/workflows/ci.yml)
-[![Security](https://github.com/sebastianspicker/AI-PDF-Renamer/actions/workflows/security.yml/badge.svg)](https://github.com/sebastianspicker/AI-PDF-Renamer/actions/workflows/security.yml)
+[![CI](https://github.com/sebastianspicker/folionym/actions/workflows/ci.yml/badge.svg)](https://github.com/sebastianspicker/folionym/actions/workflows/ci.yml)
+[![Security](https://github.com/sebastianspicker/folionym/actions/workflows/security.yml/badge.svg)](https://github.com/sebastianspicker/folionym/actions/workflows/security.yml)
 
 Folionym extracts content and metadata from PDF files and constructs structured
 filenames. It combines category heuristics with optional OCR, vision, and an

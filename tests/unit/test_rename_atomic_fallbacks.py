@@ -9,12 +9,12 @@ from pathlib import Path
 
 import pytest
 
-import folionym.rename_ops as rename_ops
+import folionym.rename_ops.filesystem as rename_filesystem
 from folionym.rename_ops import (
     MAX_RENAME_RETRIES,
-    _copy_file_to_fd,
     sanitize_filename_base,
 )
+from folionym.rename_ops.filesystem import _copy_file_to_fd, _copy_with_pinned_source
 from tests.conftest import rename_pdf
 
 
@@ -118,7 +118,7 @@ def test_apply_single_rename_link_fallback_copies_through_reserved_descriptor(
 
     monkeypatch.setattr(os, "link", _link_eperm)
     monkeypatch.setattr(os, "rename", _rename_must_not_run)
-    monkeypatch.setattr(rename_ops, "_copy_file_to_fd", _copy_observes_reservation)
+    monkeypatch.setattr(rename_filesystem, "_copy_file_to_fd", _copy_observes_reservation)
 
     ok, target = rename_pdf(src, "result")
 
@@ -257,13 +257,52 @@ def test_apply_single_rename_copy_source_swap_preserves_replacement(
 
     monkeypatch.setattr(os, "open", _open_source)
     monkeypatch.setattr(os, "link", _link_eperm)
-    monkeypatch.setattr(rename_ops, "_copy_file_to_fd", _copy_then_swap)
+    monkeypatch.setattr(rename_filesystem, "_copy_file_to_fd", _copy_then_swap)
 
     with pytest.raises(OSError, match="Source path changed while copying"):
         rename_pdf(src, "result")
 
     assert src.read_text(encoding="utf-8") == "replacement"
     assert not target.exists()
+
+
+def test_copy_with_pinned_source_callback_error_cleans_target_and_preserves_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-unlink callback failure keeps the source and closes the cleaned reservation."""
+    src = tmp_path / "doc.pdf"
+    target = tmp_path / "result.pdf"
+    src.write_text("content", encoding="utf-8")
+    source_fd = os.open(src, os.O_RDONLY)
+    source_identity = os.fstat(source_fd)
+    original_reserve = rename_filesystem._reserve_copy_target
+    reserved_fd: int | None = None
+    callback_error = OSError(errno.EACCES, "callback failure")
+
+    def _reserve_and_capture(path: Path) -> int:
+        nonlocal reserved_fd
+        reserved_fd = original_reserve(path)
+        return reserved_fd
+
+    def _raise_before_unlink() -> None:
+        assert os.fstat(source_fd) == source_identity
+        assert target.read_text(encoding="utf-8") == "content"
+        raise callback_error
+
+    monkeypatch.setattr(rename_filesystem, "_reserve_copy_target", _reserve_and_capture)
+
+    try:
+        with pytest.raises(OSError) as raised:
+            _copy_with_pinned_source(src, target, source_fd, before_unlink=_raise_before_unlink)
+    finally:
+        os.close(source_fd)
+
+    assert raised.value is callback_error
+    assert src.read_text(encoding="utf-8") == "content"
+    assert not target.exists()
+    assert reserved_fd is not None
+    with pytest.raises(OSError):
+        os.fstat(reserved_fd)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Unix-only branch")

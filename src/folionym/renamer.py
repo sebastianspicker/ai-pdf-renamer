@@ -2,7 +2,7 @@
 
 This module coordinates discovery, extraction, filename generation, output
 artifacts, optional hooks, and watch mode. Pure naming decisions live in
-filename.py; filesystem mutation is delegated to rename_ops.py.
+filename.py; filesystem mutation is delegated to the rename_ops package.
 """
 
 from __future__ import annotations
@@ -101,6 +101,16 @@ def _run_uses_llm_client(config: _RenamerConfig) -> bool:
     return bool(config.llm.runtime.use_llm or config.llm.vision.vision_first or config.llm.vision.use_vision_fallback)
 
 
+def _close_llm_client(client: SerializedLLMClient | None) -> None:
+    """Close a run-scoped client while keeping backend cleanup best-effort."""
+    if client is None:
+        return
+    try:
+        client.close()
+    except (AttributeError, OSError, RuntimeError) as exc:
+        logger.warning("Could not close LLM backend cleanly: %s", exc)
+
+
 @contextmanager
 def _run_scoped_llm_client(config: _RenamerConfig) -> Iterator[LLMClient | None]:
     """Create at most one serialized LLM client and attempt to close it when the run exits."""
@@ -109,11 +119,7 @@ def _run_scoped_llm_client(config: _RenamerConfig) -> Iterator[LLMClient | None]
     try:
         yield client
     finally:
-        if client is not None:
-            try:
-                client.close()
-            except (AttributeError, OSError, RuntimeError) as exc:
-                logger.warning("Could not close LLM backend cleanly: %s", exc)
+        _close_llm_client(client)
 
 
 @dataclass(frozen=True)
@@ -183,19 +189,16 @@ def _process_one_file(
         return (file_path, None, None, exc)
     if not content.strip():
         return (file_path, None, None, None)  # skipped empty
-    try:
-        return _process_content_to_result(
-            ContentProcessingRequest(
-                file_path=file_path,
-                content=content,
-                config=config,
-                rules=rules,
-                used_vision=used_vision,
-                llm_client=llm_client,
-            )
+    return _process_content_to_result(
+        ContentProcessingRequest(
+            file_path=file_path,
+            content=content,
+            config=config,
+            rules=rules,
+            used_vision=used_vision,
+            llm_client=llm_client,
         )
-    except _RECOVERABLE_RENAME_EXCEPTIONS as exc:
-        return (file_path, None, None, exc)
+    )
 
 
 def process_one_file(

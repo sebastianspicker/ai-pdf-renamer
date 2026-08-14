@@ -4,12 +4,11 @@ Load stopwords and heuristic scorer from data files. Used by renamer and filenam
 
 from __future__ import annotations
 
-import json
 import os
 from functools import lru_cache
 from pathlib import Path
 
-from .data_paths import data_path
+from .data_paths import data_path, load_json_data
 from .heuristics import HeuristicScorer, load_heuristic_rules_for_language
 from .text_utils import Stopwords
 
@@ -17,14 +16,7 @@ from .text_utils import Stopwords
 def load_meta_stopwords(path: str | Path) -> Stopwords:
     """Load meta stopwords from configured data."""
     path_obj = Path(path)
-    try:
-        text = path_obj.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ValueError(f"Could not read data file at {path_obj.absolute()}: {exc!s}") from exc
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid JSON in data file at {path_obj.absolute()}. {exc!s}") from exc
+    data = load_json_data(path_obj)
     stopword_list = data.get("stopwords", [])
     if not isinstance(stopword_list, list):
         stopword_list = []

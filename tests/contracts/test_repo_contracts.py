@@ -6,15 +6,50 @@ import ast
 import re
 import tomllib
 from pathlib import Path
+from typing import cast
 
-from folionym import renamer
+from folionym import rename_ops, renamer
 from folionym.config import RenamerConfig
 from folionym.filename import generate_filename
 from folionym.heuristics import CategoryCombineParams
+from folionym.web_schema import UISettingsPayload
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_SOURCE_ROOTS = (REPO_ROOT / "src", REPO_ROOT / "scripts", REPO_ROOT / "tests")
 PRODUCTION_SOURCE_ROOTS = (REPO_ROOT / "src", REPO_ROOT / "scripts")
+AUTHORED_CODE_SUFFIXES = {
+    ".bash",
+    ".cjs",
+    ".css",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".ps1",
+    ".py",
+    ".pyi",
+    ".sh",
+    ".tcss",
+    ".ts",
+    ".tsx",
+    ".zsh",
+}
+AUTHORED_CODE_EXCLUDED_DIRS = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".repowise",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "archive",
+    "build",
+    "coverage",
+    "dist",
+    "htmlcov",
+    "node_modules",
+    "web_dist",
+}
+MAX_AUTHORED_CODE_LINES = 600
 IDENTITY_SCAN_ROOTS = (
     REPO_ROOT / ".github",
     REPO_ROOT / "docs",
@@ -51,23 +86,57 @@ LEGACY_IDENTITIES = (
     "AI" + "_PDF_RENAMER",
     "AI" + "RenamerTUI",
 )
-CURRENT_REPOSITORY_URL = "https://github.com/sebastianspicker/" + "AI" + "-PDF-Renamer"
+CURRENT_REPOSITORY_URL = "https://github.com/sebastianspicker/folionym"
+RENAME_OPS_PUBLIC_EXPORTS = {
+    "FILENAME_RESERVED_WIN",
+    "FILENAME_UNSAFE_RE",
+    "MAX_LLM_FILENAME_LEN",
+    "MAX_RENAME_RETRIES",
+    "RenameApplyOptions",
+    "RenameAttemptState",
+    "RenameRetryContext",
+    "apply_single_rename",
+    "is_path_within",
+    "sanitize_filename_base",
+    "sanitize_filename_from_llm",
+}
 
 
 def _read_repo_file(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
+def _typescript_string_union(source: str, type_name: str) -> set[str]:
+    """Extract string members from one exported TypeScript union declaration."""
+    match = re.search(rf"export type {re.escape(type_name)}\s*=\s*(.*?);", source, re.DOTALL)
+    assert match is not None, f"Missing TypeScript union: {type_name}"
+    return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+
 def _extract_literal_choices(source: str, *, flag: str) -> list[str]:
     pattern = re.compile(rf'{re.escape(flag)}".*?choices=\[(.*?)\]', re.DOTALL)
     match = pattern.search(source)
     assert match is not None
-    return ast.literal_eval("[" + match.group(1) + "]")
+    choices: object = ast.literal_eval("[" + match.group(1) + "]")
+    assert isinstance(choices, list)
+    assert all(isinstance(choice, str) for choice in choices)
+    return cast(list[str], choices)
 
 
 def _python_files(roots: tuple[Path, ...]) -> list[Path]:
     """Return deterministic Python source paths below the requested roots."""
     return sorted(path for root in roots for path in root.rglob("*.py"))
+
+
+def _authored_code_files() -> list[Path]:
+    """Return repository-wide maintained code while excluding archived, generated, and vendored trees."""
+    return sorted(
+        path
+        for path in REPO_ROOT.rglob("*")
+        if path.is_file()
+        and path.suffix in AUTHORED_CODE_SUFFIXES
+        and not AUTHORED_CODE_EXCLUDED_DIRS.intersection(path.relative_to(REPO_ROOT).parts)
+    )
 
 
 def _identity_surface_files() -> list[Path]:
@@ -116,6 +185,29 @@ def test_all_python_modules_explain_their_scope() -> None:
             missing.append(str(path.relative_to(REPO_ROOT)))
 
     assert missing == []
+
+
+def test_authored_code_files_stay_within_maintainability_budget() -> None:
+    """Keep authored code reviewable by requiring cohesive files at or below 600 lines."""
+    oversized = []
+    for path in _authored_code_files():
+        line_count = len(path.read_text(encoding="utf-8").splitlines())
+        if line_count > MAX_AUTHORED_CODE_LINES:
+            oversized.append(f"{path.relative_to(REPO_ROOT)}: {line_count}")
+
+    assert oversized == []
+
+
+def test_browser_settings_keys_match_the_backend_schema() -> None:
+    """Keep the manually mirrored browser key unions aligned with Pydantic field types."""
+    source = _read_repo_file("frontend/src/types.ts")
+    backend_fields = UISettingsPayload.model_fields
+    backend_text = {name for name, field in backend_fields.items() if field.annotation is str}
+    backend_boolean = {name for name, field in backend_fields.items() if field.annotation is bool}
+
+    assert _typescript_string_union(source, "SettingsTextKey") == backend_text
+    assert _typescript_string_union(source, "SettingsBooleanKey") == backend_boolean
+    assert backend_text | backend_boolean == set(backend_fields)
 
 
 def test_production_declarations_explain_their_contract() -> None:
@@ -216,6 +308,11 @@ def test_documented_public_api_uses_owning_modules_without_compatibility_reexpor
     assert not hasattr(renamer, "generate_filename")
     assert not hasattr(renamer, "collect_pdf_files")
     assert not hasattr(renamer, "CategoryCombineParams")
+
+
+def test_rename_ops_facade_preserves_its_documented_exports() -> None:
+    assert set(rename_ops.__all__) == RENAME_OPS_PUBLIC_EXPORTS
+    assert all(hasattr(rename_ops, name) for name in RENAME_OPS_PUBLIC_EXPORTS)
 
 
 def test_public_tui_screenshots_are_accessible_and_self_contained() -> None:

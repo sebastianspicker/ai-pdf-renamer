@@ -10,7 +10,6 @@ import base64
 import contextlib
 import logging
 import os
-import re
 import sys
 import tempfile
 import threading
@@ -19,13 +18,12 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .pdf_metadata import _empty_pdf_metadata, _metadata_result_from_doc, _parse_pdf_date
+
 if TYPE_CHECKING:
     import fitz as _fitz_mod
 
 logger = logging.getLogger(__name__)
-
-# PDF metadata date format: D:YYYYMMDDHHmmss... or D:YYYYMMDD
-_PDF_DATE_PREFIX = re.compile(r"^D:(\d{4})(\d{2})(\d{2})")
 
 # Minimum extracted characters below which we try OCR (image-only PDFs).
 MIN_CHARS_BEFORE_OCR = 50
@@ -48,23 +46,34 @@ _tiktoken_encoding: Any = None
 _tiktoken_lock = threading.Lock()
 
 
-def _token_count(text: str) -> int:
-    """Count tokens with cached tiktoken support, falling back to a four-character heuristic."""
+def _initialize_tiktoken_encoding() -> Any:
+    """Load the tokenizer once, using a sentinel when it is unavailable."""
+    # fmt: off
+    try:
+        import tiktoken
+
+        return tiktoken.get_encoding("cl100k_base")
+    except (ImportError, LookupError):
+        return _TIKTOKEN_MISSING
+    # fmt: on
+
+
+def _get_tiktoken_encoding() -> Any:
+    """Return the cached tokenizer, initializing it under the module lock."""
     module = sys.modules[__name__]
     encoding = module.__dict__["_tiktoken_encoding"]
     if encoding is None:
         with _tiktoken_lock:
             encoding = module.__dict__["_tiktoken_encoding"]
             if encoding is None:  # double-checked locking
-                # fmt: off
-                try:
-                    import tiktoken
-
-                    encoding = tiktoken.get_encoding("cl100k_base")
-                except (ImportError, LookupError):
-                    encoding = _TIKTOKEN_MISSING
-                # fmt: on
+                encoding = _initialize_tiktoken_encoding()
                 module.__dict__["_tiktoken_encoding"] = encoding
+    return encoding
+
+
+def _token_count(text: str) -> int:
+    """Count tokens with cached tiktoken support, falling back to a four-character heuristic."""
+    encoding = _get_tiktoken_encoding()
     if encoding is not None and encoding is not _TIKTOKEN_MISSING:
         # fmt: off
         try:
@@ -480,22 +489,6 @@ def _remove_ocr_temp_path(tmp: Path | None) -> None:
             tmp.unlink()
 
 
-def _parse_pdf_date(value: str | None) -> date | None:
-    """Parse PDF metadata date string (D:YYYYMMDD...) to date. Returns None if invalid or missing."""
-    if not value or not isinstance(value, str):
-        return None
-    m = _PDF_DATE_PREFIX.match(value.strip())
-    if not m:
-        logger.debug("PDF metadata date field exists but does not match expected D:YYYYMMDD format: %r", value)
-        return None
-    try:
-        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        return date(y, mo, d)
-    except (ValueError, TypeError) as exc:
-        logger.debug("Failed to create date object from PDF metadata %r: %s", value, exc)
-        return None
-
-
 def parse_pdf_date(value: str | None) -> date | None:
     """Parse a PDF metadata date string to a date when possible."""
     return _parse_pdf_date(value)
@@ -523,16 +516,6 @@ def get_pdf_metadata(filepath: str | Path | None) -> dict[str, object]:
         _close_document(doc)
 
 
-def _empty_pdf_metadata() -> dict[str, object]:
-    """Return the default metadata shape for unavailable or unreadable PDFs."""
-    return {
-        "title": "",
-        "author": "",
-        "creation_date": None,
-        "mod_date": None,
-    }
-
-
 def _open_pdf_for_metadata(fitz: Any, path: Path) -> Any | None:
     """Open a PDF for metadata, returning None and debug-logging expected failures."""
     try:
@@ -540,23 +523,6 @@ def _open_pdf_for_metadata(fitz: Any, path: Path) -> Any | None:
     except (RuntimeError, OSError, ValueError) as exc:
         logger.debug("Could not open PDF for metadata %s: %s", path, exc)
         return None
-
-
-def _metadata_result_from_doc(doc: Any) -> dict[str, object]:
-    """Normalize title, author, and metadata dates from an open PDF."""
-    meta = doc.metadata or {}
-    result = _empty_pdf_metadata()
-    result["title"] = (meta.get("title") or "").strip()
-    result["author"] = (meta.get("author") or "").strip()
-    result["creation_date"] = _metadata_date_string(meta.get("creationDate"))
-    result["mod_date"] = _metadata_date_string(meta.get("modDate"))
-    return result
-
-
-def _metadata_date_string(value: str | None) -> str | None:
-    """Parse a PDF metadata date and return its ISO representation."""
-    parsed = _parse_pdf_date(value)
-    return parsed.isoformat() if parsed else None
 
 
 def _extract_pages(doc: _fitz_mod.Document, path: Path, *, max_pages: int = 0) -> tuple[list[str], list[str]]:

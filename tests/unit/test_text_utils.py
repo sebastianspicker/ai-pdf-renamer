@@ -246,6 +246,12 @@ def test_extract_date_mdy_locale_ambiguous() -> None:
     assert result == "2025-01-12"
 
 
+def test_extract_date_german_prefix_preserves_dmy_order_for_mdy_locale() -> None:
+    """A German label preserves day-first order and outranks the bare date match."""
+    result = extract_date_from_content("Datum: 01.12.2025", today=REFERENCE_TODAY, date_locale="mdy")
+    assert result == "2025-12-01"
+
+
 def test_extract_date_prefer_leading_chars_not_in_header() -> None:
     """When date is NOT in leading chars, fall through to full-text search."""
     text = "x" * 500 + " Created 2025-08-20"

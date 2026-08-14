@@ -399,6 +399,7 @@ class TestRunDoctorChecks:
         assert "FAIL" in captured.out
         assert "heuristic_scores.json" in captured.out
         assert "Invalid regex" in captured.out
+        assert "meta_stopwords.json" in captured.out
 
     def test_doctor_data_files_missing(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

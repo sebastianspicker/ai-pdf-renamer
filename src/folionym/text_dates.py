@@ -136,6 +136,20 @@ class _DateParts:
     day: str
 
 
+@dataclass(frozen=True)
+class _OrderedDateParts:
+    """All inputs needed to append a candidate whose first two parts may swap."""
+
+    first: str
+    second: str
+    year: str
+    month_first: bool
+    month_is_name: bool
+    context: _CandidateContext
+    start: int
+    base_score: int
+
+
 def _normalize_month_token(month_name: str) -> str:
     """Normalize month names and abbreviations for lookup."""
     return month_name.strip().lower()
@@ -222,6 +236,31 @@ def _append_month_name_candidate(
     )
 
 
+def _append_ordered_date_candidate(
+    candidates: list[_DateCandidate],
+    ordered: _OrderedDateParts,
+) -> None:
+    """Append one ordered numeric or month-name date candidate."""
+    month, day = (ordered.first, ordered.second) if ordered.month_first else (ordered.second, ordered.first)
+    parts = _DateParts(year=ordered.year, month=month, day=day)
+    if ordered.month_is_name:
+        _append_month_name_candidate(
+            candidates,
+            parts=parts,
+            context=ordered.context,
+            start=ordered.start,
+            base_score=ordered.base_score,
+        )
+        return
+    _append_date_candidate(
+        candidates,
+        parts=parts,
+        context=ordered.context,
+        start=ordered.start,
+        base_score=ordered.base_score,
+    )
+
+
 def _append_prefixed_dmy_candidates(
     candidates: list[_DateCandidate],
     context: _CandidateContext,
@@ -235,13 +274,18 @@ def _append_prefixed_dmy_candidates(
         is_german_label = any(
             label in matched_text for label in ("rechnungsdatum", "datum", "stand", "erstellt", "rechnung")
         )
-        day, month = (g1, g2) if is_german_label or date_locale == "dmy" else (g2, g1)
-        _append_date_candidate(
+        _append_ordered_date_candidate(
             candidates,
-            parts=_DateParts(year=year, month=month, day=day),
-            context=context,
-            start=match.start(),
-            base_score=100,
+            _OrderedDateParts(
+                first=g1,
+                second=g2,
+                year=year,
+                month_first=not (is_german_label or date_locale == "dmy"),
+                month_is_name=False,
+                context=context,
+                start=match.start(),
+                base_score=100,
+            ),
         )
 
 
@@ -268,13 +312,18 @@ def _append_dmy_candidates(
     """Collect ambiguous numeric dates using the configured locale order."""
     for match in _DATE_RE_DMY.finditer(context.content):
         g1, g2, year = match.groups()
-        month, day = (g1, g2) if date_locale == "mdy" else (g2, g1)
-        _append_date_candidate(
+        _append_ordered_date_candidate(
             candidates,
-            parts=_DateParts(year=year, month=month, day=day),
-            context=context,
-            start=match.start(),
-            base_score=100,
+            _OrderedDateParts(
+                first=g1,
+                second=g2,
+                year=year,
+                month_first=date_locale == "mdy",
+                month_is_name=False,
+                context=context,
+                start=match.start(),
+                base_score=100,
+            ),
         )
 
 
@@ -287,13 +336,18 @@ def _append_long_month_candidates(candidates: list[_DateCandidate], context: _Ca
     ):
         for match in regex.finditer(context.content):
             first, second, year = match.groups()
-            month_name, day = (first, second) if month_first else (second, first)
-            _append_month_name_candidate(
+            _append_ordered_date_candidate(
                 candidates,
-                parts=_DateParts(year=year, month=month_name, day=day),
-                context=context,
-                start=match.start(),
-                base_score=110,
+                _OrderedDateParts(
+                    first=first,
+                    second=second,
+                    year=year,
+                    month_first=month_first,
+                    month_is_name=True,
+                    context=context,
+                    start=match.start(),
+                    base_score=110,
+                ),
             )
 
 

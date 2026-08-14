@@ -36,6 +36,22 @@ class _FinalSummaryTokenInput:
     cache_key_base: str | None = None
 
 
+def _prompt_options(config: RenamerConfig) -> LlmPromptOptions:
+    """Build the shared language and JSON parsing options for content calls."""
+    return LlmPromptOptions(
+        language=config.output.naming.language,
+        lenient_json=config.llm.runtime.lenient_llm_json,
+    )
+
+
+def _content_limits(config: RenamerConfig, max_content_chars: int | None) -> LlmContentLimits:
+    """Build the shared content limits for summary and analysis calls."""
+    return LlmContentLimits(
+        max_content_chars=max_content_chars,
+        max_content_tokens=config.llm.content.max_content_tokens,
+    )
+
+
 def _suggested_categories_for_llm(
     heuristic_text: str,
     config: RenamerConfig,
@@ -83,14 +99,8 @@ def _get_single_call_analysis(
         llm_client,
         request.pdf_content,
         AnalysisOptions(
-            prompt=LlmPromptOptions(
-                language=config.output.naming.language,
-                lenient_json=config.llm.runtime.lenient_llm_json,
-            ),
-            limits=LlmContentLimits(
-                max_content_chars=effective_max_content_chars,
-                max_content_tokens=config.llm.content.max_content_tokens,
-            ),
+            prompt=_prompt_options(config),
+            limits=_content_limits(config, effective_max_content_chars),
             guidance=AnalysisGuidance(
                 suggested_doc_type=request.suggested_doc_type,
                 allowed_categories=allowed,
@@ -114,14 +124,8 @@ def _get_multi_call_summary_keywords(
         llm_client,
         request.pdf_content,
         SummaryOptions(
-            prompt=LlmPromptOptions(
-                language=config.output.naming.language,
-                lenient_json=config.llm.runtime.lenient_llm_json,
-            ),
-            limits=LlmContentLimits(
-                max_content_chars=effective_max_content_chars,
-                max_content_tokens=config.llm.content.max_content_tokens,
-            ),
+            prompt=_prompt_options(config),
+            limits=_content_limits(config, effective_max_content_chars),
             suggested_doc_type=request.suggested_doc_type,
             cache_options=LlmCacheOptions(request.response_cache, request.cache_key_base),
         ),

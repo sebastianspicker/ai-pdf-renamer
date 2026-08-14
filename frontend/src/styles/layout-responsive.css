@@ -1,0 +1,137 @@
+/* ——— Layout responsive ——— */
+
+@media (max-width: 1180px) {
+  .body-grid--preview {
+    grid-template-columns: 64px 210px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .app:has(> .body-grid),
+  .app:has(> .instrument-bar) {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .instrument-bar {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    height: auto;
+    row-gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .brand-meta {
+    display: none;
+  }
+
+  .scope-chip {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    order: 3;
+    border-radius: 10px;
+  }
+
+  .body-grid,
+  .body-grid--preview,
+  .body-grid--simple {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .stage-spine {
+    padding: 10px 14px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface);
+  }
+
+  .stage-spine ol {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    width: 100%;
+    height: auto;
+    gap: 0;
+  }
+
+  .stage-spine ol::before {
+    left: 16.5%;
+    right: 16.5%;
+    top: 11px;
+    bottom: auto;
+    width: auto;
+    height: 2px;
+    background: linear-gradient(
+      90deg,
+      var(--verdigris) 0 38%,
+      var(--indigo) 38% 62%,
+      var(--rule-strong) 62% 100%
+    );
+  }
+
+  .stage {
+    flex: initial;
+    justify-content: center;
+  }
+
+  .stage-hit {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 8px;
+    padding: 0;
+    text-align: center;
+  }
+
+  .stage-node {
+    margin: 0;
+    box-shadow: 0 0 0 4px var(--surface) !important;
+  }
+
+  .stage--current .stage-node {
+    box-shadow:
+      0 0 0 4px var(--surface),
+      0 0 0 7px rgb(44 74 124 / 14%) !important;
+  }
+
+  .stage-label {
+    display: block;
+  }
+
+  .stage-label em {
+    display: none;
+  }
+
+  .consequence {
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .consequence-actions {
+    width: 100%;
+  }
+
+  .consequence-actions .btn,
+  .consequence-actions .button {
+    flex: 1 1 auto;
+  }
+
+  .consequence-actions .btn--primary,
+  .consequence-actions .button--primary {
+    flex: 1 1 100%;
+    order: -1;
+  }
+
+}
+
+@media (max-width: 520px) {
+  .privacy-copy span {
+    display: none;
+  }
+
+  .scope-label {
+    display: none;
+  }
+
+  h1 {
+    font-size: 24px;
+  }
+}

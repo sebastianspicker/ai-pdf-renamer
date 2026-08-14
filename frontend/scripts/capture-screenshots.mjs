@@ -34,6 +34,14 @@ const context = await browser.newContext({
 });
 const page = await context.newPage();
 const consoleProblems = [];
+
+async function captureScreenshot(name, fullPage) {
+  await page.screenshot({
+    path: path.join(outputDir, name),
+    fullPage,
+  });
+}
+
 page.on("console", (message) => {
   if (message.type() === "error" || message.type() === "warning") {
     consoleProblems.push(`${message.type()}: ${message.text()}`);
@@ -69,10 +77,7 @@ if (await modelToggle.isChecked()) {
 }
 await page.getByRole("button", { name: "Done" }).click();
 
-await page.screenshot({
-  path: path.join(outputDir, "web-source-desktop.png"),
-  fullPage: true,
-});
+await captureScreenshot("web-source-desktop.png", true);
 
 await page.getByRole("button", { name: /Build preview/ }).click();
 await page.waitForURL("**/preview", { timeout: 60_000 });
@@ -83,44 +88,26 @@ await page.waitForFunction(() => {
     document.querySelector(".thumb img") || document.querySelector(".document-preview img");
   return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
 });
-await page.screenshot({
-  path: path.join(outputDir, "web-preview-desktop.png"),
-  fullPage: true,
-});
+await captureScreenshot("web-preview-desktop.png", true);
 
 await page.setViewportSize({ width: 820, height: 1180 });
-await page.screenshot({
-  path: path.join(outputDir, "web-preview-tablet.png"),
-  fullPage: false,
-});
+await captureScreenshot("web-preview-tablet.png", false);
 
 await page.setViewportSize({ width: 390, height: 844 });
-await page.screenshot({
-  path: path.join(outputDir, "web-preview-mobile.png"),
-  fullPage: false,
-});
+await captureScreenshot("web-preview-mobile.png", false);
 
 await page.getByRole("button", { name: /Apply \d+ names?/ }).click();
 await page.getByRole("heading", { name: /Write \d+ selected names?/ }).waitFor();
-await page.screenshot({
-  path: path.join(outputDir, "web-apply-confirm-mobile.png"),
-  fullPage: false,
-});
+await captureScreenshot("web-apply-confirm-mobile.png", false);
 
 await page.getByRole("button", { name: "Rename files" }).click();
 await page.waitForURL("**/apply", { timeout: 60_000 });
 await page.getByText("Apply", { exact: true }).first().waitFor();
 await page.getByRole("heading", { name: /file(s)? renamed|Run finished with issues/ }).waitFor();
-await page.screenshot({
-  path: path.join(outputDir, "web-apply-mobile.png"),
-  fullPage: false,
-});
+await captureScreenshot("web-apply-mobile.png", false);
 
 await page.setViewportSize({ width: 1440, height: 1000 });
-await page.screenshot({
-  path: path.join(outputDir, "web-apply-desktop.png"),
-  fullPage: true,
-});
+await captureScreenshot("web-apply-desktop.png", true);
 
 if (consoleProblems.length) {
   throw new Error(`Browser console problems:\n${consoleProblems.join("\n")}`);
