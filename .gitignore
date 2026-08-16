@@ -159,7 +159,10 @@ Desktop.ini
 /.aider/
 /.aider.*
 /.codex/
-/.codacy/
+/.codacy/*
+!/.codacy/codacy.config.json
+!/.codacy/codacy.yaml
+!/.codacy/codacy.yml
 /.codegraph/
 /.continue/
 /.serena/
@@ -202,10 +205,6 @@ Desktop.ini
 .codegraph/
 .serena/
 .repowise/
-.codacy/generated/
-.codacy/logs/
-.codacy/tools-configs/
-.codacy/cli-config.yaml
 playwright-report/
 blob-report/
 junit*.xml

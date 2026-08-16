@@ -1,7 +1,11 @@
 import { chromium } from "playwright";
-import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  resolveScreenshotFile,
+  resolveScreenshotOutputDirectory,
+} from "./screenshot-paths.mjs";
 
 const baseUrl = process.env.FOLIONYM_SCREENSHOT_URL || "http://127.0.0.1:8765";
 const sourcePath = process.env.FOLIONYM_SCREENSHOT_SOURCE;
@@ -9,22 +13,15 @@ const sourceCount = process.env.FOLIONYM_SCREENSHOT_COUNT || "8";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const screenshotRoot = path.resolve(scriptDir, "../../docs/screenshots");
 
-function screenshotOutputDirectory(output = process.env.FOLIONYM_SCREENSHOT_OUTPUT) {
-  const candidate = path.resolve(output || screenshotRoot);
-  const relativePath = path.relative(screenshotRoot, candidate);
-  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    throw new Error("FOLIONYM_SCREENSHOT_OUTPUT must stay inside docs/screenshots.");
-  }
-  return candidate;
-}
-
-const outputDir = screenshotOutputDirectory();
+const outputDir = await resolveScreenshotOutputDirectory(
+  screenshotRoot,
+  process.env.FOLIONYM_SCREENSHOT_OUTPUT,
+);
 
 if (!sourcePath) {
   throw new Error("FOLIONYM_SCREENSHOT_SOURCE must name the synthetic PDF folder.");
 }
 
-await mkdir(outputDir, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({
   colorScheme: "light",
@@ -37,7 +34,7 @@ const consoleProblems = [];
 
 async function captureScreenshot(name, fullPage) {
   await page.screenshot({
-    path: path.join(outputDir, name),
+    path: await resolveScreenshotFile(outputDir, name),
     fullPage,
   });
 }

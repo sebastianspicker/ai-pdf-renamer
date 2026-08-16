@@ -23,6 +23,7 @@ classifiers = [
 ]
 dependencies = [
   "PyYAML>=6.0.0",
+  "cryptography>=50.0.0",
   "requests>=2.33.0",
   "rich>=13.0.0",
 ]
