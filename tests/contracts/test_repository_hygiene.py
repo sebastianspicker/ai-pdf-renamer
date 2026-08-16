@@ -11,7 +11,8 @@ from scripts.repository_hygiene import forbidden_reason
     "path",
     [
         ".env",
-        ".env.example",
+        ".env.local",
+        ".env.example.local",
         "fixtures/source.pdf",
         "models/local-model.gguf",
         "models/encoder.onnx",
@@ -54,6 +55,7 @@ def test_forbidden_repository_paths(path: str) -> None:
     [
         "README.md",
         "RELEASING.md",
+        ".env.example",
         ".github/release.yml",
         "docs/README.md",
         "docs/frontend.md",

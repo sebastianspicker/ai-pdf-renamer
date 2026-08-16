@@ -95,8 +95,10 @@ def _private_basename(path: PurePosixPath) -> bool:
 
 
 def _environment_file(path: PurePosixPath) -> bool:
-    """Return whether the basename is .env or a variant such as .env.local."""
-    return path.name == ".env" or path.name.startswith(".env.")
+    """Return whether the basename is .env or a private variant, not the public template."""
+    return path.name == ".env" or (
+        path.name.startswith(".env.") and path.name != ".env.example"
+    )
 
 
 def _credential_export(path: PurePosixPath) -> bool:
