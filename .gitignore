@@ -163,6 +163,8 @@ Desktop.ini
 !/.codacy/codacy.config.json
 !/.codacy/codacy.yaml
 !/.codacy/codacy.yml
+/.codacy/codacy.config.json
+/.codacy/codacy.yaml
 /.codegraph/
 /.continue/
 /.serena/
