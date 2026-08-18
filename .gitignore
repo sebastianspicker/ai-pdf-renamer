@@ -121,6 +121,7 @@ secrets.yml
 .secrets/
 
 # Editors/OS
+/.mcp.json
 .vscode/
 .idea/
 .DS_Store
