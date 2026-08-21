@@ -23,5 +23,4 @@
 - [ ] `make release-check` passes
 - [ ] `make clean` run locally (recommended before final push)
 - [ ] Docs updated if behavior or setup changed (see `README.md` and `docs/README.md`)
-- [ ] Public screenshots regenerated for visible TUI changes
 - [ ] No PDFs, document-derived text, secrets, logs, local caches, or private planning files included

@@ -28,26 +28,21 @@ Start with these files:
    `src/folionym/frontend_service.py` implement the browser service.
 7. `src/folionym/tui.py` and the other `tui_*` modules implement the terminal
    interface.
-8. `tests/contracts/test_repo_contracts.py` pins documentation, package, and public
-   interface contracts.
+8. `tests/test_core.py` covers the retained direct filesystem, undo, parsing,
+   and hook contracts.
 
 The package uses a `src` layout. Import public objects from their owning
 modules. Do not introduce compatibility re-exports without a documented API
 requirement. The `folionym.rename_ops` facade is the documented exception.
 
-Tests are grouped by execution boundary:
+The deliberately compact suite lives in one module:
 
 | Path | Scope |
 | --- | --- |
-| `tests/unit/` | focused module behavior and edge cases |
-| `tests/integration/` | workflows that cross module or interface boundaries |
-| `tests/contracts/` | repository, CI, distribution, documentation, and asset contracts |
-| `tests/e2e/` | installed-command and subprocess workflows |
-| `frontend/src/*.test.tsx` | co-located Vitest component tests |
+| `tests/test_core.py` | rename safety, undo boundaries, and LLM response parsing |
 
-Keep reusable pytest fixtures in `tests/conftest.py` and narrow helper seams in
-`tests/helpers.py`. Test outputs and browser failure artifacts are ignored;
-test source is not.
+Construct small inputs directly in each test and use temporary directories for
+filesystem behavior. Test output is ignored; test source is not.
 
 ## Change workflow
 
@@ -64,7 +59,6 @@ make lint
 make typecheck
 make test
 make frontend-check
-make e2e
 ```
 
 `make format` applies Ruff formatting. Review its diff before including it in a
@@ -76,40 +70,23 @@ The broad gate is:
 make release-check
 ```
 
-It includes frontend type checking, Vitest, the Vite build, repository hygiene,
-Ruff format and lint checks, strict mypy, coverage-gated Python tests, package
+It includes frontend type checking, the Vite build, repository hygiene,
+Ruff format and lint checks, strict mypy, focused Python tests, package
 builds, and installed-wheel verification. CI runs the Linux Python 3.14.6 release gate
 and macOS and Windows targeted smoke jobs.
 
-The end-to-end CLI tests are separate from `release-check`:
-
-```bash
-make e2e
-```
-
-## Frontend and screenshot changes
+## Frontend changes
 
 The browser source is in `frontend/`. Use:
 
 ```bash
 cd frontend
 npm run typecheck
-npm run test
 npm run build
 ```
 
 The Vite build writes to `src/folionym/web_dist/`, which is packaged with the
 wheel.
-
-When a visible TUI change makes the tracked captures stale, refresh them from
-the repository root:
-
-```bash
-make docs-screenshots
-```
-
-The capture uses fixture paths and an isolated settings file. Review all three
-SVG changes.
 
 ## Code and documentation standards
 
@@ -133,7 +110,7 @@ Do not commit:
 - local logs, caches, exports, rename logs, or backup files
 - credentials, tokens, private environment files, or machine-specific state
 
-Use fixture data in tests and screenshots. Follow [SECURITY.md](SECURITY.md)
+Use small programmatic data in tests. Follow [SECURITY.md](SECURITY.md)
 for transport and reporting requirements.
 
 ## Pull requests

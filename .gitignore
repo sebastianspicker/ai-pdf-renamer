@@ -51,7 +51,6 @@ pytest.xml
 # Frontend test and browser artifacts
 /frontend/coverage/
 /frontend/test-results/
-/frontend/playwright-report/
 /frontend/blob-report/
 
 # Logs
@@ -208,7 +207,6 @@ Desktop.ini
 .codegraph/
 .serena/
 .repowise/
-playwright-report/
 blob-report/
 junit*.xml
 target/
@@ -222,3 +220,16 @@ xcuserdata/
 *.sqlite3-wal
 *.sqlite3-shm
 *.local.db
+
+# Generated test and coverage output (local only)
+/coverage/
+/htmlcov/
+/.coverage
+/.coverage.*
+/.pytest_cache/
+/test-results/
+/playwright-report/
+/blob-report/
+/coverage.xml
+/junit.xml
+/junit-*.xml

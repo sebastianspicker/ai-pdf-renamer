@@ -6,8 +6,8 @@ The current alpha identity is `0.4.0a1`, tagged as `v0.4.0a1`.
 
 ## 1. Freeze the candidate
 
-1. Confirm every runtime import, test, public document, and screenshot is
-   tracked. A tag records commits, not uncommitted working-tree files.
+1. Confirm every runtime import, test, and public document is tracked. A tag
+   records commits, not uncommitted working-tree files.
 2. Confirm `src/folionym/__init__.py`, `CHANGELOG.md`, and the intended tag
    all use the same PEP 440 version. Keep the changes under `Unreleased` until
    the release date is chosen, then create the dated `0.4.0a1` heading in the
@@ -29,11 +29,7 @@ The current alpha identity is `0.4.0a1`, tagged as `v0.4.0a1`.
      .github/release.yml \
      RELEASING.md \
      docs/releases/0.4.0a1.md \
-     docs/screenshots/tui-settings.svg \
-     docs/screenshots/tui-advanced.svg \
-     docs/screenshots/tui-preview.svg \
-     docs/tui.md \
-     scripts/capture_tui_screenshots.py
+     docs/tui.md
    ```
 
 5. Review the complete diff. Do not include PDFs, document-derived output,
@@ -47,15 +43,12 @@ Run the project gates without external LLM, OCR, or PDF data:
 ```bash
 uv lock --check
 make release-check
-make e2e
 uv run folionym --validate-config --dir . --no-llm --dry-run
 ```
 
 `make release-check` builds one wheel and one source distribution, verifies
 their public contents, installs the wheel in a disposable environment, and
-checks all four console entry-point mappings. Refresh the screenshots with
-`make docs-screenshots` only when the visible TUI changed; commit any resulting
-asset changes before repeating the release gate.
+checks all four console entry-point mappings.
 
 The alpha requires CPython 3.14 or later; release verification uses exact
 CPython 3.14.6. Linux runs the complete release gate, while macOS and Windows
@@ -86,7 +79,6 @@ make clean
 test -z "$(git status --porcelain)"
 uv lock --check
 make release-check
-make e2e
 uv run folionym --validate-config --dir . --no-llm --dry-run
 test -z "$(git status --porcelain)"
 test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"

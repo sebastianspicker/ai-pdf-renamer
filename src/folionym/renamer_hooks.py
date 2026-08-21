@@ -149,6 +149,8 @@ def _post_hook_http(cmd: str, old_path: Path, new_path: Path, meta: dict[str, ob
     with requests.Session() as session:
         session.trust_env = False
         resp = session.post(cmd, json=payload, timeout=10, allow_redirects=False)
+        if 300 <= resp.status_code < 400:
+            raise requests.TooManyRedirects("post-rename hook redirects are disabled")
         resp.raise_for_status()
 
 

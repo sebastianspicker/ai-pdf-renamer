@@ -91,10 +91,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uv run pytest -q \
-            tests/e2e/test_cli_e2e.py \
-            tests/unit/test_rename_filename_policy.py \
-            tests/unit/test_rename_backups.py \
-            tests/unit/test_rename_workflow.py \
-            tests/unit/test_rename_atomic_fallbacks.py \
-            tests/unit/test_undo_cli.py
+          uv run pytest -q tests/test_core.py

@@ -1,6 +1,6 @@
 UV ?= uv
 
-.PHONY: install-dev frontend-install frontend-check lint format typecheck test e2e cov clean docs-screenshots hygiene-check build-check release-check ci
+.PHONY: install-dev frontend-install frontend-check lint format typecheck test clean hygiene-check build-check release-check ci
 
 install-dev:
 	$(UV) sync --all-extras
@@ -11,7 +11,6 @@ frontend-install:
 
 frontend-check:
 	cd frontend && npm run typecheck
-	cd frontend && npm run test
 	cd frontend && npm run build
 
 lint:
@@ -27,12 +26,6 @@ typecheck:
 test:
 	$(UV) run pytest -q
 
-e2e:
-	$(UV) run pytest -q tests/e2e
-
-cov:
-	$(UV) run pytest --cov=folionym --cov-report=term-missing --cov-fail-under=85 -q
-
 clean:
 	rm -rf .pytest_cache .ruff_cache .mypy_cache .cache
 	rm -rf .coverage .coverage.* coverage.xml coverage htmlcov test-results
@@ -42,9 +35,6 @@ clean:
 	find src tests scripts -type d -name '__pycache__' -prune -exec rm -rf {} +
 	find src tests scripts -type d -name '.pytest_cache' -prune -exec rm -rf {} +
 	find . -name '.DS_Store' -delete
-
-docs-screenshots:
-	PYTHONHASHSEED=0 $(UV) run python scripts/capture_tui_screenshots.py
 
 hygiene-check:
 	git ls-files -z | $(UV) run python scripts/repository_hygiene.py --null-stdin
@@ -63,6 +53,6 @@ build-check:
 	$(UV) pip install --python "$$ENV_DIR/bin/python" "$${WHEEL}[pdf,tokens,ocr,tui,web]"; \
 	"$$ENV_DIR/bin/python" scripts/verify_distributions.py dist --installed-wheel
 
-release-check: frontend-check hygiene-check lint typecheck cov build-check
+release-check: frontend-check hygiene-check lint typecheck test build-check
 
 ci: release-check

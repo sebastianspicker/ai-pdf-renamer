@@ -297,14 +297,10 @@ folionym-undo --rename-log ./rename.log
 | Path | Purpose |
 | --- | --- |
 | `src/folionym/` | Python package, bundled data, and packaged browser files |
-| `frontend/` | React 19, TypeScript, Vite, Vitest, and screenshot source |
-| `tests/unit/` | focused Python module and helper tests |
-| `tests/integration/` | multi-module CLI, rename, browser, and security workflows |
-| `tests/contracts/` | repository, CI, packaging, documentation, and screenshot contracts |
-| `tests/e2e/` | subprocess CLI and undo tests |
-| `tests/conftest.py`, `tests/helpers.py` | shared fixtures and test seams |
-| `scripts/` | distribution checks, repository hygiene, and TUI capture |
-| `docs/` | interface guides, screenshots, and release notes |
+| `frontend/` | React 19, TypeScript, and Vite source |
+| `tests/test_core.py` | direct rename, undo, parsing, and filename-policy contracts |
+| `scripts/` | distribution checks and repository hygiene |
+| `docs/` | interface guides and release notes |
 | `.github/workflows/` | CI and security workflows |
 | `pyproject.toml` | package metadata, dependencies, and Python tool settings |
 | `Makefile` | contributor and release verification commands |
@@ -351,9 +347,6 @@ make test
 make frontend-check
 ```
 
-Run `make docs-screenshots` only when the visible TUI changes. It replaces the
-three tracked TUI SVG files from the Textual application.
-
 Follow [CONTRIBUTING.md](CONTRIBUTING.md) for code organization, pull request
 scope, and sensitive-data rules.
 
@@ -365,15 +358,9 @@ The broad local gate is:
 make release-check
 ```
 
-It runs frontend type checking, Vitest, and the Vite build; repository hygiene;
-Ruff formatting and linting; strict mypy; the coverage-gated Python suite; a
+It runs frontend type checking and the Vite build; repository hygiene; Ruff
+formatting and linting; strict mypy; the direct Python suite; a
 wheel and source distribution build; and an isolated installed-wheel check.
-
-The process-level CLI tests are separate:
-
-```bash
-make e2e
-```
 
 CI runs the full release gate on Linux with Python 3.14.6. macOS and Windows
 run targeted smoke jobs. The security workflow separately runs CodeQL,

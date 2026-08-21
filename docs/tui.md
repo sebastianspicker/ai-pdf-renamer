@@ -21,12 +21,6 @@ The interface has three tabs:
 3. Review and rename displays progress, proposals, skips, failures, and the
    activity log.
 
-![Setup tab](screenshots/tui-settings.svg)
-
-![Fine-tune tab](screenshots/tui-advanced.svg)
-
-![Review and rename tab](screenshots/tui-preview.svg)
-
 Preview is a dry run. Apply starts a separate run from the current settings and
 calculates proposals again, so a prior LLM-backed preview and a later Apply can
 differ. Apply to folder and Rename one PDF open a keyboard-contained
@@ -75,23 +69,3 @@ Use the TUI for supervised processing of trusted documents. There is no hard
 input byte limit, page extraction is unlimited by default, worker count has no
 hard maximum, and OCR has no application-level timeout. Keep backups of
 important documents.
-
-## Screenshot maintenance
-
-The three SVGs represent the current Textual interface at 120 by 40 cells and
-use fixture paths, names, settings, and results. The capture does not rename
-files or load the user's settings.
-
-After a visible TUI change, replace all three from the repository root:
-
-```bash
-make docs-screenshots
-```
-
-Review the resulting SVGs and run:
-
-```bash
-uv run pytest \
-  tests/contracts/test_capture_tui_screenshots.py \
-  tests/contracts/test_repo_contracts.py
-```

@@ -9,9 +9,9 @@ The installed user interfaces are `folionym`, `folionym-tui`,
 - [README](../README.md): purpose, requirements, installation, configuration,
   usage, limitations, operation, and troubleshooting
 - [Browser interface](frontend.md): Source, Preview, and Apply behavior,
-  process lifetime, local API boundaries, screenshots, and frontend checks
+  process lifetime, local API boundaries, and frontend checks
 - [Terminal interface](tui.md): controls, settings persistence, confirmation
-  behavior, terminal requirements, and screenshot maintenance
+  behavior, and terminal requirements
 - [Security policy](../SECURITY.md): endpoint transport, local data, parser
   boundaries, hooks, and private vulnerability reporting
 
@@ -46,10 +46,4 @@ The full local release gate runs on exact CPython 3.14.6:
 
 ```bash
 make release-check
-```
-
-The CLI end-to-end suite is separate:
-
-```bash
-make e2e
 ```

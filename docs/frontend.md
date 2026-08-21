@@ -39,7 +39,7 @@ The browser does not expose CLI watch mode, diagnostics, or undo.
 
 | Path | Responsibility |
 | --- | --- |
-| `frontend/` | React 19 and TypeScript source, tests, and Vite configuration |
+| `frontend/` | React 19 and TypeScript source and Vite configuration |
 | `frontend/src/App.tsx` | routes and top-level interface state |
 | `frontend/src/pages/` | Source, Preview, and Apply pages |
 | `frontend/src/components/` | shared browser components |
@@ -89,7 +89,7 @@ Run the frontend gate:
 make frontend-check
 ```
 
-This runs TypeScript checking, Vitest, and the production Vite build. The full
+This runs TypeScript checking and the production Vite build. The full
 repository gate also verifies that the wheel contains
 `src/folionym/web_dist/index.html`:
 
@@ -108,46 +108,3 @@ folionym-web --no-open
 cd frontend
 npm run dev
 ```
-
-## Screenshots
-
-### Source
-
-![Source page with a selected fixture directory](screenshots/web-source-desktop.png)
-
-### Preview
-
-![Desktop Preview page with filename proposals](screenshots/web-preview-desktop.png)
-
-![Tablet Preview page](screenshots/web-preview-tablet.png)
-
-![Mobile Preview page](screenshots/web-preview-mobile.png)
-
-### Apply
-
-![Mobile exact-name confirmation](screenshots/web-apply-confirm-mobile.png)
-
-![Desktop Apply report](screenshots/web-apply-desktop.png)
-
-![Mobile Apply report](screenshots/web-apply-mobile.png)
-
-To refresh these files, first create a private directory containing eight
-fixture PDFs. Start the packaged application from the repository root:
-
-```bash
-folionym-web --no-open
-```
-
-In another terminal:
-
-```bash
-cd frontend
-FOLIONYM_SCREENSHOT_SOURCE=/absolute/path/to/eight/fixture-pdfs \
-  FOLIONYM_SCREENSHOT_COUNT=8 \
-  npm run capture:screenshots
-```
-
-The capture script requires eight PDFs, uses a heuristics-only preview, waits
-for a real thumbnail, exercises the confirmation and Apply flow, and fails on
-browser-console or API errors. Review the images before including them in a
-change.

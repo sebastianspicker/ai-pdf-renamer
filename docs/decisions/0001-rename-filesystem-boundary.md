@@ -33,6 +33,5 @@ Every implementation change must preserve these filesystem invariants:
 
 New rename behavior belongs in the owning implementation module without
 bypassing the facade. Changes to exports or invariants require an explicit
-contract update and focused tests. The facade contract is covered in
-`tests/contracts/test_repo_contracts.py`; the filesystem invariants are
-covered by the `test_rename_*` unit modules.
+contract update and focused tests. The retained direct contracts are covered
+by `tests/test_core.py`.
