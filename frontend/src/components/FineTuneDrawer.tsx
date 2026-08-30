@@ -31,6 +31,22 @@ const OUTPUT_TEXT_SETTINGS = [
   { label: "Rules file", setting: "rules_file" },
 ] as const satisfies ReadonlyArray<Pick<TextSettingProps, "label" | "setting">>;
 
+const LANGUAGE_OPTIONS = [
+  { label: "German", value: "de" },
+  { label: "English", value: "en" },
+] as const satisfies ReadonlyArray<{ label: string; value: Settings["language"] }>;
+
+const CASE_OPTIONS = [
+  { label: "kebab-case", value: "kebabCase" },
+  { label: "snake_case", value: "snakeCase" },
+  { label: "camelCase", value: "camelCase" },
+] as const satisfies ReadonlyArray<{ label: string; value: Settings["case"] }>;
+
+const DATE_FORMAT_OPTIONS = [
+  { label: "Day / month / year", value: "dmy" },
+  { label: "Month / day / year", value: "mdy" },
+] as const satisfies ReadonlyArray<{ label: string; value: Settings["date_format"] }>;
+
 function TextSetting({ hint, inputMode, label, onChange, placeholder, setting, settings }: TextSettingProps) {
   return (
     <Field hint={hint} label={label}>
@@ -139,21 +155,19 @@ export function FineTuneDrawer({
           <SettingsSection title="Naming">
             <div className="field-grid">
               <SelectSetting label="Language" onChange={onChange} setting="language" settings={settings}>
-                <option value="de">German</option>
-                <option value="en">English</option>
-                <option value="fr">French</option>
-                <option value="es">Spanish</option>
+                {LANGUAGE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </SelectSetting>
               <SelectSetting label="Case" onChange={onChange} setting="case" settings={settings}>
-                <option value="kebabCase">kebab-case</option>
-                <option value="snake_case">snake_case</option>
-                <option value="camelCase">camelCase</option>
-                <option value="Title Case">Title Case</option>
+                {CASE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </SelectSetting>
               <SelectSetting label="Date order" onChange={onChange} setting="date_format" settings={settings}>
-                <option value="dmy">Day / month / year</option>
-                <option value="ymd">Year / month / day</option>
-                <option value="mdy">Month / day / year</option>
+                {DATE_FORMAT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </SelectSetting>
               <SelectSetting label="Preset" onChange={onChange} setting="preset" settings={settings}>
                 <option value="">Default</option>

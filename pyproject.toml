@@ -23,7 +23,6 @@ classifiers = [
 ]
 dependencies = [
   "PyYAML>=6.0.0",
-  "cryptography>=50.0.0",
   "requests>=2.33.0",
   "rich>=13.0.0",
 ]
@@ -63,10 +62,10 @@ web = [
 ]
 
 [project.scripts]
-folionym = "folionym.cli:main"
-folionym-tui = "folionym.tui:main"
-folionym-undo = "folionym.undo_cli:main"
-folionym-web = "folionym.web_cli:main"
+folionym = "folionym.interfaces.cli:main"
+folionym-tui = "folionym.interfaces.tui:main"
+folionym-undo = "folionym.interfaces.cli.undo:main"
+folionym-web = "folionym.interfaces.web.cli:main"
 
 [tool.hatch.version]
 path = "src/folionym/__init__.py"
@@ -84,6 +83,7 @@ include = [
   "/RELEASING.md",
   "/SECURITY.md",
   "/docs/README.md",
+  "/docs/decisions",
   "/docs/frontend.md",
   "/docs/releases",
   "/docs/tui.md",
@@ -148,6 +148,6 @@ module = ["fitz", "tiktoken", "ocrmypdf", "textual", "textual.*", "rich", "rich.
 ignore_missing_imports = true
 # TUI module depends on optional, untyped textual; relax checks that fire on Any base classes/decorators.
 [[tool.mypy.overrides]]
-module = ["folionym.tui"]
+module = ["folionym.interfaces.tui.app"]
 disallow_subclassing_any = false
 disallow_untyped_decorators = false

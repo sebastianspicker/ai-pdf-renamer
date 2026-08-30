@@ -1,6 +1,9 @@
 export type RunState = "queued" | "running" | "completed" | "cancelled" | "failed";
 export type PreviewStatus = "ready" | "review" | "skipped" | "failed";
 export type ApplyStatus = "renamed" | "skipped" | "unchanged" | "failed" | "cancelled";
+export type Language = "de" | "en";
+export type NamingCase = "camelCase" | "kebabCase" | "snakeCase";
+export type DateFormat = "dmy" | "mdy";
 
 export type SettingsTextKey =
   | "directory" | "single_file" | "language" | "case"
@@ -16,7 +19,12 @@ export type SettingsBooleanKey =
   | "use_structured_fields" | "write_pdf_metadata" | "use_vision_fallback"
   | "simple_naming_mode" | "vision_first";
 
-export interface Settings extends Record<SettingsTextKey, string>, Record<SettingsBooleanKey, boolean> {}
+export type Settings = Omit<Record<SettingsTextKey, string>, "language" | "case" | "date_format"> &
+  Record<SettingsBooleanKey, boolean> & {
+    language: Language;
+    case: NamingCase;
+    date_format: DateFormat;
+  };
 
 export interface DirectoryEntry {
   name: string;

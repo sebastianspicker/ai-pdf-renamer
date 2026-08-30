@@ -10,6 +10,7 @@ import tarfile
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
+from unittest import mock
 
 if TYPE_CHECKING:
     from scripts.repository_hygiene import forbidden_reason
@@ -19,18 +20,20 @@ else:
     from repository_hygiene import forbidden_reason
 
 DATA_FILES = {
+    "base.tcss",
     "category_aliases.json",
-    "heuristic_patterns.json",
     "heuristic_scores.json",
-    "llm_response_schema.json",
     "meta_stopwords.json",
+    "responsive.tcss",
+    "run.tcss",
 }
 ENTRY_POINTS = {
-    "folionym": "folionym.cli:main",
-    "folionym-tui": "folionym.tui:main",
-    "folionym-undo": "folionym.undo_cli:main",
-    "folionym-web": "folionym.web_cli:main",
+    "folionym": "folionym.interfaces.cli:main",
+    "folionym-tui": "folionym.interfaces.tui:main",
+    "folionym-undo": "folionym.interfaces.cli.undo:main",
+    "folionym-web": "folionym.interfaces.web.cli:main",
 }
+_HELP_SAFE_ENTRY_POINTS = ("folionym", "folionym-undo", "folionym-web")
 
 
 def _archive_names(path: Path) -> list[str]:
@@ -100,8 +103,19 @@ def _assert_help(entry_point: Any, command: str) -> None:
         sys.argv = original_argv
 
 
+def _assert_tui_smoke(entry_point: Any) -> None:
+    """Smoke the TUI launcher without constructing or running an interactive app."""
+    module = sys.modules.get(entry_point.__module__)
+    if module is None:
+        raise AssertionError("folionym-tui entry point module was not imported")
+    with mock.patch.object(module, "FolionymTUI") as app_type:
+        entry_point()
+    app_type.assert_called_once_with()
+    app_type.return_value.run.assert_called_once_with()
+
+
 def _verify_installed_entry_points() -> None:
-    """Verify installed script mappings and callability, then smoke-test CLI and undo help."""
+    """Verify every installed script mapping, then smoke-test each without starting a service."""
     points = _installed_entry_points()
     values = {name: point.value for name, point in points.items()}
     if values != ENTRY_POINTS:
@@ -109,8 +123,9 @@ def _verify_installed_entry_points() -> None:
     loaded = {name: point.load() for name, point in points.items()}
     if not all(callable(entry_point) for entry_point in loaded.values()):
         raise AssertionError("all console entry points must resolve to callables")
-    _assert_help(loaded["folionym"], "folionym")
-    _assert_help(loaded["folionym-undo"], "folionym-undo")
+    for command in _HELP_SAFE_ENTRY_POINTS:
+        _assert_help(loaded[command], command)
+    _assert_tui_smoke(loaded["folionym-tui"])
 
 
 def main(argv: list[str] | None = None) -> int:

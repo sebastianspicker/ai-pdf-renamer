@@ -13,14 +13,12 @@ import { usePreviewPlan } from "./preview/usePreviewPlan";
 
 function caseLabel(value: string): string {
   if (value === "kebabCase") return "kebab";
-  if (value === "snake_case") return "snake";
+  if (value === "snakeCase") return "snake";
   if (value === "camelCase") return "camel";
-  if (value === "Title Case") return "title";
   return value;
 }
 
 function dateLabel(value: string): string {
-  if (value === "ymd") return "YYYYMMDD";
   if (value === "dmy") return "DDMMYYYY";
   if (value === "mdy") return "MMDDYYYY";
   return value.toUpperCase();

@@ -29,6 +29,14 @@ def apply_single_rename(file_path: Path, base: str, options: RenameApplyOptions)
     return _run_rename_attempts(retry_context, state, options)
 
 
+def apply_exact_rename(source: Path, target: Path) -> None:
+    """Rename within one directory without overwriting or choosing another target."""
+    _validate_path_within_parent(target, source.parent)
+    if source.parent.resolve() != target.parent.resolve():
+        raise ValueError(f"Cross-directory rename denied: {source} -> {target}")
+    _rename_without_overwrite(source, target)
+
+
 def _initialize_rename_attempt(file_path: Path, base: str) -> tuple[RenameAttemptState, RenameRetryContext]:
     """Build and validate the first collision candidate for a source file."""
     suffix = file_path.suffix
