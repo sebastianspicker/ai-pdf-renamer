@@ -53,9 +53,12 @@ Current limitations:
   OCR has no application-level timeout.
 - OCR, vision, heuristic classification, and LLM output can be incomplete or
   incorrect. Review proposed names before applying them.
-- The browser retains a reviewed Preview plan and applies its selected exact
-  targets without another model call. The TUI behaves differently: Apply
-  starts a separate run and can produce different proposals.
+- The browser and directory TUI retain reviewed Preview plans and apply exact
+  targets without another model call. A changed source, duplicate selected
+  target, or occupied target fails rather than receiving a replacement name.
+  Material TUI source or configuration edits invalidate its plan, and a
+  cancelled Preview cannot apply. TUI Rename one PDF remains a confirmed,
+  immediate unique-available operation.
 - Browser plans and reports exist only in the running process. Restarting
   `folionym-web` invalidates them.
 - The browser server binds only to loopback. There is no supported remote or
@@ -107,7 +110,7 @@ The extras are:
 | `ocr` | OCRmyPDF integration |
 | `tui` | Textual terminal interface |
 | `web` | FastAPI, Uvicorn, PyMuPDF, and the local browser interface |
-| `dev` | Python test, lint, format, type-check, and coverage tools |
+| `dev` | Python test, lint, format, and type-check tools |
 
 For contributor setup, install every extra and the frontend dependencies:
 
@@ -262,8 +265,10 @@ Launch the terminal interface:
 folionym-tui
 ```
 
-Apply and Rename one PDF require explicit confirmation in the TUI. Settings
-from a valid directory Preview or confirmed Apply run are stored in
+Directory Preview and Apply use one immutable reviewed plan in the TUI. Apply
+uses only its included ready names and does not recompute them; applying the
+plan consumes it. Rename one PDF remains a separately confirmed immediate
+operation. Settings from a valid directory Preview are stored in
 `~/.folionym_ui.json`; edits are not saved merely by closing the interface.
 See [docs/tui.md](docs/tui.md).
 
@@ -296,9 +301,12 @@ folionym-undo --rename-log ./rename.log
 
 | Path | Purpose |
 | --- | --- |
-| `src/folionym/` | Python package, bundled data, and packaged browser files |
+| `src/folionym/settings/` | configuration models and precedence resolution |
+| `src/folionym/naming/`, `extraction/`, `llm/` | document naming, PDF extraction, and optional LLM work |
+| `src/folionym/application/`, `rename_ops/` | workflow orchestration and guarded filesystem mutation |
+| `src/folionym/infrastructure/`, `interfaces/` | shared low-level primitives and interface adapters |
 | `frontend/` | React 19, TypeScript, and Vite source |
-| `tests/test_core.py` | direct rename, undo, parsing, and filename-policy contracts |
+| `tests/` | contract, domain, integration, interface, and retained core coverage |
 | `scripts/` | distribution checks and repository hygiene |
 | `docs/` | interface guides and release notes |
 | `.github/workflows/` | CI and security workflows |
@@ -310,10 +318,10 @@ The installed commands are:
 
 | Command | Entry point |
 | --- | --- |
-| `folionym` | `folionym.cli:main` |
-| `folionym-tui` | `folionym.tui:main` |
-| `folionym-undo` | `folionym.undo_cli:main` |
-| `folionym-web` | `folionym.web_cli:main` |
+| `folionym` | `folionym.interfaces.cli:main` |
+| `folionym-tui` | `folionym.interfaces.tui:main` |
+| `folionym-undo` | `folionym.interfaces.cli.undo:main` |
+| `folionym-web` | `folionym.interfaces.web.cli:main` |
 
 The public Python interfaces are owned by their modules:
 
@@ -345,6 +353,7 @@ make lint
 make typecheck
 make test
 make frontend-check
+make architecture-check
 ```
 
 Follow [CONTRIBUTING.md](CONTRIBUTING.md) for code organization, pull request
@@ -358,9 +367,10 @@ The broad local gate is:
 make release-check
 ```
 
-It runs frontend type checking and the Vite build; repository hygiene; Ruff
-formatting and linting; strict mypy; the direct Python suite; a
-wheel and source distribution build; and an isolated installed-wheel check.
+It runs dependency-lock validation; frontend type checking and the Vite build;
+repository hygiene; the architecture check; Ruff formatting and linting; strict
+mypy; the Python suite; a wheel and source distribution build; and an isolated
+installed-wheel check.
 
 CI runs the full release gate on Linux with Python 3.14.6. macOS and Windows
 run targeted smoke jobs. The security workflow separately runs CodeQL,

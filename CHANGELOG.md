@@ -14,11 +14,12 @@ candidate commit is tagged and published as a GitHub prerelease.
 
 - Linux full-gate CI plus targeted macOS and Windows smoke coverage on exact
   CPython 3.14.6.
-- A reproducible, privacy-safe public TUI screenshot workflow, alpha release
-  notes, structured GitHub release-note categories, and a maintainer
-  prerelease checklist.
-- Alpha package metadata and repository contracts for the public docs,
-  screenshots, workflows, and built distributions.
+- Alpha release notes, structured GitHub release-note categories, and a
+  maintainer prerelease checklist.
+- Alpha package metadata and repository checks for public documentation,
+  workflows, and built distributions.
+- Architecture guidance and a decision record for the modular-monolith package
+  boundaries and shared reviewed-plan contract.
 
 ### Changed
 
@@ -30,6 +31,14 @@ candidate commit is tagged and published as a GitHub prerelease.
 - Made PyYAML a core runtime dependency for documented YAML configuration.
 - Decomposed the CLI, filename, heuristic, LLM, renamer, text, and TUI runtime
   modules around canonical request/configuration objects and module-owned APIs.
+- Grouped implementation into settings, naming, extraction, LLM, application,
+  rename, infrastructure, and interface packages while retaining documented
+  public facades.
+- Made directory TUI Preview retain an immutable reviewed plan. Its Apply now
+  uses exact included ready targets without recomputation; material edits
+  invalidate the plan and incomplete Preview cannot apply. The confirmed
+  single-file TUI path remains immediate and unique-available.
+- Added the architecture check to the local release gate.
 - Restricted post-rename hooks to HTTPS and literal-loopback HTTP endpoints and
   redacted schema-validation logs so document-derived values are not exposed.
 - Restricted LLM endpoints to structurally valid HTTP(S) URLs while retaining
@@ -43,7 +52,7 @@ candidate commit is tagged and published as a GitHub prerelease.
 
 - Removed duplicate wheel package-data inclusion and added installed-artifact
   verification for the wheel, source distribution, and all four entry points.
-- Centralized tracked-path hygiene policy and added regression fixtures for
+- Centralized tracked-path hygiene policy and added regression checks for
   private, credential, document, cache, and local automation paths.
 - Switched response-cache identity to full-file hashing with change detection.
 - Moved TUI work to managed Textual workers with cancellation-aware shutdown.
@@ -67,7 +76,8 @@ Development milestone; it was not published as a GitHub release.
 - `CategoryCombineParams` frozen dataclass for category merge configuration.
 - Path traversal validation in rename operations.
 - Thread-safe tiktoken initialization with double-checked locking.
-- 786 tests (up from 161); current coverage gate is 85% (up from 50%).
+- The test suite grew from 161 to 786 cases, and its coverage threshold rose
+  from 50% to 85%.
 - LLM backend abstraction: HTTP (llama.cpp / Ollama) and in-process (llama-cpp-python).
 - Single-call LLM mode for combined summary/keywords/category extraction.
 - Chat API mode with JSON response format support.

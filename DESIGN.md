@@ -1,69 +1,78 @@
-# Interface reference
+# Folionym architecture
 
-This file records the visual and interaction conventions implemented by the
-browser and terminal interfaces. The browser CSS in `frontend/src/` and the
-Textual theme in `src/folionym/tui_assets.py` are authoritative when this
-summary differs from code.
+Folionym is a local-first PDF naming system. It accepts a PDF or directory,
+extracts document signals, generates a filename proposal, and either reports
+or applies guarded filesystem changes. The CLI, Textual TUI, and loopback web
+application are adapters over the same application contracts.
 
-## Color
+## Flow
 
-| Role | Value | Use |
-| --- | --- | --- |
-| Canvas | `#E9EEF2` | application background |
-| Surface | `#FFFFFF` | inputs, ledger, and dialogs |
-| Rail | `#E2E8EE` | filters and evidence regions |
-| Ink | `#121820` | primary text |
-| Muted | `#5C6774` | notes and metadata |
-| Rule | `#C5CED8` | dividers |
-| Strong rule | `#A8B3C0` | control borders |
-| Primary | `#0B6A5A` | primary actions and ready state |
-| Active | `#2C4A7C` | current stage and selected row |
-| Warning | `#9A5A00` | review and external endpoint states |
-| Failure | `#A51F2D` | failures and destructive confirmation |
+```text
+interface input -> settings -> discovery -> extraction -> naming + optional LLM
+                -> proposal or reviewed plan -> rename policy -> artifacts/hooks
+```
 
-Status color is paired with a word, label, or control state.
+`settings` creates the canonical `RenamerConfig`. `application` discovers
+files, schedules proposal production, owns reviewed plans, and writes optional
+artifacts. A proposal combines `extraction` results with `naming` rules and
+optional `llm` enrichment. `rename_ops` is the sole production boundary for
+backup creation and atomic rename attempts.
 
-## Typography
+## Packages and boundaries
 
-The browser uses IBM Plex Sans for interface text and IBM Plex Mono for
-filenames and paths. System sans-serif and monospace families are fallbacks.
-Labels use sentence case. The TUI uses short uppercase status words such as
-`IDLE`, `RUN`, `DONE`, `FAIL`, and `STOP`.
-
-## Browser layout
-
-- The header shows the application name, current scope, and endpoint locality.
-- Source, Preview, and Apply form the primary workflow.
-- Preview includes filters, a source-to-target ledger, and document evidence.
-- The Apply action reports the exact selected count.
-- Fine-tune settings use a side panel on wide screens and a full-width panel on
-  narrow screens.
-- Narrow preview rows place the source name above the proposed name.
-
-## Interaction states
-
-- Preview does not rename files.
-- Browser Apply uses selected entries from the retained plan.
-- Destructive confirmation puts the cancel action first.
-- Empty, running, cancelled, skipped, failed, and completed states use explicit
-  text.
-- Keyboard focus remains visible.
-- Reduced-motion preferences disable nonessential transitions.
-
-## Implementation map
-
-| Area | Path |
+| Package | Responsibility |
 | --- | --- |
-| Browser shell and routes | `frontend/src/App.tsx` |
-| Browser components | `frontend/src/components/` |
-| Browser pages | `frontend/src/pages/` |
-| Browser global CSS | `frontend/src/styles.css`, `frontend/src/styles/` |
-| Browser API client | `frontend/src/api.ts` |
-| Textual application | `src/folionym/tui.py` |
-| Textual forms and state | `src/folionym/tui_forms.py`, `src/folionym/tui_state.py` |
-| Textual theme and formatters | `src/folionym/tui_assets.py` |
+| `settings` | typed configuration and precedence resolution |
+| `naming` | rules, heuristics, templates, tokens, and filename composition |
+| `extraction` | PDF text, metadata, OCR, and extraction strategies |
+| `llm` | LLM request/response models, parsing, protocols, cache, and HTTP client |
+| `application` | discovery, proposals, scheduling, batch/watch workflows, reviewed plans, artifacts, and hooks |
+| `rename_ops` | filename safety, backups, collision handling, and atomic filesystem mutation |
+| `infrastructure` | low-level file, private-I/O, HTTP-validation, logging, error, and resource primitives |
+| `interfaces` | CLI, Textual, web, and shared interactive settings adapters |
 
-The browser supports responsive layouts represented by the tracked desktop,
-tablet, and mobile screenshots. Terminal support targets color-capable
-terminals at 80 by 24 cells or larger. Screen-reader and terminal combinations
-remain platform-dependent and require manual testing.
+Dependencies point inward: interfaces and application may depend on domain
+packages and infrastructure; infrastructure does not import application or
+interfaces. Keep transport construction at a composition boundary and keep
+naming deterministic for its supplied dependencies. Do not move filesystem
+work out of `rename_ops`.
+
+## Facades and placement
+
+`folionym.config`, `folionym.filename`, `folionym.heuristics`,
+`folionym.renamer`, and `folionym.rename_ops` preserve public import and
+workflow contracts while implementation lives in the packages above. New
+internal code belongs with its responsibility; add a facade only for an
+intentional compatibility commitment.
+
+The four console interfaces are `folionym` (CLI), `folionym-tui` (Textual),
+`folionym-undo` (undo CLI), and `folionym-web` (loopback web server). Browser
+source lives in `frontend/`; its production assets are built into
+`src/folionym/web_dist/`.
+
+## Apply semantics
+
+There are two explicit collision policies:
+
+- **Unique available** is used by conventional batch CLI runs and the TUI
+  single-file action. An occupied candidate may be retried with a suffix.
+- **Exact reviewed** is used by browser and directory-TUI plans. Apply uses the
+  reviewed target without recomputing a name. It rejects a changed source,
+  duplicate selected target, or occupied target rather than selecting another.
+
+`application.reviewed_plan` is shared by the browser and TUI. Its immutable
+plan records source fingerprints, configuration, proposal status, inclusion,
+and targets. Directory TUI Preview must complete before Apply; material source
+or configuration changes invalidate it, and a cancelled preview cannot apply.
+The immediate TUI single-file action deliberately does not create a reviewed
+plan. CLI dry-run and apply remain independent invocations, while
+`--plan-file` is an export artifact only.
+
+## State and artifacts
+
+Reviewed plans and web reports are process-local. UI settings are stored in
+`~/.folionym_ui.json` with private-write handling where supported. Optional
+rename logs, backups, metadata exports, summary JSON, and plan files are
+application outputs, not a persistent reviewed-plan store. External LLM
+endpoints and post-rename hooks are separate network trust boundaries; see
+`SECURITY.md`.
