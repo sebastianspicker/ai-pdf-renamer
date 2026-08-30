@@ -1,9 +1,0 @@
-name: "Folionym CodeQL"
-
-paths-ignore:
-  - "docs/**"
-  - "vendor/**"
-  - "vendors/**"
-  - "third_party/**"
-  - "third-party/**"
-  - "external/**"

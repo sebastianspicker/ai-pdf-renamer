@@ -1,78 +1,55 @@
-# Python
+# Python environments and caches
+.venv/
+venv/
 __pycache__/
 *.py[cod]
 *.pyd
-
-# Virtualenvs
-.venv/
-venv/
-.env/
-.env
-.env.*
-!.env.example
-!.env.*.example
-!.env.sample
-!.env.template
-secrets.local.*
-credentials.local.*
-.npmrc.local
-.direnv/
-.envrc
-
-# Packaging
-build/
-dist/
-*.egg-info/
-.eggs/
-pip-wheel-metadata/
-__pypackages__/
-
-# Tooling caches
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
 .cache/
 .hypothesis/
 .nox/
+.tox/
 .pyre/
 .pytype/
 .ipynb_checkpoints/
+
+# Dependencies, builds, and generated metadata
+node_modules/
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+__pypackages__/
+*.tsbuildinfo
+
+# Test, coverage, and analysis output
 .coverage
 .coverage.*
-coverage.xml
 coverage/
 htmlcov/
-.tox/
+coverage.xml
 test-results/
+playwright-report/
+blob-report/
 junit.xml
+junit-*.xml
 pytest.xml
 *.sarif
 
-# Frontend test and browser artifacts
-/frontend/coverage/
-/frontend/test-results/
-/frontend/blob-report/
-
-# Logs
-error.log
+# Logs and temporary files
 *.log
-/logs/
-npm-debug.log*
-yarn-debug.log*
-pnpm-debug.log*
-node_modules/
-*.tsbuildinfo
-
-# Debugging/refactoring artifacts
 *.tmp
+*.temp
 *.bak
-*.swp
-*.swo
+*.backup
 *.orig
 *.rej
+*.swp
+*.swo
 *~
-*.out
-*.err
 *.pid
 *.pid.lock
 *.prof
@@ -86,12 +63,7 @@ node_modules/
 /reports/
 /scratch/
 
-# Python version managers (untrack with: git rm --cached .python-version)
-# .python-version is currently tracked to pin the dev Python version for pyenv/mise users.
-# .python-version
-.tool-versions
-
-# Local folders and PDF test artifacts (may contain private PDFs)
+# Local application data and generated documents
 /input_files/
 *.pdf
 *.gguf
@@ -99,14 +71,31 @@ node_modules/
 *.safetensors
 *.sqlite
 *.sqlite3
-/rename.log
-/rename-*.log
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.local.db
 /metadata.csv
 /metadata.json
 /summary.json
 /plan.json
 
-# Secrets and credentials
+# Environment, credentials, and local configuration
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.template
+secrets.local.*
+credentials.local.*
+.npmrc.local
+.direnv/
+.envrc
+.secrets/
 *.pem
 *.key
 *.p12
@@ -117,119 +106,105 @@ credentials.json
 service-account*.json
 secrets.yaml
 secrets.yml
-.secrets/
-
-# Editors/OS
+.tool-versions
 /.mcp.json
+
+# Editors and operating systems
 .vscode/
 .idea/
 .DS_Store
-Thumbs.db
-.cursor/
-.claude/
-.kilo/
+._*
 .AppleDouble
 .LSOverride
-._*
+Thumbs.db
 Desktop.ini
 
-# Local process artifacts (do not commit)
+# Local development assistants and analysis workspaces
+AGENT.md
+AGENTS.md
+agent.md
+agents.md
+CLAUDE.md
+CODEX.md
+GEMINI.md
+claude.md
+codex.md
+gemini.md
+.cursorrules
+.agent/
+.agents/
+.ai/
+.aider/
+.aider.*
+.claude/
+.codacy/
+.codegraph/
+.codex/
+.continue/
+.cursor/
+.kilo/
+.repowise/
+.serena/
+.windsurf/
+/.github/codex/
+/.github/copilot-instructions.md
+/.github/prompts/
+/.github/workflows/codex.yml
+
+# Local prompts, process notes, and review artifacts
+/prompt/
+/prompts/
+/agent-prompts/
+/ai-prompts/
+/agent-notes*
+/agent-output*
+/agent-report*
+/agent-context*
+/agent-memory*
+/AI_NOTES*
+/AI_REPORT*
+/AI_AUDIT*
+/AI_SUMMARY*
+/*-ledger.md
+/*_ledger.md
+/*-LEDGER.md
+/*_LEDGER.md
+/scratchpad*
+/worklog*
+/work-log*
+/devlog*
+/development-log*
+/handoff*
+/handover*
+/progress.md
+/status.md
+/plan.md
+/validation.md
 /DECISIONS.md
 /FINDINGS.md
 /LOG.md
 /REFACTOR_PLAN.md
 /PHYSICS_AUDIT.md
-/validation.md
-/HANDOFF.md
-/progress.md
-
-# Root-level internal release/remediation packets
 /RELEASE_STATUS.md
 /REMEDIATION_PLAN.md
 /REMEDIATION_STATUS.md
 /REMEDIATION_LEDGER.md
-/release-status.md
-/release-ledger.md
-/remediation-status.md
-/remediation-ledger.md
-
-# Local automation, analysis, review, and harness workspaces
-/.agents/
-/.ai/
-/.aider/
-/.aider.*
-/.codex/
-/.codacy/*
-!/.codacy/codacy.config.json
-!/.codacy/codacy.yaml
-!/.codacy/codacy.yml
-/.codacy/codacy.config.json
-/.codacy/codacy.yaml
-/.codegraph/
-/.continue/
-/.serena/
-/.windsurf/
-/.github/codex/
-/.github/workflows/codex.yml
-/.github/copilot-instructions.md
-/.github/prompts/
-/AGENTS.md
-/CLAUDE.md
-/GEMINI.md
-/AUDIT_LEDGER.md
-/plan.md
 /HARNESS_PRINCIPLES.md
 /PROMPTS.local.md
 /code_review.md
 /AGENT_AUDIT_REPORT.md
 /AUDIT.md
-/debug-log/
+/archive/
 /conversation-exports/
 /chat-exports/
+/debug-log/
 /prompts.local/
 /docs/agent/
-/docs/source-audit/
 /docs/archive/
+/docs/audit-*/
 /docs/deprecated/
-/docs/status/
 /docs/ledgers/
 /docs/reports/
+/docs/source-audit/
+/docs/status/
 /docs/tmp/
-/docs/audit-*/
-/docs/repo-core-and-function-index.md
-/archive/
-/status.md
-/scripts/topology_inventory.sh
-
-# Nested local tooling and generated artifacts
-.agents/
-.codex/
-.codegraph/
-.serena/
-.repowise/
-blob-report/
-junit*.xml
-target/
-.build/
-DerivedData/
-xcuserdata/
-*.db-wal
-*.db-shm
-*.sqlite-wal
-*.sqlite-shm
-*.sqlite3-wal
-*.sqlite3-shm
-*.local.db
-
-# Generated test and coverage output (local only)
-/coverage/
-/htmlcov/
-/.coverage
-/.coverage.*
-/.pytest_cache/
-/test-results/
-/playwright-report/
-/blob-report/
-/coverage.xml
-/junit.xml
-/junit-*.xml

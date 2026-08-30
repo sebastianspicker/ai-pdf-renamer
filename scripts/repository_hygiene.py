@@ -55,7 +55,6 @@ _FORBIDDEN_SUFFIXES = {
 }
 _FORBIDDEN_BASENAMES = {
     ".DS_Store",
-    "AGENTS.md",
     "credentials.json",
     "metadata.csv",
     "metadata.json",
@@ -64,6 +63,14 @@ _FORBIDDEN_BASENAMES = {
     "secrets.yaml",
     "secrets.yml",
     "summary.json",
+}
+_FORBIDDEN_AGENT_GUIDES = {
+    ".cursorrules",
+    "agent.md",
+    "agents.md",
+    "claude.md",
+    "codex.md",
+    "gemini.md",
 }
 _FORBIDDEN_ROOT_DOCS = {
     "agent_audit_report.md",
@@ -94,11 +101,14 @@ def _private_basename(path: PurePosixPath) -> bool:
     return path.name in _FORBIDDEN_BASENAMES
 
 
+def _agent_guide(path: PurePosixPath) -> bool:
+    """Return whether the path is a development-assistant instruction file."""
+    return path.name.lower() in _FORBIDDEN_AGENT_GUIDES
+
+
 def _environment_file(path: PurePosixPath) -> bool:
     """Return whether the basename is .env or a private variant, not the public template."""
-    return path.name == ".env" or (
-        path.name.startswith(".env.") and path.name != ".env.example"
-    )
+    return path.name == ".env" or (path.name.startswith(".env.") and path.name != ".env.example")
 
 
 def _credential_export(path: PurePosixPath) -> bool:
@@ -160,6 +170,7 @@ def _private_root_document(path: PurePosixPath) -> bool:
 _FORBIDDEN_CHECKS: tuple[tuple[Callable[[PurePosixPath], bool], str], ...] = (
     (_invalid_path, "invalid repository path"),
     (_private_basename, "private or generated artifact"),
+    (_agent_guide, "development-assistant instructions"),
     (_environment_file, "environment file"),
     (_credential_export, "credential export"),
     (_rename_log, "rename log"),
