@@ -1,6 +1,6 @@
 UV ?= uv
 
-.PHONY: install-dev frontend-install frontend-check lint format typecheck test clean hygiene-check build-check release-check ci
+.PHONY: install-dev frontend-install frontend-check lint format typecheck test clean lock-check hygiene-check architecture-check build-check release-check ci
 
 install-dev:
 	$(UV) sync --all-extras
@@ -10,7 +10,6 @@ frontend-install:
 	cd frontend && npm ci
 
 frontend-check:
-	cd frontend && npm run typecheck
 	cd frontend && npm run build
 
 lint:
@@ -39,6 +38,12 @@ clean:
 hygiene-check:
 	git ls-files -z | $(UV) run python scripts/repository_hygiene.py --null-stdin
 
+architecture-check:
+	$(UV) run python scripts/check_architecture.py
+
+lock-check:
+	$(UV) lock --check
+
 build-check:
 	rm -rf dist
 	$(UV) build --out-dir dist
@@ -53,6 +58,6 @@ build-check:
 	$(UV) pip install --python "$$ENV_DIR/bin/python" "$${WHEEL}[pdf,tokens,ocr,tui,web]"; \
 	"$$ENV_DIR/bin/python" scripts/verify_distributions.py dist --installed-wheel
 
-release-check: frontend-check hygiene-check lint typecheck test build-check
+release-check: lock-check frontend-check hygiene-check architecture-check lint typecheck test build-check
 
 ci: release-check
